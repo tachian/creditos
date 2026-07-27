@@ -151,6 +151,35 @@ sequenceDiagram
 | Falhas | retry com limite, DLQ, alerta e reprocessamento controlado |
 | Sensibilidade | sem payload sensível bruto em mensagens por padrão |
 
+### AD-5 — Multi-tenancy e isolamento por tenant [ADOPTED]
+
+- **Binds:** autenticação, autorização, tenant catalog, dados persistidos, eventos, gRPC metadata, cache, filas, storage, logs, métricas, traces, jobs, callbacks, dashboards e integrações externas.
+- **Prevents:** tenant spoofing via payload, vazamento cross-tenant, isolamento inconsistente entre serviços, evolução ad hoc para tenants dedicados e uso de recursos compartilhados sem chave de tenant.
+- **Rule:** o MVP usa modelo `bridge`: serviços compartilhados com dados e recursos críticos isolados por tenant ou grupo controlado de tenants. O `tenant_id` confiável vem de autenticação/contexto e do catálogo do `Identity & Tenant`, nunca do body sem validação. `tenant_id` e `tenant_isolation_tier` devem propagar por gRPC metadata, CloudEvents, logs, métricas, traces, jobs, filas, cache, storage, callbacks e relatórios. Evolução para `silo` ocorre quando risco, volume, contrato, região, performance ou compliance exigirem.
+
+| Recurso | Regra de isolamento |
+| --- | --- |
+| Identidade/autorização | `tenant_id`, scopes, roles e claims vêm do contexto autenticado |
+| Banco transacional | particionamento lógico por serviço e tenant; evolução para storage dedicado por `tenant_isolation_tier` |
+| Cache | chaves sempre incluem tenant/contexto; dados de tenants não compartilham entradas |
+| NATS JetStream | mensagens carregam `tenant_id`; streams/subjects dedicados só quando tier ou risco exigir |
+| Logs/traces/métricas | incluem tenant quando aplicável, com mascaramento e controle de cardinalidade |
+| Objetos/storage | prefixo/bucket/container segregado por tenant ou tier quando aplicável |
+| Integrações externas | credenciais, limites, custos e resultados segregados por tenant |
+| Reporting | projeções por tenant; dashboards customer-facing só expõem dados do tenant autenticado |
+| Auditoria | eventos e evidências têm tenant obrigatório e isolamento reforçado |
+
+```mermaid
+flowchart TB
+  Auth[Autenticação OIDC/OAuth] --> TenantCatalog[Identity & Tenant: catálogo de tenant]
+  TenantCatalog --> Context[tenant_id + tenant_isolation_tier]
+  Context --> Services[Microsserviços compartilhados]
+  Services --> Bridge[(Bridge: recursos compartilhados com isolamento lógico)]
+  Context --> Dedicated[(Silo futuro: recursos dedicados por tenant)]
+  Bridge --> Data[Dados, filas, cache, logs, métricas e storage com chave de tenant]
+  Dedicated --> DataDedicated[Dados/recursos dedicados por contrato, risco ou compliance]
+```
+
 ## Structural Seed
 
 ```text
@@ -180,4 +209,5 @@ creditos/
 - Detalhe físico de migrations, naming de schemas/databases e política de migração por serviço.
 - Convenção final de pacotes, namespaces e estrutura de código.
 - Catálogo completo de subjects, streams, consumers, DLQs e contratos AsyncAPI.
+- Estratégia exata de namespaces, contas, bancos, buckets e streams dedicados para tenants em modelo `silo`.
 - Lista completa de ADRs e ordem de execução.
