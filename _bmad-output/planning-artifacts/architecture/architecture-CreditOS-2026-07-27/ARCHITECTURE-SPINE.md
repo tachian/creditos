@@ -68,6 +68,38 @@ flowchart LR
 | `Audit & Evidence` | auditoria oficial, evidências, hash encadeado, checkpoints, exportação imutável e consultas auditáveis |
 | `Reporting & Insights` | projeções, funil, dashboards, métricas de negócio, custos agregados e visão customer-facing curada |
 
+### AD-3 — Ownership de dados e persistência cross-service [ADOPTED]
+
+- **Binds:** persistência, migrations, repositories, integrações internas, reporting, auditoria e fluxo de decisão.
+- **Prevents:** banco compartilhado como contrato implícito, queries diretas entre domínios, transações distribuídas, duplicidade de dono de entidade e acoplamento silencioso entre equipes.
+- **Rule:** cada microsserviço é dono exclusivo do seu modelo persistido e das suas mutações. No MVP, PostgreSQL pode ser compartilhado apenas como infraestrutura física, desde que cada serviço tenha database/schema/usuário separados. Joins, queries e transações diretas cross-service são proibidos. Estado entre serviços circula somente por gRPC, eventos NATS JetStream, outbox/inbox ou projeções autorizadas.
+
+```mermaid
+flowchart TB
+  Identity[Identity & Tenant] --> IdentityDb[(identity_tenant_db/schema)]
+  Intake[Proposal Intake] --> IntakeDb[(proposal_intake_db/schema)]
+  Decision[Decision] --> DecisionDb[(decision_db/schema)]
+  Review[Automated Review] --> ReviewDb[(automated_review_db/schema)]
+  Integration[Integration] --> IntegrationDb[(integration_db/schema)]
+  Audit[Audit & Evidence] --> AuditDb[(audit_evidence_db/storage)]
+  Reporting[Reporting & Insights] --> ReportingDb[(reporting_read_db/projections)]
+  Identity -. gRPC/eventos .-> Intake
+  Intake -. eventos .-> Decision
+  Decision -. eventos .-> Reporting
+  Integration -. eventos .-> Reporting
+  Audit -. projeções autorizadas .-> Reporting
+```
+
+| Serviço | Persistência própria | Regra de acesso |
+| --- | --- | --- |
+| `Identity & Tenant` | tenants, usuários, clientes técnicos, roles, permissões, claims, catálogo de tenant | fonte confiável de identidade/tenant; demais serviços consultam por gRPC ou contexto autenticado |
+| `Proposal Intake` | propostas recebidas, schemas, idempotência, status inicial | não expõe banco; publica eventos de submissão/status |
+| `Decision` | políticas, versões, decisões, códigos de motivo, termos aprovados | mutação de decisão pertence ao serviço; evidências vão para `Audit & Evidence` |
+| `Automated Review` | revisões consultivas, versões de agente/modelo, guardrails, resultados | não decide crédito final; retorna recomendação consultiva por contrato |
+| `Integration` | jobs, adapters, retries, DLQ, snapshots/referências, custos de integração | não vaza payload bruto; normaliza via anti-corruption layer |
+| `Audit & Evidence` | eventos append-only, evidências, hashes, checkpoints, exportações | trilha oficial; acesso reforçado e auditado |
+| `Reporting & Insights` | projeções e agregações de leitura | não consulta bancos transacionais diretamente |
+
 ## Structural Seed
 
 ```text
@@ -94,6 +126,6 @@ creditos/
 
 - Stack de linguagem/framework backend.
 - Topologia final AWS/EKS e sizing dos componentes.
-- Detalhe de schemas físicos e migrations por serviço.
+- Detalhe físico de migrations, naming de schemas/databases e política de migração por serviço.
 - Convenção final de pacotes, namespaces e estrutura de código.
 - Lista completa de ADRs e ordem de execução.
