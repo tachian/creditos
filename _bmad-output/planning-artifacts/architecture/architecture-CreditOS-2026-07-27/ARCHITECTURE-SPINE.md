@@ -100,6 +100,57 @@ flowchart TB
 | `Audit & Evidence` | eventos append-only, evidências, hashes, checkpoints, exportações | trilha oficial; acesso reforçado e auditado |
 | `Reporting & Insights` | projeções e agregações de leitura | não consulta bancos transacionais diretamente |
 
+### AD-4 — Modelo de comunicação síncrona e assíncrona [ADOPTED]
+
+- **Binds:** contratos internos, eventos, callbacks, integrações externas, reporting, auditoria derivada, workers e orquestrações assíncronas.
+- **Prevents:** uso arbitrário de HTTP/gRPC/eventos, comandos disfarçados de eventos, filas sem contrato, consumidores não idempotentes e acoplamento temporal indevido entre serviços.
+- **Rule:** chamadas internas que exigem resposta imediata e deadline curto usam gRPC. Fluxos que exigem desacoplamento, durabilidade, fan-out, retry, DLQ, replay, callbacks, reporting ou integração externa usam NATS JetStream. Eventos usam CloudEvents; contratos assíncronos usam AsyncAPI; publicação confiável usa transactional outbox; consumo confiável usa inbox/idempotência.
+
+| Necessidade | Mecanismo |
+| --- | --- |
+| Consulta interna imediata | gRPC |
+| Comando interno com resposta obrigatória e deadline curto | gRPC |
+| Fato de domínio já ocorrido | Evento CloudEvents no NATS JetStream |
+| Job/comando assíncrono | Mensagem no NATS JetStream com contrato AsyncAPI |
+| Integração externa paralelizável | Comando assíncrono + fan-out/fan-in no NATS JetStream |
+| Callback/webhook com retry | Job assíncrono no NATS JetStream |
+| Projeção para dashboards | Evento consumido pelo `Reporting & Insights` |
+| Auditoria oficial | `Audit & Evidence`; eventos não substituem trilha oficial |
+
+```mermaid
+sequenceDiagram
+  participant API as Cliente/API
+  participant Intake as Proposal Intake
+  participant Identity as Identity & Tenant
+  participant NATS as NATS JetStream
+  participant Decision as Decision
+  participant Integration as Integration
+  participant Reporting as Reporting & Insights
+
+  API->>Intake: HTTP submit proposal
+  Intake->>Identity: gRPC validar tenant/contexto
+  Identity-->>Intake: contexto autorizado
+  Intake->>Intake: transação local + outbox
+  Intake->>NATS: CloudEvent proposal.submitted
+  NATS-->>Decision: consumer durável
+  Decision->>NATS: comando integration.execute
+  NATS-->>Integration: worker/consumer
+  Integration->>NATS: integration.completed
+  NATS-->>Decision: resultado assíncrono
+  Decision->>NATS: decision.completed
+  NATS-->>Reporting: projeção de negócio
+```
+
+| Padrão | Convenção |
+| --- | --- |
+| Envelope | CloudEvents com `id`, `type`, `source`, `subject`, `time`, `tenant_id`, `correlation_id`, `trace_id`, `schema_version` e `data` |
+| Documentação | AsyncAPI para eventos e comandos assíncronos |
+| Publicação | transactional outbox por serviço produtor |
+| Consumo | inbox/idempotência por consumidor e ack explícito |
+| Ordenação | por chave de agregado quando necessário, preferencialmente `proposal_id` |
+| Falhas | retry com limite, DLQ, alerta e reprocessamento controlado |
+| Sensibilidade | sem payload sensível bruto em mensagens por padrão |
+
 ## Structural Seed
 
 ```text
@@ -128,4 +179,5 @@ creditos/
 - Topologia final AWS/EKS e sizing dos componentes.
 - Detalhe físico de migrations, naming de schemas/databases e política de migração por serviço.
 - Convenção final de pacotes, namespaces e estrutura de código.
+- Catálogo completo de subjects, streams, consumers, DLQs e contratos AsyncAPI.
 - Lista completa de ADRs e ordem de execução.
