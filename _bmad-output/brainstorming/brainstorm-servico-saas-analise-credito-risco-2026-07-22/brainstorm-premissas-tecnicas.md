@@ -1,360 +1,360 @@
-# Brainstorm BMAD - Plataforma SaaS de Analise de Credito e Risco
+# Brainstorm BMAD - Plataforma SaaS de Análise de Crédito e Risco
 
 Data: 2026-07-22
-Fonte obrigatoria: `docs/input/project-technical-premises.md`
+Fonte obrigatória: `docs/input/project-technical-premises.md`
 Modo: Parceiro Criativo
 
 ## Resumo executivo
 
-O documento de premissas tecnicas ja estabelece uma base madura para um SaaS B2B de credito e risco: seguranca por padrao, privacidade por padrao, multi-tenancy, auditabilidade, explicabilidade, arquitetura incremental e governanca tecnica. A principal recomendacao deste brainstorming e preservar essas preocupacoes como invariantes do projeto, mas separar com rigor o que e obrigatorio, o que e recomendacao inicial e o que ainda depende de decisao formal.
+O documento de premissas técnicas já estabelece uma base madura para um SaaS B2B de crédito e risco: segurança por padrão, privacidade por padrão, multi-tenancy, auditabilidade, explicabilidade, arquitetura incremental e governança técnica. A principal recomendação deste brainstorming é preservar essas preocupações como invariantes do projeto, mas separar com rigor o que é obrigatório, o que é recomendação inicial e o que ainda depende de decisão formal.
 
-O risco central nao e falta de direcao tecnica; e excesso de decisoes implicitas. O documento sugere tecnologias, estrutura, modulos, testes, Kubernetes, observabilidade, modelos e qualidade, mas nem todas essas escolhas devem nascer como obrigacoes no Product Brief ou PRD. Algumas pertencem a Architecture, ADRs, padroes tecnicos, CI/CD ou documentacao operacional.
+O risco central não é falta de direção técnica; é excesso de decisões implícitas. O documento sugere tecnologias, estrutura, módulos, testes, Kubernetes, observabilidade, modelos e qualidade, mas nem todas essas escolhas devem nascer como obrigações no Product Brief ou PRD. Algumas pertencem a Architecture, ADRs, padrões técnicos, CI/CD ou documentação operacional.
 
-A direcao consolidada recomenda comecar por um monolito modular, API B2B segura, PostgreSQL relacional, trilha de auditoria separada de logs, isolamento forte por tenant e motor de decisao explicavel. Mensageria, Redis, ABAC, Kubernetes avancado, modelos de IA e extracao para microsservicos devem ser tratados como decisoes condicionais, nao automaticas.
+A direção consolidada recomenda começar por um monólito modular, API B2B segura, PostgreSQL relacional, trilha de auditoria separada de logs, isolamento forte por tenant e motor de decisão explicável. Mensageria, Redis, ABAC, Kubernetes avançado, modelos de IA e extração para microsserviços devem ser tratados como decisões condicionais, não automáticas.
 
-## Visao consolidada do produto
+## Visão consolidada do produto
 
-A plataforma deve permitir que instituicoes que concedem, administram ou intermediam credito recebam propostas, integrem dados, apliquem politicas, calculem risco, detectem fraude, decidam automaticamente ou encaminhem para analise manual, expliquem as decisoes e monitorem o pos-concessao.
+A plataforma deve permitir que instituições que concedem, administram ou intermediam crédito recebam propostas, integrem dados, apliquem políticas, calculem risco, detectem fraude, decidam automaticamente ou encaminhem para análise manual, expliquem as decisões e monitorem o pós-concessão.
 
-O diferencial do produto nao deve ser apenas "calcular score". A proposta mais forte e um sistema operacional de decisao de credito: governavel, auditavel, explicavel, multi-tenant, integravel e preparado para regulacao, operacao B2B e evolucao de modelos.
+O diferencial do produto não deve ser apenas "calcular score". A proposta mais forte é um sistema operacional de decisão de crédito: governável, auditável, explicável, multi-tenant, integrável e preparado para regulação, operação B2B e evolução de modelos.
 
 Trabalhos reais que o cliente contrataria o produto para fazer:
 
-- Reduzir tempo de decisao sem perder governanca.
-- Padronizar politicas de credito entre canais, produtos e tenants.
-- Explicar aprovacoes, recusas e revisoes de forma auditavel.
-- Integrar dados externos sem contaminar o dominio com formatos de fornecedores.
-- Detectar risco e fraude antes, durante e depois da concessao.
-- Provar para auditoria, compliance e diretoria que cada decisao foi tomada com dados, regras e versoes identificaveis.
+- Reduzir tempo de decisão sem perder governança.
+- Padronizar políticas de crédito entre canais, produtos e tenants.
+- Explicar aprovações, recusas e revisões de forma auditável.
+- Integrar dados externos sem contaminar o domínio com formatos de fornecedores.
+- Detectar risco e fraude antes, durante e depois da concessão.
+- Provar para auditoria, compliance e diretoria que cada decisão foi tomada com dados, regras e versões identificáveis.
 
-## Analise critica das premissas
+## Análise crítica das premissas
 
-### Conflitos e tensoes
+### Conflitos e tensões
 
-- Simplicidade inicial vs. preparacao para Kubernetes: preparar workloads para Kubernetes nao deve forcar complexidade prematura, microsservicos ou manifests completos antes de haver componente implantavel real.
-- Auditabilidade ampla vs. minimizacao de dados: registrar tudo que influenciou a decisao pode conflitar com privacidade e retencao; o projeto precisa definir quais dados sao armazenados, referenciados, mascarados, resumidos ou descartados.
-- Explicabilidade vs. modelos complexos: modelos estatisticos ou de IA podem melhorar performance preditiva, mas piorar explicabilidade; o motor de decisao deve tratar modelos como insumos, nao como autoridade final sem controles.
-- Cobertura alta vs. qualidade real: metas de cobertura sao uteis, mas podem gerar testes artificiais; gates devem combinar cobertura, testes criticos, analise estatica, contrato, seguranca e revisao.
-- Stack sugerida vs. decisao arquitetural: Python e monorepo aparecem como premissas fortes; FastAPI, SQLAlchemy, Alembic, Redis, OpenTelemetry, uv e ferramentas de tipagem precisam de ADR ou padrao tecnico antes de virarem obrigatorias.
-- Multi-tenancy transversal vs. velocidade de entrega: exigir isolamento em banco, cache, eventos, arquivos, logs, metricas e jobs desde o inicio e correto como principio, mas a estrategia concreta precisa ser escolhida para nao travar o MVP.
+- Simplicidade inicial vs. preparação para Kubernetes: preparar workloads para Kubernetes não deve forçar complexidade prematura, microsserviços ou manifests completos antes de haver componente implantável real.
+- Auditabilidade ampla vs. minimização de dados: registrar tudo que influenciou a decisão pode conflitar com privacidade e retenção; o projeto precisa definir quais dados são armazenados, referenciados, mascarados, resumidos ou descartados.
+- Explicabilidade vs. modelos complexos: modelos estatísticos ou de IA podem melhorar performance preditiva, mas piorar explicabilidade; o motor de decisão deve tratar modelos como insumos, não como autoridade final sem controles.
+- Cobertura alta vs. qualidade real: metas de cobertura são úteis, mas podem gerar testes artificiais; gates devem combinar cobertura, testes críticos, análise estática, contrato, segurança e revisão.
+- Stack sugerida vs. decisão arquitetural: Python e monorepo aparecem como premissas fortes; FastAPI, SQLAlchemy, Alembic, Redis, OpenTelemetry, uv e ferramentas de tipagem precisam de ADR ou padrão técnico antes de virarem obrigatórias.
+- Multi-tenancy transversal vs. velocidade de entrega: exigir isolamento em banco, cache, eventos, arquivos, logs, métricas e jobs desde o início é correto como princípio, mas a estratégia concreta precisa ser escolhida para não travar o MVP.
 
 ### Ambiguidades
 
-- Geografia, jurisdicao e requisitos regulatorios aplicaveis nao estao definidos.
-- Segmento inicial de cliente nao esta priorizado.
-- Tipos de credito e produtos suportados no MVP nao estao delimitados.
-- Fontes externas de dados nao estao nomeadas.
-- SLA, SLO, latencia de decisao e volume esperado nao estao definidos.
-- Estrategia de tenant ainda esta aberta.
-- Provedor de identidade, modelo de roles e granularidade de permissoes ainda estao abertos.
-- Retencao, descarte e anonimização de dados ainda precisam de politica.
-- Papel de IA/modelos estatisticos no MVP ainda nao esta decidido.
-- Auditoria imutavel, tamper-evident ou WORM ainda precisa de decisao.
+- Geografia, jurisdição e requisitos regulatórios aplicáveis não estão definidos.
+- Segmento inicial de cliente não está priorizado.
+- Tipos de crédito e produtos suportados no MVP não estão delimitados.
+- Fontes externas de dados não estão nomeadas.
+- SLA, SLO, latência de decisão e volume esperado não estão definidos.
+- Estratégia de tenant ainda está aberta.
+- Provedor de identidade, modelo de roles e granularidade de permissões ainda estão abertos.
+- Retenção, descarte e anonimização de dados ainda precisam de política.
+- Papel de IA/modelos estatísticos no MVP ainda não está decidido.
+- Auditoria imutável, tamper-evident ou WORM ainda precisa de decisão.
 
-### Duplicidades saudaveis
+### Duplicidades saudáveis
 
-- Autenticacao, autorizacao, multi-tenancy e seguranca aparecem em varias secoes. Isso e intencionalmente redundante e deve virar regra transversal em `project-context.md`, `AGENTS.md` e gates de revisao.
-- Idempotencia aparece em APIs, eventos e seguranca. Deve virar padrao tecnico unico com exemplos por tipo de operacao.
-- Correlation ID aparece em APIs, eventos, observabilidade e decisoes. Deve virar requisito operacional transversal.
-- Explicabilidade e auditabilidade aparecem em produto, decisoes e modelos. Devem ficar conectadas, mas separadas: explicabilidade responde "por que"; auditoria responde "quem, quando, com quais dados e versoes".
+- Autenticação, autorização, multi-tenancy e segurança aparecem em várias seções. Isso é intencionalmente redundante e deve virar regra transversal em `project-context.md`, `AGENTS.md` e gates de revisão.
+- Idempotência aparece em APIs, eventos e segurança. Deve virar padrão técnico único com exemplos por tipo de operação.
+- Correlation ID aparece em APIs, eventos, observabilidade e decisões. Deve virar requisito operacional transversal.
+- Explicabilidade e auditabilidade aparecem em produto, decisões e modelos. Devem ficar conectadas, mas separadas: explicabilidade responde "por que"; auditoria responde "quem, quando, com quais dados e versões".
 
 ## Premissas confirmadas
 
-- O produto sera uma plataforma SaaS B2B para analise de credito, risco e automacao de decisoes.
-- Seguranca e privacidade sao defaults; tudo e privado salvo excecao aprovada e documentada.
-- Toda decisao relevante deve ser auditavel, explicavel e associada a tenant, solicitante, politica, modelo, dados usados e correlation ID.
-- A arquitetura inicial deve ser incremental e evitar microsservicos, filas, bancos separados e abstracoes especulativas sem justificativa.
-- O repositorio deve ser monorepo, com separacao entre componentes implantaveis, pacotes compartilhados, testes e documentacao.
+- O produto será uma plataforma SaaS B2B para análise de crédito, risco e automação de decisões.
+- Segurança e privacidade são defaults; tudo é privado salvo exceção aprovada e documentada.
+- Toda decisão relevante deve ser auditável, explicável e associada a tenant, solicitante, política, modelo, dados usados e correlation ID.
+- A arquitetura inicial deve ser incremental e evitar microsserviços, filas, bancos separados e abstrações especulativas sem justificativa.
+- O repositório deve ser monorepo, com separação entre componentes implantáveis, pacotes compartilhados, testes e documentação.
 - O backend deve ser escrito em Python.
-- Controllers/endpoints nao devem conter regra de negocio; casos de uso coordenam dominio, persistencia, integracoes e auditoria.
-- Autenticacao e autorizacao devem ser obrigatorias por padrao.
-- O `tenant_id` recebido no payload nunca deve ser confiado sem validacao contra a identidade autenticada.
-- A estrategia de multi-tenancy deve ser formalizada em ADR.
-- PostgreSQL, SQLAlchemy e Alembic sao a direcao inicial recomendada para persistencia relacional e migrations, sujeitos a ADR/padrao tecnico.
-- Migrations devem ser versionadas, revisadas, testadas e evitar operacoes destrutivas imediatas.
-- Testes unitarios, integracao, contrato, E2E e seguranca devem existir de acordo com risco e tipo de mudanca.
-- APIs devem ter schemas explicitos, validacao, erros padronizados, versionamento, OpenAPI, correlation ID, timeouts e protecao contra vazamento de detalhes internos.
-- Valores monetarios nao devem usar ponto flutuante binario; datas devem usar UTC e ISO 8601.
-- Integracoes externas devem ser isoladas por portas/adapters e nao contaminar o dominio com formato de fornecedor.
-- Eventos e mensageria so devem ser adotados quando houver necessidade real.
-- Modelos de risco e IA precisam de identificacao, versao, owner, validacao, explicabilidade, monitoramento, rollback, avaliacao de vies e politica de atualizacao.
+- Controllers/endpoints não devem conter regra de negócio; casos de uso coordenam domínio, persistência, integrações e auditoria.
+- Autenticação e autorização devem ser obrigatórias por padrão.
+- O `tenant_id` recebido no payload nunca deve ser confiado sem validação contra a identidade autenticada.
+- A estratégia de multi-tenancy deve ser formalizada em ADR.
+- PostgreSQL, SQLAlchemy e Alembic são a direção inicial recomendada para persistência relacional e migrations, sujeitos a ADR/padrão técnico.
+- Migrations devem ser versionadas, revisadas, testadas e evitar operações destrutivas imediatas.
+- Testes unitários, integração, contrato, E2E e segurança devem existir de acordo com risco e tipo de mudança.
+- APIs devem ter schemas explícitos, validação, erros padronizados, versionamento, OpenAPI, correlation ID, timeouts e proteção contra vazamento de detalhes internos.
+- Valores monetários não devem usar ponto flutuante binário; datas devem usar UTC e ISO 8601.
+- Integrações externas devem ser isoladas por portas/adapters e não contaminar o domínio com formato de fornecedor.
+- Eventos e mensageria só devem ser adotados quando houver necessidade real.
+- Modelos de risco e IA precisam de identificação, versão, owner, validação, explicabilidade, monitoramento, rollback, avaliação de viés e política de atualização.
 - Auditoria deve ser separada de logs operacionais.
-- Dados sensiveis nao devem ser registrados em logs.
-- Componentes implantaveis devem ter observabilidade, health/readiness e imagens de container seguras.
-- ADRs devem registrar decisoes arquiteturais relevantes com contexto, alternativas, consequencias, riscos e status.
-- Agentes de IA devem respeitar contexto, escopo, testes, documentacao e limites de decisao irreversivel.
+- Dados sensíveis não devem ser registrados em logs.
+- Componentes implantáveis devem ter observabilidade, health/readiness e imagens de container seguras.
+- ADRs devem registrar decisões arquiteturais relevantes com contexto, alternativas, consequências, riscos e status.
+- Agentes de IA devem respeitar contexto, escopo, testes, documentação e limites de decisão irreversivel.
 
 ## Premissas ajustadas
 
 ### Stack inicial sugerida
 
-- Original: FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL, Redis quando necessario, pytest, Ruff, mypy ou Pyright, OpenTelemetry e uv sao listados como stack inicial sugerida.
-- Proposta: classificar Python como premissa obrigatoria; classificar os demais itens como stack recomendada que deve ser confirmada em ADRs ou padroes tecnicos antes de virar gate obrigatorio.
-- Justificativa: o proprio documento exige justificativa para novas tecnologias e proibe selecao por preferencia.
-- Impacto: evita bloqueio prematuro e preserva rastreabilidade de decisoes.
-- Risco: se adiado demais, o time pode divergir em ferramentas basicas; mitigar criando ADRs iniciais curtos.
+- Original: FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL, Redis quando necessário, pytest, Ruff, mypy ou Pyright, OpenTelemetry e uv são listados como stack inicial sugerida.
+- Proposta: classificar Python como premissa obrigatória; classificar os demais itens como stack recomendada que deve ser confirmada em ADRs ou padrões técnicos antes de virar gate obrigatório.
+- Justificativa: o próprio documento exige justificativa para novas tecnologias e proíbe seleção por preferência.
+- Impacto: evita bloqueio prematuro e preserva rastreabilidade de decisões.
+- Risco: se adiado demais, o time pode divergir em ferramentas básicas; mitigar criando ADRs iniciais curtos.
 
 ### Kubernetes
 
-- Original: os servicos deverao ser preparados para execucao em Kubernetes.
-- Proposta: componentes implantaveis devem ser containerizados e projetados para operacao cloud-native; a adocao concreta de Kubernetes, Helm, autoscaling e policies deve ser decidida por ADR conforme ambiente alvo.
-- Justificativa: preparacao operacional e diferente de adocao imediata.
+- Original: os serviços deverão ser preparados para execução em Kubernetes.
+- Proposta: componentes implantáveis devem ser containerizados e projetados para operação cloud-native; a adoção concreta de Kubernetes, Helm, autoscaling e policies deve ser decidida por ADR conforme ambiente alvo.
+- Justificativa: preparação operacional é diferente de adoção imediata.
 - Impacto: reduz complexidade inicial sem perder portabilidade.
-- Risco: se o ambiente alvo ja exigir Kubernetes, a decisao precisa ser antecipada.
+- Risco: se o ambiente alvo já exigir Kubernetes, a decisão precisa ser antecipada.
 
 ### Cobertura de testes
 
-- Original: cobertura global minima de 80%, codigo novo de 90%, dominio e motor de decisao de 95%.
-- Proposta: manter como metas iniciais recomendadas e transformar em quality gates graduais; dominio, politicas, calculos financeiros e motor de decisao devem ter gate mais rigoroso desde cedo.
-- Justificativa: cobertura global em repositorio nascente pode oscilar e incentivar testes sem valor.
-- Impacto: foca protecao onde o risco e maior.
-- Risco: sem metas claras, cobertura pode degradar; mitigar com dashboard e bloqueio para codigo critico.
+- Original: cobertura global mínima de 80%, código novo de 90%, domínio e motor de decisão de 95%.
+- Proposta: manter como metas iniciais recomendadas e transformar em quality gates graduais; domínio, políticas, cálculos financeiros e motor de decisão devem ter gate mais rigoroso desde cedo.
+- Justificativa: cobertura global em repositório nascente pode oscilar e incentivar testes sem valor.
+- Impacto: foca proteção onde o risco e maior.
+- Risco: sem metas claras, cobertura pode degradar; mitigar com dashboard e bloqueio para código crítico.
 
 ### Eventos e filas
 
 - Original: eventos devem ser utilizados quando houver necessidade real.
-- Proposta: reforcar que o MVP pode comecar sem broker externo; eventos de dominio podem existir internamente, com broker apenas se houver assincronia, fan-out, resiliência ou integracao entre contextos.
-- Justificativa: alinha com monolito modular e evita arquitetura distribuida prematura.
+- Proposta: reforcar que o MVP pode começar sem broker externo; eventos de domínio podem existir internamente, com broker apenas se houver assincronia, fan-out, resiliência ou integração entre contextos.
+- Justificativa: alinha com monólito modular e evita arquitetura distribuída prematura.
 - Impacto: reduz custo operacional e complexidade de testes.
-- Risco: certas integracoes ou backfills podem exigir assincronia cedo; registrar gatilhos objetivos.
+- Risco: certas integrações ou backfills podem exigir assincronia cedo; registrar gatilhos objetivos.
 
 ### Modelos de IA
 
-- Original: modelos generativos nao devem tomar decisoes finais sem controles deterministicos, validacao e aprovacao formal.
-- Proposta: no MVP, tratar qualquer modelo como insumo explicavel da politica de decisao; decisao final deve ser policy-driven ate que um ADR aprove outro modelo operacional.
-- Justificativa: credito exige explicabilidade, reprodutibilidade e governanca.
-- Impacto: reduz risco regulatorio e operacional.
-- Risco: pode limitar automacao avancada; mitigar com roadmap de modelos, validacao e monitoramento.
+- Original: modelos generativos não devem tomar decisões finais sem controles deterministicos, validação e aprovação formal.
+- Proposta: no MVP, tratar qualquer modelo como insumo explicável da política de decisão; decisão final deve ser policy-driven até que um ADR aprove outro modelo operacional.
+- Justificativa: crédito exige explicabilidade, reprodutibilidade e governança.
+- Impacto: reduz risco regulatório e operacional.
+- Risco: pode limitar automação avancada; mitigar com roadmap de modelos, validação e monitoramento.
 
 ### Auditoria
 
-- Original: registros de auditoria devem possuir protecao contra alteracao indevida.
-- Proposta: decidir em ADR o nivel de protecao: append-only log, trilha tamper-evident, armazenamento WORM, assinatura/hash encadeado ou controle via banco com permissoes restritas.
-- Justificativa: "protecao" e correto, mas nao verificavel sem mecanismo.
-- Impacto: torna auditabilidade testavel e operavel.
+- Original: registros de auditoria devem possuir proteção contra alteração indevida.
+- Proposta: decidir em ADR o nível de proteção: append-only log, trilha tamper-evident, armazenamento WORM, assinatura/hash encadeado ou controle via banco com permissões restritas.
+- Justificativa: "proteção" é correto, mas não verificável sem mecanismo.
+- Impacto: torna auditabilidade testavel e operável.
 - Risco: mecanismo forte demais cedo pode elevar custo; fraco demais pode falhar em auditoria.
 
-### Dados usados em decisao
+### Dados usados em decisão
 
-- Original: toda decisao deve registrar atributos utilizados, fontes de dados e regras executadas.
-- Proposta: registrar referencias, snapshots minimizados, hashes, versoes e derivados explicaveis conforme politica de retencao, evitando persistir payloads sensiveis completos quando desnecessario.
-- Justificativa: concilia auditabilidade com privacidade por padrao.
-- Impacto: melhora conformidade e reduz exposicao.
-- Risco: reprodutibilidade pode ficar limitada; documentar limites legais e tecnicos.
+- Original: toda decisão deve registrar atributos utilizados, fontes de dados e regras executadas.
+- Proposta: registrar referencias, snapshots minimizados, hashes, versões e derivados explicáveis conforme política de retenção, evitando persistir payloads sensíveis completos quando desnecessario.
+- Justificativa: concilia auditabilidade com privacidade por padrão.
+- Impacto: melhora conformidade e reduz exposição.
+- Risco: reprodutibilidade pode ficar limitada; documentar limites legais e técnicos.
 
-## Decisoes pendentes
+## Decisões pendentes
 
 - Segmento inicial do ICP: banco, fintech, FIDC, BNPL, varejo, marketplace ou outro.
-- Geografia e regime regulatorio prioritario.
-- Produtos de credito cobertos no MVP.
-- Fluxos MVP: originacao, decisao, analise manual, monitoramento ou todos em escopo reduzido.
+- Geografia e regime regulatório prioritario.
+- Produtos de crédito cobertos no MVP.
+- Fluxos MVP: originacao, decisão, análise manual, monitoramento ou todos em escopo reduzido.
 - Fontes de dados internas e externas prioritarias.
-- Estrategia de multi-tenancy: schema compartilhado, schema por tenant, banco por tenant ou hibrido.
-- Modelo de autenticacao: provedor proprio, IdP externo, OIDC/SAML, chaves de API tecnicas ou combinacao.
-- Modelo de autorizacao: RBAC inicial e criterios objetivos para evoluir para ABAC.
-- Politica de retencao, mascaramento, anonimização e descarte.
+- Estratégia de multi-tenancy: schema compartilhado, schema por tenant, banco por tenant ou hibrido.
+- Modelo de autenticação: provedor próprio, IdP externo, OIDC/SAML, chaves de API técnicas ou combinação.
+- Modelo de autorização: RBAC inicial e critérios objetivos para evoluir para ABAC.
+- Política de retenção, mascaramento, anonimização e descarte.
 - Nivel de imutabilidade da auditoria.
-- Latencia alvo para decisao automatica e consulta.
+- Latencia alvo para decisão automática e consulta.
 - Disponibilidade alvo por plano/cliente.
-- Estrategia de idempotencia por operacao.
+- Estratégia de idempotência por operação.
 - Escopo de IA/modelos no MVP.
 - Necessidade e momento de Redis.
 - Necessidade e momento de mensageria.
-- Ambiente de execucao inicial: container simples, plataforma gerenciada, Kubernetes ou hibrido.
-- Quality gates minimos para primeiro merge e para deployment.
-- Estrategia de versionamento de API, eventos e schemas.
-- Modelo de evidencias para PRs, auditoria e releases.
+- Ambiente de execução inicial: container simples, plataforma gerenciada, Kubernetes ou hibrido.
+- Quality gates mínimos para primeiro merge e para deployment.
+- Estratégia de versionamento de API, eventos e schemas.
+- Modelo de evidências para PRs, auditoria e releases.
 
-## Requisitos nao funcionais verificaveis
+## Requisitos não funcionais verificáveis
 
-### Seguranca
+### Segurança
 
-- Todo endpoint deve exigir autenticacao, exceto endpoints explicitamente allowlisted em documento aprovado.
-- Toda operacao deve validar usuario, tenant, papel, permissao, recurso e contexto antes de executar o caso de uso.
+- Todo endpoint deve exigir autenticação, exceto endpoints explicitamente allowlisted em documento aprovado.
+- Toda operação deve validar usuário, tenant, papel, permissão, recurso e contexto antes de executar o caso de uso.
 - Nenhum endpoint deve aceitar `tenant_id` do payload como fonte de verdade sem cruzamento com a identidade autenticada.
 - APIs devem bloquear stack traces, mensagens internas de banco, tokens, secrets e detalhes de infraestrutura em respostas.
-- Testes de seguranca devem cobrir token ausente, invalido, expirado, permissao insuficiente, acesso cross-tenant, enumeracao de recursos, entrada maliciosa, rate limiting, replay e idempotencia.
+- Testes de segurança devem cobrir token ausente, invalido, expirado, permissão insuficiente, acesso cross-tenant, enumeração de recursos, entrada maliciosa, rate limiting, replay e idempotência.
 
 ### Privacidade
 
-- Logs nao devem conter CPF completo, dados bancarios, tokens, senhas, documentos, biometria, dados de cartao, credenciais ou payloads sensiveis completos.
+- Logs não devem conter CPF completo, dados bancarios, tokens, senhas, documentos, biometria, dados de cartão, credenciais ou payloads sensíveis completos.
 - Dados de teste devem ser sinteticos.
-- Cada dado pessoal ou sensivel persistido deve ter finalidade, base de uso, responsavel e politica de retencao definidos.
-- Decisoes devem armazenar apenas dados necessarios para explicabilidade, auditoria e reprodutibilidade dentro dos limites aprovados.
+- Cada dado pessoal ou sensível persistido deve ter finalidade, base de uso, responsável e política de retenção definidos.
+- Decisões devem armazenar apenas dados necessários para explicabilidade, auditoria e reprodutibilidade dentro dos limites aprovados.
 
 ### Performance
 
-- Cada endpoint critico deve declarar timeout, comportamento de retry e meta de latencia antes de ser considerado pronto para producao.
-- Operacoes de decisao automatica devem ter SLO de latencia definido por fluxo e por tipo de integracao.
-- Migrations devem avaliar locks, volume, indices e compatibilidade de deployment antes de merge.
+- Cada endpoint crítico deve declarar timeout, comportamento de retry e meta de latência antes de ser considerado pronto para produção.
+- Operações de decisão automática devem ter SLO de latência definido por fluxo e por tipo de integração.
+- Migrations devem avaliar locks, volume, índices e compatibilidade de deployment antes de merge.
 
 ### Disponibilidade
 
-- Todo componente implantavel deve expor health check e readiness check.
-- Funcionalidades criticas devem definir alertas, limites esperados e plano de contingencia.
-- Integracoes externas criticas devem definir timeout, fallback ou degradacao controlada.
+- Todo componente implantável deve expor health check e readiness check.
+- Funcionalidades críticas devem definir alertas, limites esperados e plano de contingência.
+- Integrações externas críticas devem definir timeout, fallback ou degradação controlada.
 
 ### Escalabilidade
 
-- A extracao para microsservico so pode ocorrer mediante ADR que comprove escalabilidade independente, isolamento de falhas, ciclo de entrega independente, exigencia regulatoria, volume operacional, autonomia de equipe ou tecnologia distinta.
-- Componentes implantaveis devem permitir configuracao externa e shutdown gracioso.
-- A estrategia de tenant deve declarar limites esperados de volume por tenant e caminho de evolucao.
+- A extração para microsserviço só pode ocorrer mediante ADR que comprove escalabilidade independente, isolamento de falhas, ciclo de entrega independente, exigencia regulatória, volume operacional, autonomia de equipe ou tecnologia distinta.
+- Componentes implantáveis devem permitir configuracao externa e shutdown gracioso.
+- A estratégia de tenant deve declarar limites esperados de volume por tenant e caminho de evolução.
 
 ### Resiliencia
 
-- Operacoes com risco de duplicidade devem implementar idempotencia ou registrar justificativa para nao implementar.
+- Operações com risco de duplicidade devem implementar idempotência ou registrar justificativa para não implementar.
 - Consumidores de eventos, quando existirem, devem tratar duplicidade, ordem, retries, DLQ, versionamento, tenant e correlation ID.
-- Integracoes externas devem ter tratamento documentado de indisponibilidade.
+- Integrações externas devem ter tratamento documentado de indisponibilidade.
 
 ### Auditabilidade
 
-- Toda decisao de credito deve registrar identificador, tenant, proposta, solicitante, horario, versoes de politica/modelo, atributos utilizados, fontes, regras, resultado, codigos de motivo, score, recomendacoes, intervencao manual, justificativa e correlation ID.
+- Toda decisão de crédito deve registrar identificador, tenant, proposta, solicitante, horário, versões de política/modelo, atributos utilizados, fontes, regras, resultado, códigos de motivo, score, recomendações, intervenção manual, justificativa e correlation ID.
 - Auditoria deve ser armazenada separadamente de logs operacionais.
-- Alteracoes de politica, modelo, permissao, exportacao e acesso a dados sensiveis devem gerar evento de auditoria.
-- O mecanismo de protecao contra alteracao de auditoria deve ser definido e testado.
+- Alterações de política, modelo, permissão, exportacao e acesso a dados sensíveis devem gerar evento de auditoria.
+- O mecanismo de proteção contra alteração de auditoria deve ser definido e testado.
 
 ### Observabilidade
 
-- Todo componente implantavel deve gerar logs estruturados, metricas, traces e correlation ID.
-- Novas funcionalidades criticas devem declarar metricas tecnicas, metricas de negocio, limites e condicoes de alerta.
-- Logs devem ser seguros por desenho e testados contra vazamento de dados sensiveis.
+- Todo componente implantável deve gerar logs estruturados, métricas, traces e correlation ID.
+- Novas funcionalidades críticas devem declarar métricas técnicas, métricas de negócio, limites e condições de alerta.
+- Logs devem ser seguros por desenho e testados contra vazamento de dados sensíveis.
 
 ### Manutenibilidade
 
-- Dominio nao deve depender diretamente de FastAPI, SQLAlchemy, brokers, Redis, provedores externos, Kubernetes ou bibliotecas de observabilidade.
-- Controllers devem limitar-se a contrato, autenticacao/autorizacao, chamada de caso de uso, transformacao e resposta.
-- Dependencias novas devem apresentar necessidade, manutencao, maturidade, documentacao, seguranca, licenca, compatibilidade, performance, custo operacional e alternativas.
+- Domínio não deve depender diretamente de FastAPI, SQLAlchemy, brokers, Redis, provedores externos, Kubernetes ou bibliotecas de observabilidade.
+- Controllers devem limitar-se a contrato, autenticação/autorização, chamada de caso de uso, transformação e resposta.
+- Dependencias novas devem apresentar necessidade, manutenção, maturidade, documentação, segurança, licença, compatibilidade, performance, custo operacional e alternativas.
 
 ### Testabilidade
 
-- Toda alteracao de comportamento deve ter teste automatizado proporcional ao risco.
-- Regras de negocio, validacoes, calculos financeiros, politicas de credito/risco, transformacoes e erros devem ter testes unitarios.
-- Mudancas em banco, migrations, repositorios, cache, eventos, autenticacao, autorizacao, serializacao, APIs externas, transacoes e infraestrutura devem avaliar teste de integracao.
-- APIs, eventos, schemas, webhooks e integracoes externas devem ter testes de contrato quando alterados.
+- Toda alteração de comportamento deve ter teste automatizado proporcional ao risco.
+- Regras de negócio, validações, cálculos financeiros, políticas de crédito/risco, transformações e erros devem ter testes unitários.
+- Mudanças em banco, migrations, repositórios, cache, eventos, autenticação, autorização, serialização, APIs externas, transações e infraestrutura devem avaliar teste de integração.
+- APIs, eventos, schemas, webhooks e integrações externas devem ter testes de contrato quando alterados.
 
 ### Interoperabilidade
 
-- APIs devem ter schemas explicitos, OpenAPI, versionamento, paginacao quando aplicavel e erros padronizados.
-- Integracoes externas devem usar portas/adapters, contrato versionado e sandbox ou mock.
-- Datas devem usar UTC e ISO 8601; valores monetarios devem evitar ponto flutuante binario.
+- APIs devem ter schemas explícitos, OpenAPI, versionamento, paginação quando aplicável e erros padronizados.
+- Integrações externas devem usar portas/adapters, contrato versionado e sandbox ou mock.
+- Datas devem usar UTC e ISO 8601; valores monetários devem evitar ponto flutuante binário.
 
 ### Portabilidade
 
-- Componentes implantaveis devem possuir imagens de container com versoes fixas, usuario nao root, dependencias apenas de runtime, sem secrets e health check adequado.
-- Infraestrutura deve ser versionada e nao conter credenciais.
-- A adocao de Kubernetes, Helm ou manifests deve ser decidida conforme ambiente alvo.
+- Componentes implantáveis devem possuir imagens de container com versões fixas, usuário não root, dependências apenas de runtime, sem secrets e health check adequado.
+- Infraestrutura deve ser versionada e não conter credenciais.
+- A adoção de Kubernetes, Helm ou manifests deve ser decidida conforme ambiente alvo.
 
 ### Continuidade
 
 - Migrations destrutivas devem seguir expand-and-contract.
-- Backfills extensos nao devem ser obrigatoriamente executados na mesma transacao da migration.
-- Mudancas incompatíveis em contratos devem gerar nova versao, periodo de compatibilidade, plano de migracao e documentacao.
-- Modelos devem possuir monitoramento, politica de atualizacao e estrategia de rollback.
+- Backfills extensos não devem ser obrigatoriamente executados na mesma transação da migration.
+- Mudanças incompatíveis em contratos devem gerar nova versão, período de compatibilidade, plano de migração e documentação.
+- Modelos devem possuir monitoramento, política de atualização e estratégia de rollback.
 
 ## Riscos iniciais
 
-- Risco regulatorio: falta de definicao de jurisdicao, retencao e requisitos legais pode invalidar decisoes de dados e auditoria.
-- Risco de privacidade: auditabilidade excessiva pode levar ao armazenamento indevido de dados sensiveis.
-- Risco de arquitetura prematura: Kubernetes, mensageria, Redis e microsservicos podem ser adotados antes de necessidade comprovada.
-- Risco de tenant leakage: multi-tenancy transversal exige testes e padroes desde o primeiro modelo de dados.
-- Risco de explicabilidade fraca: modelos ou regras opacas podem gerar decisoes impossiveis de justificar.
-- Risco de vendor lock-in: integracoes externas ou IdP podem contaminar o dominio se nao forem isolados por portas/adapters.
-- Risco operacional: quality gates amplos demais no inicio podem bloquear velocidade; fracos demais podem permitir regressao em dominio critico.
-- Risco de reproducibilidade: minimizacao de dados pode limitar reproducao de decisoes se snapshots, versoes e derivados nao forem desenhados.
-- Risco de autorizacao: RBAC pode ser insuficiente para politicas contextuais de credito; ABAC nao deve ser adotado sem caso concreto.
-- Risco de governanca de IA: modelos sem owner, versao, vies, rollback e monitoramento podem criar risco tecnico e reputacional.
+- Risco regulatório: falta de definição de jurisdição, retenção e requisitos legais pode invalidar decisões de dados e auditoria.
+- Risco de privacidade: auditabilidade excessiva pode levar ao armazenamento indevido de dados sensíveis.
+- Risco de arquitetura prematura: Kubernetes, mensageria, Redis e microsserviços podem ser adotados antes de necessidade comprovada.
+- Risco de tenant leakage: multi-tenancy transversal exige testes e padrões desde o primeiro modelo de dados.
+- Risco de explicabilidade fraca: modelos ou regras opacas podem gerar decisões impossíveis de justificar.
+- Risco de vendor lock-in: integrações externas ou IdP podem contaminar o domínio se não forem isolados por portas/adapters.
+- Risco operacional: quality gates amplos demais no início podem bloquear velocidade; fracos demais podem permitir regressao em domínio crítico.
+- Risco de reprodutibilidade: minimização de dados pode limitar reprodução de decisões se snapshots, versões e derivados não forem desenhados.
+- Risco de autorização: RBAC pode ser insuficiente para políticas contextuais de crédito; ABAC não deve ser adotado sem caso concreto.
+- Risco de governança de IA: modelos sem owner, versão, viés, rollback e monitoramento podem criar risco técnico e reputacional.
 
-## ADRs necessarios
+## ADRs necessários
 
-- ADR-001: Monorepo e estrutura inicial do repositorio.
-- ADR-002: Monolito modular como arquitetura inicial e criterios de extracao.
+- ADR-001: Monorepo e estrutura inicial do repositório.
+- ADR-002: Monolito modular como arquitetura inicial e critérios de extração.
 - ADR-003: Stack backend Python e framework web.
 - ADR-004: Persistencia relacional, PostgreSQL, SQLAlchemy e Alembic.
-- ADR-005: Estrategia de multi-tenancy.
-- ADR-006: Autenticacao e provedores de identidade.
-- ADR-007: Autorizacao inicial RBAC e criterios para ABAC.
-- ADR-008: Estrategia de auditoria e protecao contra alteracao.
-- ADR-009: Explicabilidade e reproducibilidade de decisoes.
-- ADR-010: Estrategia para modelos de risco, IA e governanca.
-- ADR-011: Integracoes externas por portas/adapters.
-- ADR-012: Idempotencia, correlation ID e rastreabilidade.
-- ADR-013: Eventos/mensageria e gatilhos para adocao.
+- ADR-005: Estratégia de multi-tenancy.
+- ADR-006: Autenticação e provedores de identidade.
+- ADR-007: Autorização inicial RBAC e critérios para ABAC.
+- ADR-008: Estratégia de auditoria e proteção contra alteração.
+- ADR-009: Explicabilidade e reprodutibilidade de decisões.
+- ADR-010: Estratégia para modelos de risco, IA e governança.
+- ADR-011: Integrações externas por portas/adapters.
+- ADR-012: Idempotência, correlation ID e rastreabilidade.
+- ADR-013: Eventos/mensageria e gatilhos para adoção.
 - ADR-014: Observabilidade.
 - ADR-015: Containers e ambiente de deploy.
-- ADR-016: Kubernetes, Helm/manifests e infraestrutura como codigo.
-- ADR-017: Politica de dados sensiveis, retencao e descarte.
-- ADR-018: Quality gates e estrategia de testes.
+- ADR-016: Kubernetes, Helm/manifests e infraestrutura como código.
+- ADR-017: Política de dados sensíveis, retenção e descarte.
+- ADR-018: Quality gates e estratégia de testes.
 
 ## Matriz de distribuicao das regras por arquivo
 
 | Destino | Conteudo recomendado |
 | --- | --- |
-| Product Brief | Problema, publico B2B, proposta de valor, diferenciais de governanca, explicabilidade, auditabilidade, multi-tenancy e reducao de tempo de decisao. |
-| PRD | Fluxos funcionais, personas, requisitos funcionais, NFRs verificaveis, escopo MVP, criterios de aceite, decisoes pendentes de produto e riscos. |
-| Architecture | Monolito modular, modulos, fronteiras, dominio vs infraestrutura, dados, integracoes, observabilidade, deploy, seguranca e evolucao para servicos. |
-| `docs/adr/` | Decisoes listadas em ADRs necessarios, sempre com alternativas, consequencias e riscos. |
-| `_bmad-output/project-context.md` | Invariantes para agentes: seguranca, privacidade, tenant, auditabilidade, explicabilidade, nao microsservicos automaticos, nao dependencia sem justificativa. |
-| `AGENTS.md` | Instrucoes operacionais para Codex: ler contexto, respeitar ADRs, nao introduzir libs sem justificativa, nao criar endpoint publico sem aprovacao, testar e documentar. |
-| `docs/standards/` | Padroes de API, erros, idempotencia, logs seguros, testes, migrations, integracoes, modelos, audit trail e pull requests. |
-| `docs/architecture/` | Visao C4 ou similar, fronteiras de modulo, estrategia de tenant, dados, seguranca, observabilidade, deploy e evolucao. |
-| `docs/runbooks/` | Incidentes de integracao externa, falha de decisao, vazamento de dados, rollback de modelo, falha de migration, degradacao operacional. |
-| `docs/api/` | Versionamento, schemas, erros, exemplos, idempotencia, paginacao, correlation ID e contratos. |
-| `README.md` | Visao geral, pre-requisitos, execucao local, estrutura, comandos principais e links para docs. |
-| `CONTRIBUTING.md` | Fluxo de PR, exigencias de teste, evidencias, migrations, contratos, documentacao e seguranca. |
-| `pyproject.toml` | Versoes oficiais, lint, formatacao, tipagem, pytest, coverage e dependencias aprovadas. |
-| Pipelines CI/CD | Gates de lint, typecheck, testes, coverage, seguranca, dependencias, migrations, contratos, build de imagem e vulnerabilidades. |
+| Product Brief | Problema, público B2B, proposta de valor, diferenciais de governança, explicabilidade, auditabilidade, multi-tenancy e redução de tempo de decisão. |
+| PRD | Fluxos funcionais, personas, requisitos funcionais, NFRs verificáveis, escopo MVP, critérios de aceite, decisões pendentes de produto e riscos. |
+| Architecture | Monolito modular, módulos, fronteiras, domínio vs infraestrutura, dados, integrações, observabilidade, deploy, segurança e evolução para serviços. |
+| `docs/adr/` | Decisões listadas em ADRs necessários, sempre com alternativas, consequências e riscos. |
+| `_bmad-output/project-context.md` | Invariantes para agentes: segurança, privacidade, tenant, auditabilidade, explicabilidade, não microsserviços automáticos, não dependência sem justificativa. |
+| `AGENTS.md` | Instrucoes operacionais para Codex: ler contexto, respeitar ADRs, não introduzir libs sem justificativa, não criar endpoint público sem aprovação, testar e documentar. |
+| `docs/standards/` | Padrões de API, erros, idempotência, logs seguros, testes, migrations, integrações, modelos, audit trail e pull requests. |
+| `docs/architecture/` | Visão C4 ou similar, fronteiras de módulo, estratégia de tenant, dados, segurança, observabilidade, deploy e evolução. |
+| `docs/runbooks/` | Incidentes de integração externa, falha de decisão, vazamento de dados, rollback de modelo, falha de migration, degradação operacional. |
+| `docs/api/` | Versionamento, schemas, erros, exemplos, idempotência, paginação, correlation ID e contratos. |
+| `README.md` | Visão geral, pré-requisitos, execução local, estrutura, comandos principais e links para docs. |
+| `CONTRIBUTING.md` | Fluxo de PR, exigências de teste, evidências, migrations, contratos, documentação e segurança. |
+| `pyproject.toml` | Versões oficiais, lint, formatação, tipagem, pytest, coverage e dependências aprovadas. |
+| Pipelines CI/CD | Gates de lint, typecheck, testes, coverage, segurança, dependências, migrations, contratos, build de imagem e vulnerabilidades. |
 | Manifests/deploy | Containers, probes, recursos, secrets externos, rollout, rollback, service accounts, network policies e configuracao externa. |
-| Template de PR | Objetivo, story, impactos, riscos, testes, migrations, contratos, docs, evidencias e pendencias. |
+| Template de PR | Objetivo, story, impactos, riscos, testes, migrations, contratos, docs, evidências e pendências. |
 
-## Recomendacoes para o Product Brief
+## Recomendações para o Product Brief
 
-- Posicionar o produto como plataforma de decisao de credito governavel, nao apenas score/rating.
-- Priorizar beneficios de negocio: velocidade, consistencia, reducao de fraude, governanca, explicabilidade e auditabilidade.
+- Posicionar o produto como plataforma de decisão de crédito governável, não apenas score/rating.
+- Priorizar benefícios de negócio: velocidade, consistência, redução de fraude, governança, explicabilidade e auditabilidade.
 - Definir ICP inicial e primeiro recorte de mercado.
-- Explicitar diferenciais: multi-tenancy seguro, politicas versionadas, trilha de auditoria, codigos de motivo, integracoes isoladas e monitoramento pos-concessao.
-- Registrar preocupacoes regulatórias e de privacidade como fatores de confianca e barreiras de entrada.
-- Evitar prometer IA autonoma como valor central antes de decidir governanca de modelos.
+- Explicitar diferenciais: multi-tenancy seguro, políticas versionadas, trilha de auditoria, códigos de motivo, integrações isoladas e monitoramento pós-concessão.
+- Registrar preocupações regulatórias e de privacidade como fatores de confiança e barreiras de entrada.
+- Evitar prometer IA autônoma como valor central antes de decidir governança de modelos.
 
-## Recomendacoes para o PRD
+## Recomendações para o PRD
 
-- Definir escopo MVP com fluxos minimos: autenticacao, tenant, proposta, politica, decisao, explicabilidade, auditoria e consulta.
-- Transformar os requisitos nao funcionais acima em criterios de aceite por feature.
-- Incluir requisitos de tenant em toda entidade e operacao sensivel.
-- Exigir codigos de motivo, regras acionadas e versoes de politica/modelo no resultado de decisao quando aplicavel.
-- Definir fluxos de analise manual, override, aprovacao, reprovação e justificativa.
-- Incluir historias para sandbox/mock de integracoes externas.
-- Definir politica de idempotencia para criacao de proposta e execucao de decisao.
+- Definir escopo MVP com fluxos mínimos: autenticação, tenant, proposta, política, decisão, explicabilidade, auditoria e consulta.
+- Transformar os requisitos não funcionais acima em critérios de aceite por feature.
+- Incluir requisitos de tenant em toda entidade e operação sensível.
+- Exigir códigos de motivo, regras acionadas e versões de política/modelo no resultado de decisão quando aplicável.
+- Definir fluxos de análise manual, override, aprovação, reprovação e justificativa.
+- Incluir histórias para sandbox/mock de integrações externas.
+- Definir política de idempotência para criação de proposta e execução de decisão.
 - Registrar perguntas pendentes como bloqueios ou assumptions rastreaveis.
 
-## Recomendacoes para a Architecture
+## Recomendações para a Architecture
 
-- Comecar com monolito modular, fronteiras explicitas e dominio isolado de frameworks, banco, provedores e observabilidade.
-- Definir modulos iniciais por capacidade de negocio: identidade, tenants, propostas, politicas, motor de decisao, risco, antifraude, auditoria, integracoes, relatorios e notificacoes.
-- Documentar alternativas para multi-tenancy antes de escolher uma estrategia.
-- Tratar mensageria como decisao condicional, com gatilhos objetivos.
-- Tratar Redis como dependencia opcional por caso de uso: cache, rate limiting, locks, filas leves ou sessoes, se necessario.
-- Definir trilha de auditoria separada de logs e mecanismo de protecao.
-- Definir estrategia de explicabilidade e reproducibilidade antes de introduzir modelos complexos.
-- Criar padrao de adapters para fontes externas e impedir dependencia direta do dominio.
-- Definir quality gates por risco: dominio e motor de decisao com rigor maior.
+- Começar com monólito modular, fronteiras explicitas e domínio isolado de frameworks, banco, provedores e observabilidade.
+- Definir módulos iniciais por capacidade de negócio: identidade, tenants, propostas, políticas, motor de decisão, risco, antifraude, auditoria, integrações, relatórios e notificações.
+- Documentar alternativas para multi-tenancy antes de escolher uma estratégia.
+- Tratar mensageria como decisão condicional, com gatilhos objetivos.
+- Tratar Redis como dependência opcional por caso de uso: cache, rate limiting, locks, filas leves ou sessoes, se necessário.
+- Definir trilha de auditoria separada de logs e mecanismo de proteção.
+- Definir estratégia de explicabilidade e reprodutibilidade antes de introduzir modelos complexos.
+- Criar padrão de adapters para fontes externas e impedir dependência direta do domínio.
+- Definir quality gates por risco: domínio e motor de decisão com rigor maior.
 
-## Alteracoes sugeridas em relacao ao documento original
+## Alterações sugeridas em relacao ao documento original
 
-- Reclassificar "stack inicial sugerida" como recomendacao tecnica que requer ADR/padrao antes de virar obrigatoria, exceto Python backend.
-- Reclassificar Kubernetes como preparo de portabilidade e operacao, nao como decisao automatica de plataforma no MVP.
+- Reclassificar "stack inicial sugerida" como recomendação técnica que requer ADR/padrão antes de virar obrigatória, exceto Python backend.
+- Reclassificar Kubernetes como preparo de portabilidade e operação, não como decisão automática de plataforma no MVP.
 - Transformar metas de cobertura em gates graduais por criticidade.
-- Explicitar que broker/mensageria nao e requisito inicial; eventos podem comecar internos ao monolito.
-- Explicitar que modelos sao insumos da politica de decisao no MVP, nao decisores finais.
-- Especificar que auditoria precisa de ADR sobre mecanismo de protecao contra alteracao.
-- Ajustar reproducibilidade para conviver com minimizacao, retencao e privacidade.
+- Explicitar que broker/mensageria não é requisito inicial; eventos podem começar internos ao monólito.
+- Explicitar que modelos são insumos da política de decisão no MVP, não decisores finais.
+- Especificar que auditoria precisa de ADR sobre mecanismo de proteção contra alteração.
+- Ajustar reprodutibilidade para conviver com minimização, retenção e privacidade.
 - Separar explicabilidade de auditabilidade como requisitos complementares, mas distintos.
 
 ## Proximos passos sugeridos no fluxo BMAD
 
-- `bmad-product-brief`: criar o Product Brief com ICP, problema, proposta de valor e escopo estrategico.
-- `bmad-prd`: transformar a visao em requisitos funcionais, NFRs e criterios de aceite.
-- `bmad-architecture`: criar a arquitetura inicial com monolito modular, fronteiras, multi-tenancy, seguranca, auditoria e deploy.
-- `bmad-spec`: destilar as decisoes em contrato operacional para downstream.
-- `bmad-create-epics-and-stories`: quebrar o MVP em epicos e stories.
+- `bmad-product-brief`: criar o Product Brief com ICP, problema, proposta de valor e escopo estratégico.
+- `bmad-prd`: transformar a visão em requisitos funcionais, NFRs e critérios de aceite.
+- `bmad-architecture`: criar a arquitetura inicial com monólito modular, fronteiras, multi-tenancy, segurança, auditoria e deploy.
+- `bmad-spec`: destilar as decisões em contrato operacional para downstream.
+- `bmad-create-epics-and-stories`: quebrar o MVP em épicos e stories.
 - `bmad-generate-project-context`: criar o contexto persistente para agentes.
-- `bmad-check-implementation-readiness`: validar Product Brief, PRD, Architecture e epicos antes de desenvolvimento.
+- `bmad-check-implementation-readiness`: validar Product Brief, PRD, Architecture e épicos antes de desenvolvimento.
