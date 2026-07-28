@@ -32,6 +32,8 @@ Status: gate executado; autofixes críticos aplicados; arquitetura recomendada p
 - `reviews/review-rubric-walker.md`
 - `reviews/review-current-tech.md`
 - `reviews/review-adversarial-seams.md`
+- `reviews/review-technology-freshness.md`
+- `reviews/review-security-compliance.md`
 
 ## Veredito consolidado
 
