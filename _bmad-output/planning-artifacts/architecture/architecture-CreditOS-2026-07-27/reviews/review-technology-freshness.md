@@ -1,7 +1,9 @@
 # Review — Atualidade Tecnológica
 
-Veredito: aprovado com ressalvas; tecnologias estão majoritariamente atuais e bem escolhidas, mas há lacunas de contrato/segurança que não deveriam ficar implícitas.
+Data: 2026-07-28
+Status: review capturado antes dos autofixes consolidados em `reviews/review-gate-summary.md`.
 
+Veredito: aprovado com ressalvas; tecnologias estão majoritariamente atuais e bem escolhidas, mas há lacunas de contrato/segurança que não deveriam ficar implícitas.
 ## Achados priorizados
 
 1. Severidade alta — CloudEvents usa atributos inválidos (`tenant_id`, `trace_id`, etc.) e omite `specversion`. Recomendação: autofix.
