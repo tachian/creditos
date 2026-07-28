@@ -1,7 +1,9 @@
 # Review — Segurança e Compliance
 
-Veredito: aprovado com ressalvas fortes; bom spine, mas ainda não pronto para produção regulada.
+Data: 2026-07-28
+Status: review capturado antes dos autofixes consolidados em `reviews/review-gate-summary.md`.
 
+Veredito: aprovado com ressalvas fortes; bom spine, mas ainda não pronto para produção regulada.
 ## Achados priorizados
 
 1. Severidade alta — LGPD operacional ficou deferida: papéis controlador/operador, direitos dos titulares, RIPD/DPIA, incidentes e bases legais precisam virar invariantes. Recomendação: discutir.
