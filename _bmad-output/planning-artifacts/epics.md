@@ -231,9 +231,9 @@ So that todas as operações futuras tenham um contexto confiável de tenant.
 **Acceptance Criteria:**
 
 **Given** um operador autorizado
-**When** ele cria um tenant com nome, status e `tenant_isolation_tier`
+**When** ele cria um tenant com nome e status (opcionalmente informando `tenant_isolation_tier`)
 **Then** o tenant é persistido com identificador único
-**And** o status inicial e o tier `bridge` são registrados.
+**And** o status inicial e o tier informado (default `bridge`) são registrados.
 
 **Given** uma consulta por tenant existente
 **When** o serviço recebe o identificador do tenant
