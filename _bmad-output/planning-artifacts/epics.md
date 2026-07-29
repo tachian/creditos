@@ -331,7 +331,7 @@ So that a integração seja previsível e não dependa de payload arbitrário.
 
 **Given** campos como `selected_plan`, `plan_id` ou payload livre sem dono
 **When** eles aparecem na submissão
-**Then** o sistema rejeita ou ignora conforme contrato documentado
+**Then** o sistema rejeita a submissão com erro padronizado
 **And** registra o motivo sem expor dado sensível.
 
 ### Story 2.2: Validação e Normalização da Proposta
