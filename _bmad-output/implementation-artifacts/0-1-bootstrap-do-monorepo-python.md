@@ -4,9 +4,9 @@ Status: ready-for-dev
 
 ## Story
 
-As a equipe de engenharia,
-I want criar a estrutura inicial do monorepo Python,
-so that todos os serviços e pacotes sigam a mesma base técnica desde o início.
+Como equipe de engenharia,
+quero criar a estrutura inicial do monorepo Python,
+para que todos os serviços e pacotes sigam a mesma base técnica desde o início.
 
 ## Acceptance Criteria
 
