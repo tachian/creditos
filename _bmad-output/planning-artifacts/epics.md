@@ -170,6 +170,12 @@ FR-26: Epic 8 - Callbacks/webhooks e validação E2E com integrações mockadas.
 
 ## Lista de Épicos
 
+### Epic 0: Fundação Técnica e Bootstrap da Plataforma
+A equipe consegue iniciar a implementação em um repositório padronizado, com monorepo Python, base DDD/hexagonal, contratos, execução local, observabilidade mínima, CI inicial e trilha explícita para supply chain/IaC.
+**FRs cobertos:** N/A — épico habilitador técnico para reduzir risco antes do Epic 1.
+
+**Notas de implementação:** Deve ser executado antes da Story 1.1. Não altera o escopo funcional do MVP e não cria novo microsserviço de domínio. Materializa AD-16, AD-13, AD-23 e parte operacional de AD-7/AD-12 como fundação rastreável.
+
 ### Epic 1: Acesso Seguro e Gestão de Tenants
 Usuários e clientes técnicos conseguem operar em tenants isolados, com autenticação, autorização e contexto confiável.
 **FRs cobertos:** FR-1, FR-2, FR-3
@@ -217,6 +223,136 @@ Clientes conseguem consultar decisões, receber callbacks/webhooks e validar um 
 **FRs cobertos:** FR-25, FR-26
 
 **Notas de implementação:** Deve incluir uma story final obrigatória chamada **Fluxo E2E de Análise com Integrações Mockadas**, validando submissão da proposta, mocks externos, decisão, auditoria, logs, métricas, consulta e/ou callback.
+
+## Epic 0: Fundação Técnica e Bootstrap da Plataforma
+
+A equipe consegue iniciar a implementação em um repositório padronizado, com monorepo Python, base DDD/hexagonal, contratos, execução local, observabilidade mínima, CI inicial e trilha explícita para supply chain/IaC.
+
+### Story 0.1: Bootstrap do Monorepo Python
+
+As a equipe de engenharia,
+I want criar a estrutura inicial do monorepo Python,
+So that todos os serviços e pacotes sigam a mesma base técnica desde o início.
+
+**Acceptance Criteria:**
+
+**Given** o repositório greenfield
+**When** o bootstrap inicial é aplicado
+**Then** existem diretórios base `services/`, `packages/`, `tests/`, `infra/`, `docs/` e `scripts/`
+**And** existe configuração raiz de workspace `uv`, lock único, Ruff, Pyright progressivo e pytest.
+
+**Given** um novo serviço ou pacote
+**When** ele é incluído no workspace
+**Then** usa comandos padronizados de instalação, lint, typecheck e testes
+**And** não introduz dependências fora do lock aprovado.
+
+### Story 0.2: Template Base de Microsserviço DDD e Hexagonal
+
+As a desenvolvedor,
+I want um template base de microsserviço alinhado a DDD e arquitetura hexagonal,
+So that cada bounded context comece com fronteiras claras e sem acoplamento indevido.
+
+**Acceptance Criteria:**
+
+**Given** um microsserviço criado a partir do template
+**When** a estrutura é inspecionada
+**Then** contém `domain`, `application`, `adapters` e `bootstrap`
+**And** o domínio não depende de FastAPI, Pydantic de borda, SQLAlchemy, Alembic, gRPC, NATS, OpenTelemetry, provedores externos ou Kubernetes.
+
+**Given** bibliotecas em `packages/`
+**When** uma dependência compartilhada é adicionada
+**Then** ela se limita a contratos, observabilidade, segurança, testes ou utilidades técnicas genéricas
+**And** não compartilha entidades, regras, policies ou repositories de domínio entre bounded contexts.
+
+### Story 0.3: Estrutura Base de Contratos Versionados
+
+As a equipe de plataforma,
+I want organizar contratos OpenAPI, protobuf, AsyncAPI e schemas versionados,
+So that mudanças de API, gRPC, eventos e webhooks sejam testáveis antes das features de produto.
+
+**Acceptance Criteria:**
+
+**Given** a estrutura de contratos do repositório
+**When** contratos públicos, internos ou assíncronos são adicionados
+**Then** há local padronizado para OpenAPI, protobuf, AsyncAPI e schemas
+**And** cada contrato declara versão, owner, compatibilidade esperada e política de breaking change.
+
+**Given** uma mudança de contrato
+**When** os checks locais ou de CI são executados
+**Then** breaking changes sem nova versão ou plano de migração falham
+**And** consumidores podem adicionar expectativas/testes de compatibilidade.
+
+### Story 0.4: Harness Local com Dependências Mockadas
+
+As a desenvolvedor,
+I want executar localmente um conjunto mínimo de serviços e dependências mockadas,
+So that o fluxo técnico básico seja validado antes das histórias de produto.
+
+**Acceptance Criteria:**
+
+**Given** um ambiente local configurado
+**When** a equipe executa o comando de subida local documentado
+**Then** dependências essenciais do desenvolvimento sobem de forma reproduzível
+**And** serviços de exemplo expõem health check, readiness check e endpoint ou handler mínimo.
+
+**Given** integrações externas ainda sem fornecedor real
+**When** o harness local executa cenários de integração
+**Then** usa mocks/sandbox controlados
+**And** não exige credenciais reais, dados pessoais reais ou acesso a provedores externos.
+
+### Story 0.5: Observabilidade, Logs e Segurança Base
+
+As a equipe de operação,
+I want uma base transversal de logs, métricas, tracing, correlation ID e mascaramento,
+So that novos serviços já nasçam rastreáveis e seguros por padrão.
+
+**Acceptance Criteria:**
+
+**Given** uma requisição HTTP, chamada gRPC ou mensagem assíncrona de exemplo
+**When** ela é processada
+**Then** logs estruturados incluem tenant quando aplicável, correlation ID, trace ID, origem, destino, contrato, status e latência
+**And** CPF, CNPJ, e-mail, tokens, secrets, documentos, payloads sensíveis e dados financeiros detalhados não aparecem completos.
+
+**Given** um serviço instrumentado
+**When** ele executa fluxo mínimo
+**Then** emite métricas e traces via OpenTelemetry
+**And** health/readiness indicam estado operacional sem expor detalhes internos sensíveis.
+
+### Story 0.6: CI Inicial e Gates de Qualidade
+
+As a equipe de engenharia,
+I want um pipeline inicial de pull request,
+So that mudanças só avancem com qualidade mínima, contratos preservados e riscos básicos de segurança verificados.
+
+**Acceptance Criteria:**
+
+**Given** um pull request
+**When** o CI é executado
+**Then** roda formatação/lint, testes, typecheck progressivo, validação de contratos e detecção de secrets
+**And** falhas críticas impedem merge.
+
+**Given** uma alteração em serviço, pacote ou contrato
+**When** o pipeline identifica impacto
+**Then** executa os checks relevantes para a área alterada
+**And** publica resultado rastreável no pull request.
+
+### Story 0.7: Trilha Inicial de Supply Chain, Containers e IaC
+
+As a equipe de plataforma,
+I want registrar e iniciar a trilha técnica de containers, supply chain e IaC,
+So that requisitos de produção não fiquem esquecidos após o desenvolvimento funcional começar.
+
+**Acceptance Criteria:**
+
+**Given** a base de build dos serviços
+**When** uma imagem de exemplo é criada
+**Then** ela segue padrão de usuário não root, health/readiness, shutdown gracioso e tag/digest rastreável
+**And** há plano documentado para ECR, SBOM, proveniência, assinatura, GitHub Artifact Attestations e SLSA Build L2.
+
+**Given** a pasta `infra/`
+**When** o backlog técnico é revisado
+**Then** existem tarefas rastreáveis para IaC de ambientes, rede, EKS, bancos, NATS JetStream, observabilidade, storage imutável, KMS/secrets, políticas e automação de isolamento por tenant
+**And** fica explícito que IaC completo de produção permanece como workstream posterior/pré-produção, sem bloquear as histórias de produto após a fundação mínima.
 
 ## Epic 1: Acesso Seguro e Gestão de Tenants
 
