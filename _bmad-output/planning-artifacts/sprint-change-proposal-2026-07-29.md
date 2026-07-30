@@ -175,7 +175,7 @@ A equipe consegue iniciar a implementação em um repositório padronizado, com 
 
 ## 5. Checklist de Change Navigation
 
-### 1. Understand the Trigger and Context
+### 1. Entender o Gatilho e o Contexto
 
 - `[x] 1.1` Trigger identificado: readiness report pós PRD/Architecture/SPEC/Epics.
 - `[x] 1.2` Problema definido: fundação técnica ausente no backlog.
