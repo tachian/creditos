@@ -48,8 +48,8 @@ tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 
 development_status:
-  epic-0: backlog
-  0-1-bootstrap-do-monorepo-python: backlog
+  epic-0: in-progress
+  0-1-bootstrap-do-monorepo-python: ready-for-dev
   0-2-template-base-de-microsservico-ddd-e-hexagonal: backlog
   0-3-estrutura-base-de-contratos-versionados: backlog
   0-4-harness-local-com-dependencias-mockadas: backlog
