@@ -1,0 +1,52 @@
+[project]
+name = "creditos"
+version = "0.1.0"
+description = "CreditOS - plataforma SaaS de análise de crédito e risco"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "pyright>=1.1.403",
+  "pytest>=8.4.1",
+  "pytest-asyncio>=1.1.0",
+  "ruff>=0.12.5",
+]
+
+[tool.uv.workspace]
+members = ["services/*", "packages/*"]
+exclude = ["services/.gitkeep", "packages/.gitkeep"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["services", "packages", "tests", "scripts"]
+exclude = [
+  ".agents",
+  ".venv",
+  "_bmad",
+  "_bmad-output",
+]
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "SIM", "UP"]
+
+[tool.pyright]
+pythonVersion = "3.13"
+typeCheckingMode = "basic"
+include = ["services", "packages", "tests"]
+exclude = [
+  ".venv",
+  ".agents",
+  "_bmad",
+  "_bmad-output",
+  "**/__pycache__",
+  ".pytest_cache",
+  ".ruff_cache",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-config", "--strict-markers", "-ra"]
+asyncio_mode = "auto"

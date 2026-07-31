@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+command="${1:-help}"
+
+show_usage() {
+  cat <<'USAGE'
+Uso: ./scripts/dev <comando>
+
+Comandos:
+  sync          Instala/sincroniza dependências com uv
+  lock          Atualiza/confirma o uv.lock
+  lint          Executa Ruff lint
+  format-check  Valida formatação com Ruff
+  typecheck     Executa Pyright
+  test          Executa pytest
+  all           Executa lock check, sync locked, lint, format-check, typecheck e test
+USAGE
+}
+
+case "$command" in
+  sync)
+    uv sync
+    ;;
+  lock)
+    uv lock
+    ;;
+  lint)
+    uv run ruff check .
+    ;;
+  format-check)
+    uv run ruff format --check .
+    ;;
+  typecheck)
+    uv run pyright
+    ;;
+  test)
+    uv run pytest
+    ;;
+  all)
+    uv lock --check
+    uv sync --locked
+    uv run ruff check .
+    uv run ruff format --check .
+    uv run pyright
+    uv run pytest
+    ;;
+  help)
+    show_usage
+    ;;
+  *)
+    printf 'Comando desconhecido: %s\n\n' "$command" >&2
+    show_usage >&2
+    exit 2
+    ;;
+esac
