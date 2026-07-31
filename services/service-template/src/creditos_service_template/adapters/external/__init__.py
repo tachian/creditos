@@ -1,0 +1,1 @@
+"""Adapters para integrações externas."""

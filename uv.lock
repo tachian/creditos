@@ -2,6 +2,12 @@ version = 1
 revision = 3
 requires-python = ">=3.13"
 
+[manifest]
+members = [
+    "creditos",
+    "creditos-service-template",
+]
+
 [[package]]
 name = "colorama"
 version = "0.4.6"
@@ -33,6 +39,11 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.1.0" },
     { name = "ruff", specifier = ">=0.12.5" },
 ]
+
+[[package]]
+name = "creditos-service-template"
+version = "0.1.0"
+source = { editable = "services/service-template" }
 
 [[package]]
 name = "iniconfig"

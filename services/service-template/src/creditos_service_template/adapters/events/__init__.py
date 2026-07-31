@@ -1,0 +1,1 @@
+"""Adapters de eventos assíncronos."""

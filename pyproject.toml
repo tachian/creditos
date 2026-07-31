@@ -47,6 +47,6 @@ exclude = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "services"]
 addopts = ["--strict-config", "--strict-markers", "-ra"]
 asyncio_mode = "auto"

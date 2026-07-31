@@ -1,0 +1,1 @@
+"""Adapters HTTP/API pública."""
