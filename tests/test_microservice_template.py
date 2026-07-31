@@ -171,7 +171,7 @@ def test_domain_layer_has_no_framework_or_infrastructure_imports() -> None:
 
 def test_shared_packages_do_not_define_domain_constructs() -> None:
     for package_path in PACKAGES.iterdir():
-        if package_path.name.startswith("."):
+        if package_path.name.startswith(".") or not package_path.is_dir():
             continue
 
         normalized_package_name = package_path.name.replace("-", "_")
