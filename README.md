@@ -12,8 +12,8 @@ CreditOS é uma plataforma SaaS de análise de crédito e risco. Este repositór
 Execute sempre a partir da raiz do repositório:
 
 ```bash
-uv sync
-uv lock
+uv lock --check
+uv sync --locked
 uv run ruff check .
 uv run ruff format --check .
 uv run pyright
