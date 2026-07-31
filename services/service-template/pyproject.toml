@@ -1,0 +1,13 @@
+[project]
+name = "creditos-service-template"
+version = "0.1.0"
+description = "Template base de microsserviço DDD e hexagonal para o CreditOS"
+requires-python = ">=3.13"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
