@@ -1,5 +1,5 @@
 # generated: 2026-07-30
-# last_updated: 2026-07-30
+# last_updated: 2026-07-31
 # project: CreditOS
 # project_key: NOKEY
 # tracking_system: file-system
@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-30
-last_updated: 2026-07-30
+last_updated: 2026-07-31
 project: CreditOS
 project_key: NOKEY
 tracking_system: file-system
@@ -49,7 +49,7 @@ story_location: _bmad-output/implementation-artifacts
 
 development_status:
   epic-0: in-progress
-  0-1-bootstrap-do-monorepo-python: ready-for-dev
+  0-1-bootstrap-do-monorepo-python: done
   0-2-template-base-de-microsservico-ddd-e-hexagonal: backlog
   0-3-estrutura-base-de-contratos-versionados: backlog
   0-4-harness-local-com-dependencias-mockadas: backlog

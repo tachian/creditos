@@ -1,6 +1,10 @@
+---
+baseline_commit: e7573b30317384024cfb2d999e33dc665c1e95a6
+---
+
 # Story 0.1: Bootstrap do Monorepo Python
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -15,31 +19,40 @@ para que todos os serviços e pacotes sigam a mesma base técnica desde o iníci
 
 ## Tasks / Subtasks
 
-- [ ] Criar estrutura raiz do repositório (AC: 1)
-  - [ ] Criar `services/`, `packages/`, `tests/`, `infra/`, `docs/` e `scripts/`.
-  - [ ] Adicionar placeholders mínimos apenas quando necessário para versionamento de diretórios vazios.
-  - [ ] Não criar ainda os sete microsserviços de domínio; isso pertence às stories seguintes.
-- [ ] Configurar workspace Python com `uv` (AC: 1, 2)
-  - [ ] Criar `pyproject.toml` raiz com metadata do projeto, `requires-python` alinhado a Python 3.13 e `[tool.uv.workspace]`.
-  - [ ] Configurar membros futuros de workspace para `services/*` e `packages/*`, garantindo que nenhum diretório correspondente exista sem `pyproject.toml`.
-  - [ ] Gerar `uv.lock` pelo próprio `uv`; o lock deve ser versionado e não editado manualmente.
-  - [ ] Criar `.python-version` com baseline Python 3.13.
-- [ ] Configurar comandos padronizados de desenvolvimento (AC: 1, 2)
-  - [ ] Criar scripts ou comandos documentados para instalação/sync, lint, format check, typecheck e testes.
-  - [ ] Os comandos devem usar `uv` como entrypoint principal e funcionar a partir da raiz do repositório.
-  - [ ] Documentar como executar os comandos na raiz em `README.md` ou `docs/`.
-- [ ] Configurar qualidade mínima inicial (AC: 1, 2)
-  - [ ] Configurar Ruff no `pyproject.toml` para lint e format.
-  - [ ] Configurar Pyright em modo progressivo, com alvo Python 3.13 e sem exigir cobertura estrita total em código ainda inexistente.
-  - [ ] Configurar pytest para descobrir testes em `tests/`.
-  - [ ] Adicionar um teste mínimo/smoke de tooling somente se necessário para validar a suíte sem introduzir domínio falso.
-- [ ] Validar isolamento de dependências e lock (AC: 2)
-  - [ ] Confirmar que dependências de desenvolvimento entram no grupo apropriado e passam pelo lock.
-  - [ ] Confirmar que não existem `requirements.txt`, lockfiles paralelos ou dependências instaladas fora do fluxo `uv`.
-  - [ ] Documentar o procedimento para adicionar futuro serviço/pacote ao workspace sem quebrar o lock.
-- [ ] Atualizar rastreamento BMAD (AC: 1, 2)
-  - [ ] Manter esta story como `ready-for-dev` até início de implementação.
-  - [ ] Ao iniciar desenvolvimento, atualizar `sprint-status.yaml` para `in-progress`; ao concluir, mover para `review` e depois `done`.
+- [x] Criar estrutura raiz do repositório (AC: 1)
+  - [x] Criar `services/`, `packages/`, `tests/`, `infra/`, `docs/` e `scripts/`.
+  - [x] Adicionar placeholders mínimos apenas quando necessário para versionamento de diretórios vazios.
+  - [x] Não criar ainda os sete microsserviços de domínio; isso pertence às stories seguintes.
+- [x] Configurar workspace Python com `uv` (AC: 1, 2)
+  - [x] Criar `pyproject.toml` raiz com metadata do projeto, `requires-python` alinhado a Python 3.13 e `[tool.uv.workspace]`.
+  - [x] Configurar membros futuros de workspace para `services/*` e `packages/*`, garantindo que nenhum diretório correspondente exista sem `pyproject.toml`.
+  - [x] Gerar `uv.lock` pelo próprio `uv`; o lock deve ser versionado e não editado manualmente.
+  - [x] Criar `.python-version` com baseline Python 3.13.
+- [x] Configurar comandos padronizados de desenvolvimento (AC: 1, 2)
+  - [x] Criar scripts ou comandos documentados para instalação/sync, lint, format check, typecheck e testes.
+  - [x] Os comandos devem usar `uv` como entrypoint principal e funcionar a partir da raiz do repositório.
+  - [x] Documentar como executar os comandos na raiz em `README.md` ou `docs/`.
+- [x] Configurar qualidade mínima inicial (AC: 1, 2)
+  - [x] Configurar Ruff no `pyproject.toml` para lint e format.
+  - [x] Configurar Pyright em modo progressivo, com alvo Python 3.13 e sem exigir cobertura estrita total em código ainda inexistente.
+  - [x] Configurar pytest para descobrir testes em `tests/`.
+  - [x] Adicionar um teste mínimo/smoke de tooling somente se necessário para validar a suíte sem introduzir domínio falso.
+- [x] Validar isolamento de dependências e lock (AC: 2)
+  - [x] Confirmar que dependências de desenvolvimento entram no grupo apropriado e passam pelo lock.
+  - [x] Confirmar que não existem `requirements.txt`, lockfiles paralelos ou dependências instaladas fora do fluxo `uv`.
+  - [x] Documentar o procedimento para adicionar futuro serviço/pacote ao workspace sem quebrar o lock.
+- [x] Atualizar rastreamento BMAD (AC: 1, 2)
+  - [x] Manter esta story como `ready-for-dev` até início de implementação.
+  - [x] Ao iniciar desenvolvimento, atualizar `sprint-status.yaml` para `in-progress`; ao concluir, mover para `review` e depois `done`.
+
+### Review Findings
+
+- [x] [Review][Patch] Pyright padrão não cobre futuros serviços e pacotes do workspace [pyproject.toml:38]
+- [x] [Review][Patch] `./scripts/dev all` não garante validação imutável do lock [scripts/dev:25]
+- [x] [Review][Patch] Comando inválido do wrapper termina com sucesso [scripts/dev:32]
+- [x] [Review][Patch] Política contra lockfiles alternativos só valida a raiz do repositório [tests/test_repository_bootstrap.py:29]
+- [x] [Review][Patch] Validação de membros do workspace ignora qualquer diretório oculto [tests/test_repository_bootstrap.py:48]
+- [x] [Review][Patch] Procedimento de novo serviço ou pacote omite lint e typecheck [README.md:44]
 
 ## Dev Notes
 
@@ -140,17 +153,49 @@ Se a forma de executar Pyright exigir decisão de empacotamento adicional, não 
 
 ### Agent Model Used
 
-TBD pelo agente de desenvolvimento.
+Codex
 
 ### Debug Log References
 
-TBD.
+- 2026-07-31: Início da implementação; baseline commit registrado.
+- 2026-07-31: Jira `CTOS-2` movido para `Em andamento`.
+- 2026-07-31: Ambiente local ainda não possui `uv` nem Python 3.13 instalados; validação com `uv` será feita após instalação isolada da ferramenta.
+- 2026-07-31: Teste red inicial executado com `python3 tests/test_repository_bootstrap.py` e falhou por ausência de `services/`, como esperado.
+- 2026-07-31: `uv` 0.12.0 instalado de forma isolada em `/tmp/creditos-tools`; Python 3.13.14 gerenciado pelo `uv` baixado para `/tmp/creditos-uv-python`.
+- 2026-07-31: `uv lock` e `uv sync` executados com cache em `/tmp/creditos-uv-cache`.
+- 2026-07-31: Validação final executada com `./scripts/dev all`; lint, format check, typecheck e pytest passaram.
+- 2026-07-31: Jira `CTOS-2` movido para `Em análise`; subtarefas `CTOS-3` a `CTOS-8` movidas para `Concluído`.
+- 2026-07-31: Achados do code review aplicados: Pyright expandido, `all` com lock imutável, comando inválido com erro, guardrails recursivos de lockfile, allowlist de placeholder e documentação de fluxo completo.
+- 2026-07-31: Validação pós-review executada com `./scripts/dev all`; lint, format check, typecheck e pytest passaram.
 
 ### Completion Notes List
 
 - Story criada pelo workflow `bmad-create-story`.
 - Ultimate context engine analysis completed - comprehensive developer guide created.
+- Criada estrutura raiz mínima com `services/`, `packages/`, `tests/`, `infra/`, `docs/` e `scripts/`, sem criar microsserviços ou domínio real.
+- Configurado monorepo Python com `uv`, Python 3.13, `uv.lock` único, Ruff, Pyright progressivo, pytest e pytest-asyncio.
+- Adicionado wrapper `scripts/dev` e documentação em português para comandos de desenvolvimento e política de dependências.
+- Adicionado teste smoke de bootstrap para validar estrutura, configuração do workspace e ausência de lockfiles alternativos.
+- Confirmado que `./scripts/dev all` passa com Python 3.13.14 gerenciado pelo `uv`.
+- Corrigidos todos os achados classificados como `patch` no code review da Story 0.1.
+
+### Change Log
+
+- 2026-07-31: Implementado bootstrap inicial do monorepo Python e movida a story para `review`.
+- 2026-07-31: Aplicados patches do code review da Story 0.1 e movida a story para `done`.
 
 ### File List
 
+- `.gitignore`
+- `.python-version`
+- `README.md`
 - `_bmad-output/implementation-artifacts/0-1-bootstrap-do-monorepo-python.md`
+- `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `docs/development.md`
+- `infra/.gitkeep`
+- `packages/.gitkeep`
+- `pyproject.toml`
+- `scripts/dev`
+- `services/.gitkeep`
+- `tests/test_repository_bootstrap.py`
+- `uv.lock`
