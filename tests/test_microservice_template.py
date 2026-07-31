@@ -183,7 +183,7 @@ def test_shared_packages_do_not_define_domain_constructs() -> None:
             path
             for path in package_path.rglob("*")
             if any(
-                part.replace("-", "_") in FORBIDDEN_SHARED_PACKAGE_PARTS
+                Path(part).stem.replace("-", "_") in FORBIDDEN_SHARED_PACKAGE_PARTS
                 for part in path.relative_to(package_path).parts
             )
         ]
