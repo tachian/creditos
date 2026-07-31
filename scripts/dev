@@ -20,7 +20,7 @@ USAGE
 
 case "$command" in
   sync)
-    uv sync
+    uv sync --locked
     ;;
   lock)
     uv lock
