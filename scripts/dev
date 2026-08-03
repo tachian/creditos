@@ -13,8 +13,9 @@ Comandos:
   lint          Executa Ruff lint
   format-check  Valida formatação com Ruff
   typecheck     Executa Pyright
+  contracts     Valida governança de contratos versionados
   test          Executa pytest
-  all           Executa lock check, sync locked, lint, format-check, typecheck e test
+  all           Executa lock check, sync locked, lint, format-check, typecheck, contracts e test
 USAGE
 }
 
@@ -34,6 +35,9 @@ case "$command" in
   typecheck)
     uv run pyright
     ;;
+  contracts)
+    uv run python scripts/check_contracts.py
+    ;;
   test)
     uv run pytest
     ;;
@@ -43,6 +47,7 @@ case "$command" in
     uv run ruff check .
     uv run ruff format --check .
     uv run pyright
+    uv run python scripts/check_contracts.py
     uv run pytest
     ;;
   help)

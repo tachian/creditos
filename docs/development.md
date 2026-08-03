@@ -10,6 +10,7 @@ uv sync --locked
 uv run ruff check .
 uv run ruff format --check .
 uv run pyright
+uv run python scripts/check_contracts.py
 uv run pytest
 ```
 

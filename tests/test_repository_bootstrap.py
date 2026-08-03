@@ -20,7 +20,7 @@ def test_python_baseline_and_workspace_configuration() -> None:
 
     assert pyproject["project"]["requires-python"] == ">=3.13"
     assert pyproject["tool"]["uv"]["workspace"]["members"] == ["services/*", "packages/*"]
-    assert pyproject["tool"]["pyright"]["include"] == ["services", "packages", "tests"]
+    assert pyproject["tool"]["pyright"]["include"] == ["services", "packages", "scripts", "tests"]
     assert "dev" in pyproject["dependency-groups"]
     assert "ruff" in pyproject["tool"]
     assert "pyright" in pyproject["tool"]
