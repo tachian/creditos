@@ -76,6 +76,7 @@ def test_contract_governance_check_passes_for_repository_contracts() -> None:
     expected_count = len(catalog["contracts"])
     assert f"contracts check passed: {expected_count} contracts" in result.stdout
 
+
 def test_contract_governance_check_rejects_duplicate_ids(tmp_path: Path) -> None:
     contracts_root = copy_contracts_fixture(tmp_path)
     write_catalog(

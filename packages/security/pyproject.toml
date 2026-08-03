@@ -1,0 +1,13 @@
+[project]
+name = "creditos-security"
+version = "0.1.0"
+description = "Utilidades técnicas de segurança, mascaramento e correlação segura do CreditOS"
+requires-python = ">=3.13"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

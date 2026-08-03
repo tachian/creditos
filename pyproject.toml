@@ -4,7 +4,14 @@ version = "0.1.0"
 description = "CreditOS - plataforma SaaS de análise de crédito e risco"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+  "creditos-observability",
+  "creditos-security",
+]
+
+[tool.uv.sources]
+creditos-observability = { workspace = true }
+creditos-security = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -35,7 +42,15 @@ select = ["B", "E", "F", "I", "SIM", "UP"]
 [tool.pyright]
 pythonVersion = "3.13"
 typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
 include = ["services", "packages", "scripts", "tests"]
+extraPaths = [
+  "packages/contracts/src",
+  "packages/observability/src",
+  "packages/security/src",
+  "services/service-template/src",
+]
 exclude = [
   ".venv",
   ".agents",
@@ -50,3 +65,9 @@ exclude = [
 testpaths = ["tests", "services"]
 addopts = ["--strict-config", "--strict-markers", "-ra"]
 asyncio_mode = "auto"
+pythonpath = [
+  "packages/contracts/src",
+  "packages/observability/src",
+  "packages/security/src",
+  "services/service-template/src",
+]
