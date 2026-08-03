@@ -71,8 +71,10 @@ def test_contract_governance_check_passes_for_repository_contracts() -> None:
     result = run_contract_check(CONTRACTS)
 
     assert result.returncode == 0, result.stderr
-    assert "contracts check passed: 4 contracts" in result.stdout
 
+    catalog = tomllib.loads((CONTRACTS / "catalog" / "contracts.toml").read_text(encoding="utf-8"))
+    expected_count = len(catalog["contracts"])
+    assert f"contracts check passed: {expected_count} contracts" in result.stdout
 
 def test_contract_governance_check_rejects_duplicate_ids(tmp_path: Path) -> None:
     contracts_root = copy_contracts_fixture(tmp_path)
