@@ -19,7 +19,8 @@ def read_workflow() -> str:
 def workflow_step_block(step_name: str) -> str:
     workflow = read_workflow()
     marker = f"      - name: {step_name}"
-    start = workflow.index(marker)
+    start = workflow.find(marker)
+    assert start != -1, f"Step '{step_name}' não encontrado no workflow"
     next_step = workflow.find("\n      - name:", start + len(marker))
     return workflow[start:] if next_step == -1 else workflow[start:next_step]
 
