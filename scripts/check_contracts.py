@@ -123,11 +123,11 @@ def validate_contract_path(contracts_root: Path, kind: str, version: str, raw_pa
     relative_parts = Path(raw_path).parts
     expected_prefix, expected_suffix = KIND_PATH_RULES[kind]
 
-    require(contract_path.is_file(), f"Arquivo de contrato ausente: {display_path(contract_path)}")
     require(
         contract_path.is_relative_to(contracts_root.resolve()),
-        f"Path fora de packages/contracts: {raw_path}",
+        f"Path fora do diretório de contratos {contracts_root}: {raw_path}",
     )
+    require(contract_path.is_file(), f"Arquivo de contrato ausente: {display_path(contract_path)}")
     require(
         relative_parts[: len(expected_prefix)] == expected_prefix,
         f"Path de {kind} deve iniciar com {'/'.join(expected_prefix)}: {raw_path}",
