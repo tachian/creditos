@@ -99,7 +99,6 @@ def load_entries(catalog_path: Path) -> list[dict[str, Any]]:
 
 
 def validate_unique_entries(entries: list[dict[str, Any]]) -> None:
-    seen_ids: set[str] = set()
     seen_paths: set[str] = set()
     seen_contract_keys: set[tuple[str, str]] = set()
 
@@ -109,14 +108,12 @@ def validate_unique_entries(entries: list[dict[str, Any]]) -> None:
         path = str(entry.get("path", ""))
         contract_key = (contract_id, version)
 
-        require(contract_id not in seen_ids, f"Contrato duplicado por id: {contract_id}")
-        require(path not in seen_paths, f"Contrato duplicado por path: {path}")
         require(
             contract_key not in seen_contract_keys,
             f"Contrato duplicado por id/version: {contract_id} {version}",
         )
+        require(path not in seen_paths, f"Contrato duplicado por path: {path}")
 
-        seen_ids.add(contract_id)
         seen_paths.add(path)
         seen_contract_keys.add(contract_key)
 
