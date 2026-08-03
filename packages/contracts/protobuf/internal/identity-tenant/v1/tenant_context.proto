@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package creditos.identity_tenant.v1;
+
+// creditos.contract.version = "v1"
+// creditos.contract.owner = "Identity & Tenant"
+// creditos.contract.compatibility = "backward-compatible"
+
+service TenantContextService {
+  rpc ResolveTenantContext(TenantContextRequest) returns (TenantContextResponse);
+}
+
+message TenantContextRequest {
+  string tenant_id = 1;
+  string correlation_id = 2;
+}
+
+message TenantContextResponse {
+  string tenant_id = 1;
+  string tenant_isolation_tier = 2;
+}

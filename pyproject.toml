@@ -35,7 +35,7 @@ select = ["B", "E", "F", "I", "SIM", "UP"]
 [tool.pyright]
 pythonVersion = "3.13"
 typeCheckingMode = "basic"
-include = ["services", "packages", "tests"]
+include = ["services", "packages", "scripts", "tests"]
 exclude = [
   ".venv",
   ".agents",

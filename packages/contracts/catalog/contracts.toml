@@ -1,0 +1,43 @@
+[[contracts]]
+id = "proposal-intake-public-api"
+kind = "openapi"
+version = "v1"
+owner = "Proposal Intake"
+path = "openapi/public/proposal-intake/v1/openapi.json"
+compatibility = "backward-compatible"
+breaking_change_policy = "new-major-version-required"
+compatibility_window = "to-be-defined-before-production"
+contract_tests_required = true
+
+[[contracts]]
+id = "identity-tenant-context-grpc"
+kind = "protobuf"
+version = "v1"
+owner = "Identity & Tenant"
+path = "protobuf/internal/identity-tenant/v1/tenant_context.proto"
+compatibility = "backward-compatible"
+breaking_change_policy = "new-major-version-required"
+compatibility_window = "to-be-defined-before-production"
+contract_tests_required = true
+
+[[contracts]]
+id = "proposal-submitted-event"
+kind = "asyncapi"
+version = "v1"
+owner = "Proposal Intake"
+path = "asyncapi/events/proposal/v1/asyncapi.json"
+compatibility = "backward-compatible"
+breaking_change_policy = "new-major-version-required"
+compatibility_window = "to-be-defined-before-production"
+contract_tests_required = true
+
+[[contracts]]
+id = "proposal-structural-schema"
+kind = "json-schema"
+version = "v1"
+owner = "Proposal Intake"
+path = "schemas/proposal/v1/proposal.schema.json"
+compatibility = "backward-compatible"
+breaking_change_policy = "new-major-version-required"
+compatibility_window = "to-be-defined-before-production"
+contract_tests_required = true

@@ -1,0 +1,82 @@
+{
+  "asyncapi": "3.1.0",
+  "info": {
+    "title": "CreditOS Proposal Events Structural Contract",
+    "version": "v1",
+    "description": "Contrato assíncrono mínimo para validar organização AsyncAPI. Não é o contrato final de evento."
+  },
+  "x-creditos": {
+    "owner": "Proposal Intake",
+    "compatibility": "backward-compatible",
+    "breakingChangePolicy": "new-major-version-required"
+  },
+  "servers": {
+    "natsJetStream": {
+      "host": "nats://creditos-nats:4222",
+      "protocol": "nats",
+      "description": "Servidor estrutural de referência para NATS JetStream em ambientes locais/mockados"
+    }
+  },
+  "channels": {
+    "proposalSubmitted": {
+      "address": "creditos.proposal.v1.submitted",
+      "messages": {
+        "ProposalSubmitted": {
+          "$ref": "#/components/messages/ProposalSubmitted"
+        }
+      }
+    }
+  },
+  "operations": {
+    "publishProposalSubmitted": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/proposalSubmitted"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/proposalSubmitted/messages/ProposalSubmitted"
+        }
+      ]
+    }
+  },
+  "components": {
+    "messages": {
+      "ProposalSubmitted": {
+        "name": "ProposalSubmitted",
+        "title": "Placeholder estrutural de proposta submetida",
+        "payload": {
+          "type": "object",
+          "required": [
+            "specversion",
+            "id",
+            "source",
+            "type",
+            "subject",
+            "time",
+            "datacontenttype",
+            "tenantid",
+            "correlationid",
+            "idempotencykey",
+            "schemaversion",
+            "traceparent"
+          ],
+          "properties": {
+            "specversion": {"const": "1.0"},
+            "id": {"type": "string"},
+            "source": {"type": "string"},
+            "type": {"const": "creditos.proposal.v1.submitted"},
+            "subject": {"type": "string"},
+            "time": {"type": "string", "format": "date-time"},
+            "datacontenttype": {"const": "application/json"},
+            "tenantid": {"type": "string"},
+            "correlationid": {"type": "string"},
+            "idempotencykey": {"type": "string"},
+            "schemaversion": {"const": "v1"},
+            "traceparent": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

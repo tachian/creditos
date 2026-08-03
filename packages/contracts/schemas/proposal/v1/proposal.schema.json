@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.creditos.local/schemas/proposal/v1/proposal.schema.json",
+  "title": "CreditOS Proposal Structural Schema",
+  "description": "Schema estrutural mínimo. O contrato canônico de proposta será definido no Epic 2.",
+  "type": "object",
+  "required": ["contract_version", "correlation_id"],
+  "properties": {
+    "contract_version": {"const": "v1"},
+    "correlation_id": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false,
+  "x-creditos": {
+    "version": "v1",
+    "owner": "Proposal Intake",
+    "compatibility": "backward-compatible",
+    "breakingChangePolicy": "new-major-version-required"
+  }
+}
