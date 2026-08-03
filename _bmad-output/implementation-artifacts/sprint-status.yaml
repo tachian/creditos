@@ -54,7 +54,7 @@ development_status:
   0-3-estrutura-base-de-contratos-versionados: done
   0-4-harness-local-com-dependencias-mockadas: done
   0-5-observabilidade-logs-e-seguranca-base: done
-  0-6-ci-inicial-e-gates-de-qualidade: backlog
+  0-6-ci-inicial-e-gates-de-qualidade: done
   0-7-trilha-inicial-de-supply-chain-containers-e-iac: backlog
   epic-0-retrospective: optional
   epic-1: backlog
