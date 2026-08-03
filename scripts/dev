@@ -14,8 +14,10 @@ Comandos:
   format-check  Valida formatação com Ruff
   typecheck     Executa Pyright
   contracts     Valida governança de contratos versionados
+  harness-up    Sobe o harness local com dependências mockadas
+  harness-check Valida o harness local sem exigir serviços externos
   test          Executa pytest
-  all           Executa lock check, sync locked, lint, format-check, typecheck, contracts e test
+  all           Executa lock check, sync locked, lint, format-check, typecheck, contracts, harness-check e test
 USAGE
 }
 
@@ -38,6 +40,12 @@ case "$command" in
   contracts)
     uv run python scripts/check_contracts.py
     ;;
+  harness-up)
+    uv run python scripts/local_harness.py up
+    ;;
+  harness-check)
+    uv run python scripts/local_harness.py check
+    ;;
   test)
     uv run pytest
     ;;
@@ -48,6 +56,7 @@ case "$command" in
     uv run ruff format --check .
     uv run pyright
     uv run python scripts/check_contracts.py
+    uv run python scripts/local_harness.py check
     uv run pytest
     ;;
   help)
