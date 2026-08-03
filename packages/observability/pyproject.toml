@@ -1,0 +1,20 @@
+[project]
+name = "creditos-observability"
+version = "0.1.0"
+description = "Base técnica de observabilidade, logs estruturados e OpenTelemetry do CreditOS"
+requires-python = ">=3.13"
+dependencies = [
+  "creditos-security",
+  "opentelemetry-api>=1.44.0",
+  "opentelemetry-sdk>=1.44.0",
+]
+
+[tool.uv.sources]
+creditos-security = { workspace = true }
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
