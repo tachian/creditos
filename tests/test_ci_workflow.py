@@ -93,7 +93,7 @@ def test_ci_workflow_executes_quality_contract_and_test_gates() -> None:
 def test_ci_workflow_runs_secret_scan_with_redaction_without_external_license() -> None:
     secret_scan_step = workflow_step_block("Scan repository for secrets")
 
-    assert "ghcr.io/gitleaks/gitleaks:v8.30.1" in secret_scan_step
+    assert "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f" in secret_scan_step
     assert "gitleaks/gitleaks-action" not in read_workflow()
     assert "git /repo" in secret_scan_step
     assert '--log-opts="$log_opts"' in secret_scan_step
