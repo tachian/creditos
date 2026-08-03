@@ -117,14 +117,12 @@ def _safe_span_attributes(
     context: ObservabilityContext,
     attributes: Mapping[str, Any] | None,
 ) -> dict[str, str | int | float | bool]:
-    base_attributes: dict[str, Any] = {
-        "correlation_id": context.correlation_id,
-    }
+    base_attributes: dict[str, Any] = dict(attributes or {})
+    base_attributes["correlation_id"] = context.correlation_id
     if context.tenant_id:
         base_attributes["tenant_id"] = context.tenant_id
-    if attributes:
-        base_attributes.update(attributes)
-
+    if context.tenant_isolation_tier:
+        base_attributes["tenant_isolation_tier"] = context.tenant_isolation_tier
     return _sanitize_attributes(base_attributes, allowlist=_SPAN_ATTRIBUTE_ALLOWLIST)
 
 
