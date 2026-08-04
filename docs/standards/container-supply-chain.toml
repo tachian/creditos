@@ -1,0 +1,49 @@
+[container_example]
+service = "services/service-template"
+dockerfile = "services/service-template/Dockerfile"
+base_image = "python:3.13.14-slim@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5e925c2d0e1a91"
+non_root_uid = 10001
+non_root_gid = 10001
+workdir = "/app"
+exposed_port = "not-applicable-until-service-listens"
+healthcheck = "python -m creditos_service_template.bootstrap.container_runtime healthcheck"
+readiness_probe = "python -m creditos_service_template.bootstrap.container_runtime readiness"
+graceful_shutdown_signal = "SIGTERM"
+shutdown_drain_seconds_default = 1.0
+readiness_file_requires_writable_tmp = true
+tag_template = "creditos-service-template:${git_sha}"
+digest_artifact_required = true
+digest_artifact_script = "scripts/container_release_metadata.py"
+
+[supply_chain]
+registry = "amazon-ecr"
+immutable_digest_required = true
+sbom_formats = ["spdx", "cyclonedx"]
+provenance_formats = ["github-artifact-attestations", "cosign-in-toto"]
+signing = "sigstore-cosign-keyless"
+slsa_initial_target = "build-l2"
+slsa_future_target = "build-l3"
+scan_required_before_promotion = true
+production_rebuild_allowed = false
+
+[attestations]
+github_artifact_attestations = "applicable-while-public"
+current_repository_visibility = "public"
+private_repository_action = "validate-plan-or-use-cosign-in-toto-fallback"
+verification_required = true
+fallback_preserves_architectural_target = true
+
+[workflow_permissions]
+pull_request_id_token_write = false
+pull_request_attestations_write = false
+release_id_token_write = true
+release_attestations_write = true
+aws_credentials_long_lived_allowed = false
+
+[promotion]
+source_ci = "github-actions"
+registry_target = "amazon-ecr"
+deployment_reference = "image-digest"
+gitops_target = "argo-cd"
+policy_engine = "kyverno"
+production_apply_from_ci_allowed = false

@@ -1,0 +1,78 @@
+[metadata]
+status = "planned"
+production_iac_scope = "deferred-pre-production-workstream"
+blocks_product_stories_after_minimum_foundation = false
+environments = ["dev", "sandbox", "staging", "prod"]
+source_architecture_decisions = ["AD-12", "AD-13", "AD-23"]
+
+[[workstreams]]
+id = "iac-environments"
+area = "ambientes"
+status = "planned"
+required = ["dev", "sandbox", "staging", "prod"]
+deliverables = ["separação por conta/projeto ou fronteira equivalente", "estado remoto protegido", "drift detection"]
+
+[[workstreams]]
+id = "iac-network"
+area = "rede"
+status = "planned"
+required = ["subnets privadas multi-AZ", "subnets públicas apenas para borda", "security groups", "network policies", "egress controlado"]
+deliverables = ["VPC/subnets", "endpoints privados quando aplicável", "política default-deny"]
+
+[[workstreams]]
+id = "iac-eks"
+area = "eks"
+status = "planned"
+required = ["workloads privados", "node groups ou compute equivalente", "service accounts", "EKS Pod Identity"]
+deliverables = ["cluster EKS", "namespaces por serviço/ambiente", "políticas de workload identity"]
+
+[[workstreams]]
+id = "iac-databases"
+area = "bancos"
+status = "planned"
+required = ["RDS/Aurora PostgreSQL", "database/schema/usuário por serviço", "criptografia KMS", "backup", "restore testado"]
+deliverables = ["módulo de banco por serviço", "política de backup", "runbook de restore"]
+
+[[workstreams]]
+id = "iac-nats-jetstream"
+area = "mensageria"
+status = "planned"
+required = ["cluster de 3 nós", "StatefulSet ou Helm oficial", "EBS gp3 criptografado", "anti-affinity", "mTLS/autenticação", "backup/restore"]
+deliverables = ["NATS JetStream no EKS", "streams críticos R3", "runbooks operacionais"]
+
+[[workstreams]]
+id = "iac-observability"
+area = "observabilidade"
+status = "planned"
+required = ["OpenTelemetry Collector", "métricas técnicas", "métricas de negócio", "logs estruturados", "dashboards", "alertas"]
+deliverables = ["stack AD-7", "dashboards internos", "dashboards customer-facing curados por tenant"]
+
+[[workstreams]]
+id = "iac-immutable-storage"
+area = "storage-imutável"
+status = "planned"
+required = ["Amazon S3 Object Lock", "WORM", "retenção", "checkpoints de auditoria"]
+deliverables = ["bucket de auditoria", "política de retenção", "exportações imutáveis"]
+
+[[workstreams]]
+id = "iac-kms-secrets"
+area = "kms-secrets"
+status = "planned"
+required = ["AWS KMS", "AWS Secrets Manager", "rotação", "auditoria", "sem secrets versionados"]
+deliverables = ["chaves por finalidade", "secrets por serviço/ambiente", "política de rotação"]
+
+[[workstreams]]
+id = "iac-policies"
+area = "políticas"
+status = "planned"
+required = ["Kyverno", "imagens por digest", "registry aprovado", "assinatura/proveniência", "requests/limits", "exceções temporárias"]
+deliverables = ["policies em audit antes de enforce", "processo de exceção", "gates de manifesto"]
+
+[[workstreams]]
+id = "iac-tenant-isolation"
+area = "tenant-isolation"
+status = "planned"
+initial_model = "bridge"
+future_model = "silo"
+required = ["automação de tenant bridge", "fronteiras de namespace/política", "provisionamento silo sob demanda", "auditoria de isolamento"]
+deliverables = ["módulo de isolamento bridge", "plano de evolução para silo", "runbook de provisionamento"]
