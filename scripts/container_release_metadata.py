@@ -96,7 +96,10 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
     except OSError as exc:
-        print(f"não foi possível escrever o arquivo de saída: {args.output} ({exc})", file=sys.stderr)
+        print(
+            f"não foi possível escrever o arquivo de saída: {args.output} ({exc})",
+            file=sys.stderr,
+        )
         return 1
     return 0
 
