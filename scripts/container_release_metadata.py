@@ -74,8 +74,11 @@ def main(argv: list[str] | None = None) -> int:
     image_digest = args.image_digest
 
     if image_digest is None and args.build_metadata_file is not None:
-        image_digest = digest_from_metadata(load_build_metadata(args.build_metadata_file))
-
+        try:
+            image_digest = digest_from_metadata(load_build_metadata(args.build_metadata_file))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
     try:
         metadata = build_release_metadata(
             service=args.service,
