@@ -1,0 +1,20 @@
+[project]
+name = "creditos-identity-tenant"
+version = "0.1.0"
+description = "Microsserviço Identity & Tenant do CreditOS"
+requires-python = ">=3.13"
+dependencies = [
+  "creditos-observability",
+  "creditos-security",
+]
+
+[tool.uv.sources]
+creditos-observability = { workspace = true }
+creditos-security = { workspace = true }
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
