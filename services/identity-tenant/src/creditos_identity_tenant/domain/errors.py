@@ -58,3 +58,43 @@ class CrossTenantAccessDeniedError(TenantDomainError):
     code = "cross_tenant_access_denied"
     safe_message = "acesso cross-tenant negado"
     grpc_status = "PERMISSION_DENIED"
+
+
+class M2MAuthenticationError(TenantDomainError):
+    code = "m2m_authentication_error"
+    safe_message = "token inválido"
+    grpc_status = "UNAUTHENTICATED"
+
+
+class MissingTokenError(M2MAuthenticationError):
+    code = "missing_token"
+
+
+class InvalidTokenError(M2MAuthenticationError):
+    code = "invalid_token"
+
+
+class ExpiredTokenError(M2MAuthenticationError):
+    code = "expired_token"
+
+
+class InvalidTokenAudienceError(M2MAuthenticationError):
+    code = "invalid_token_audience"
+
+
+class InvalidTokenIssuerError(M2MAuthenticationError):
+    code = "invalid_token_issuer"
+
+
+class MissingTokenRequiredClaimError(M2MAuthenticationError):
+    code = "missing_token_required_claim"
+
+
+class InvalidTenantContextError(TenantDomainError):
+    code = "invalid_tenant_context"
+    safe_message = "contexto de tenant inválido"
+    grpc_status = "PERMISSION_DENIED"
+
+
+class InactiveTenantError(InvalidTenantContextError):
+    code = "inactive_tenant"

@@ -9,6 +9,7 @@ from typing import Any
 from creditos_observability.context import ObservabilityContext
 from creditos_observability.logging import build_structured_log
 
+from creditos_identity_tenant.application.ports.m2m_token_verifier import M2MTokenVerifier
 from creditos_identity_tenant.application.ports.operation_logger import OperationLogger
 from creditos_identity_tenant.application.ports.tenant_repository import TenantRepository
 from creditos_identity_tenant.application.security import OperatorContext
@@ -20,7 +21,12 @@ from creditos_identity_tenant.application.use_cases.get_tenant import (
     GetTenantQuery,
     GetTenantUseCase,
 )
+from creditos_identity_tenant.application.use_cases.resolve_m2m_tenant_context import (
+    ResolveM2MTenantContextCommand,
+    ResolveM2MTenantContextUseCase,
+)
 from creditos_identity_tenant.domain.entities.tenant import Tenant
+from creditos_identity_tenant.domain.errors import InvalidTokenError
 
 SERVICE_NAME = "identity-tenant"
 SERVICE_VERSION = "0.1.0"
@@ -36,10 +42,19 @@ class TenantApplicationService:
         repository: TenantRepository,
         operation_logger: OperationLogger,
         tenant_id_generator: Callable[[], str] | None = None,
+        m2m_token_verifier: M2MTokenVerifier | None = None,
         environment: str,
     ) -> None:
         self._operation_logger = operation_logger
         self._environment = environment
+        self._resolve_m2m_tenant_context = (
+            ResolveM2MTenantContextUseCase(
+                repository=repository,
+                token_verifier=m2m_token_verifier,
+            )
+            if m2m_token_verifier is not None
+            else None
+        )
         self._create_tenant = CreateTenantUseCase(
             repository=repository,
             tenant_id_generator=tenant_id_generator,
@@ -114,6 +129,46 @@ class TenantApplicationService:
             )
             raise
 
+    def resolve_m2m_tenant_context(
+        self,
+        command: ResolveM2MTenantContextCommand,
+        *,
+        context: ObservabilityContext,
+    ) -> dict[str, str]:
+        started_at = perf_counter()
+        try:
+            use_case = self._require_m2m_resolver()
+            resolved_context = use_case.execute(command)
+            log_context = replace(
+                context,
+                tenant_id=resolved_context.tenant_id,
+                tenant_isolation_tier=resolved_context.tenant_isolation_tier,
+            )
+            self._log_operation(
+                context=log_context,
+                operation="identity_tenant.resolve_m2m_tenant_context",
+                status="accepted",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                extra={
+                    "client_id": resolved_context.client_id,
+                    "token_id": resolved_context.token_id,
+                    "scopes": sorted(resolved_context.scopes),
+                },
+            )
+            return resolved_context.to_metadata()
+        except Exception as error:
+            self._log_operation(
+                context=_context_without_tenant(context),
+                operation="identity_tenant.resolve_m2m_tenant_context",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                error_type=type(error).__name__,
+                extra={"auth_failure": True},
+            )
+            raise
+
     def _log_operation(
         self,
         *,
@@ -153,6 +208,11 @@ class TenantApplicationService:
                 },
             )
 
+    def _require_m2m_resolver(self) -> ResolveM2MTenantContextUseCase:
+        if self._resolve_m2m_tenant_context is None:
+            raise InvalidTokenError("verificador M2M não configurado")
+        return self._resolve_m2m_tenant_context
+
 
 def _context_with_tenant(context: ObservabilityContext, tenant: Tenant) -> ObservabilityContext:
     return replace(
@@ -160,6 +220,10 @@ def _context_with_tenant(context: ObservabilityContext, tenant: Tenant) -> Obser
         tenant_id=tenant.tenant_id,
         tenant_isolation_tier=tenant.tenant_isolation_tier.value,
     )
+
+
+def _context_without_tenant(context: ObservabilityContext) -> ObservabilityContext:
+    return replace(context, tenant_id=None, tenant_isolation_tier=None)
 
 
 def _duration_ms(started_at: float) -> float:

@@ -59,7 +59,7 @@ development_status:
   epic-0-retrospective: optional
   epic-1: in-progress
   1-1-cadastro-minimo-de-tenants: done
-  1-2-autenticacao-m2m-com-resolucao-de-tenant: backlog
+  1-2-autenticacao-m2m-com-resolucao-de-tenant: done
   1-3-autorizacao-por-rbac-scopes-e-claims-de-tenant: backlog
   1-4-propagacao-de-contexto-confiavel-entre-servicos: backlog
   1-5-gates-de-seguranca-e-isolamento-do-epic-1: backlog
