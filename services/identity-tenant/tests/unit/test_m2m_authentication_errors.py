@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import pytest
 from creditos_identity_tenant.domain.errors import (
+    AuthorizationError,
     ExpiredTokenError,
     InactiveTenantError,
+    InsufficientRoleError,
+    InsufficientScopeError,
+    InvalidAuthorizationContextError,
+    InvalidAuthorizationRequirementError,
     InvalidTenantContextError,
     InvalidTokenAudienceError,
     InvalidTokenError,
@@ -47,3 +52,34 @@ def test_invalid_tenant_context_errors_are_permission_denied_and_safe() -> None:
     assert inactive_error.code == "inactive_tenant"
     assert inactive_error.safe_message == "contexto de tenant inválido"
     assert inactive_error.grpc_status == "PERMISSION_DENIED"
+
+
+@pytest.mark.parametrize(
+    ("error_class", "code", "safe_message"),
+    [
+        (AuthorizationError, "authorization_error", "autorização negada"),
+        (
+            InvalidAuthorizationContextError,
+            "invalid_authorization_context",
+            "contexto de autorização inválido",
+        ),
+        (
+            InvalidAuthorizationRequirementError,
+            "invalid_authorization_requirement",
+            "requisito de autorização inválido",
+        ),
+        (InsufficientScopeError, "insufficient_scope", "autorização negada"),
+        (InsufficientRoleError, "insufficient_role", "autorização negada"),
+    ],
+)
+def test_authorization_errors_have_stable_safe_public_shape(
+    error_class: type[AuthorizationError],
+    code: str,
+    safe_message: str,
+) -> None:
+    error = error_class("detalhe interno da policy")
+
+    assert error.code == code
+    assert error.safe_message == safe_message
+    assert error.grpc_status == "PERMISSION_DENIED"
+    assert "detalhe interno" in str(error)

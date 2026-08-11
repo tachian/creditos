@@ -54,10 +54,15 @@ class TenantNotFoundError(TenantDomainError):
     grpc_status = "NOT_FOUND"
 
 
-class CrossTenantAccessDeniedError(TenantDomainError):
+class AuthorizationError(TenantDomainError):
+    code = "authorization_error"
+    safe_message = "autorização negada"
+    grpc_status = "PERMISSION_DENIED"
+
+
+class CrossTenantAccessDeniedError(AuthorizationError):
     code = "cross_tenant_access_denied"
     safe_message = "acesso cross-tenant negado"
-    grpc_status = "PERMISSION_DENIED"
 
 
 class M2MAuthenticationError(TenantDomainError):
@@ -98,3 +103,21 @@ class InvalidTenantContextError(TenantDomainError):
 
 class InactiveTenantError(InvalidTenantContextError):
     code = "inactive_tenant"
+
+
+class InvalidAuthorizationContextError(AuthorizationError):
+    code = "invalid_authorization_context"
+    safe_message = "contexto de autorização inválido"
+
+
+class InvalidAuthorizationRequirementError(AuthorizationError):
+    code = "invalid_authorization_requirement"
+    safe_message = "requisito de autorização inválido"
+
+
+class InsufficientScopeError(AuthorizationError):
+    code = "insufficient_scope"
+
+
+class InsufficientRoleError(AuthorizationError):
+    code = "insufficient_role"

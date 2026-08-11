@@ -14,8 +14,15 @@ from creditos_identity_tenant.adapters.logging.in_memory_operation_logger import
 from creditos_identity_tenant.adapters.persistence.in_memory_tenant_repository import (
     InMemoryTenantRepository,
 )
-from creditos_identity_tenant.application.security import OperatorContext
+from creditos_identity_tenant.application.security import (
+    AuthorizationSubject,
+    OperatorContext,
+    ProtectedResource,
+)
 from creditos_identity_tenant.application.service import TenantApplicationService
+from creditos_identity_tenant.application.use_cases.authorize_operation import (
+    AuthorizeOperationCommand,
+)
 from creditos_identity_tenant.application.use_cases.create_tenant import CreateTenantCommand
 from creditos_identity_tenant.application.use_cases.get_tenant import GetTenantQuery
 from creditos_identity_tenant.application.use_cases.resolve_m2m_tenant_context import (
@@ -24,6 +31,8 @@ from creditos_identity_tenant.application.use_cases.resolve_m2m_tenant_context i
 from creditos_identity_tenant.bootstrap.app import build_local_tenant_application_service
 from creditos_identity_tenant.domain.entities.tenant import Tenant
 from creditos_identity_tenant.domain.errors import (
+    InsufficientScopeError,
+    InvalidAuthorizationContextError,
     InvalidTenantStatusError,
     InvalidTokenError,
     MissingTokenError,
@@ -259,6 +268,117 @@ def test_application_service_clears_untrusted_tenant_from_m2m_failure_logs() -> 
     assert "tenant_isolation_tier" not in logger.events[-1]
 
 
+def test_application_service_authorizes_sensitive_operation_and_logs_decision() -> None:
+    logger = InMemoryOperationLogger()
+    service = TenantApplicationService(
+        repository=InMemoryTenantRepository(),
+        operation_logger=logger,
+        environment="test",
+    )
+
+    result = service.authorize_operation(
+        AuthorizeOperationCommand(
+            subject=_authorization_subject(scopes=("proposal:submit",), roles=("service-client",)),
+            operation="proposal.submit",
+            resource=ProtectedResource(
+                resource_type="proposal",
+                resource_id="proposal-123",
+                tenant_id="tenant_alpha",
+            ),
+        ),
+        context=ObservabilityContext.new(
+            correlation_id="corr-authz",
+            request_id="req-authz",
+            trace_id="4bf92f3577b34da6a3ce929d0e0e4736",
+        ),
+    )
+
+    assert result["granted"] is True
+    assert result["tenant_id"] == "tenant_alpha"
+    assert result["matched_scopes"] == ["proposal:submit"]
+    assert result["allow_scope_only"] is False
+    assert logger.events[-1]["operation"] == "identity_tenant.authorize_operation"
+    assert logger.events[-1]["source"] == "authorization-context"
+    assert logger.events[-1]["status"] == "accepted"
+    assert logger.events[-1]["tenant_id"] == "tenant_alpha"
+    assert logger.events[-1]["tenant_isolation_tier"] == "bridge"
+    assert logger.events[-1]["extra"]["authz_decision"] == "granted"
+    assert logger.events[-1]["extra"]["required_scopes"] == ["proposal:submit"]
+    assert logger.events[-1]["extra"]["required_roles"] == ["service-client"]
+
+
+def test_application_service_logs_authorization_denial_without_sensitive_payload() -> None:
+    logger = InMemoryOperationLogger()
+    service = TenantApplicationService(
+        repository=InMemoryTenantRepository(),
+        operation_logger=logger,
+        environment="test",
+    )
+
+    with pytest.raises(InsufficientScopeError):
+        service.authorize_operation(
+            AuthorizeOperationCommand(
+                subject=_authorization_subject(
+                    scopes=("decision:read",),
+                    roles=("service-client",),
+                    token_id="raw-secret-token",
+                ),
+                operation="proposal.submit",
+                resource=ProtectedResource(
+                    resource_type="proposal",
+                    resource_id="proposal-123",
+                    tenant_id="tenant_alpha",
+                ),
+            ),
+            context=ObservabilityContext.new(
+                correlation_id="corr-authz-denied",
+                request_id="req-authz-denied",
+            ),
+        )
+
+    serialized_event = json.dumps(logger.events[-1], ensure_ascii=False)
+    assert logger.events[-1]["operation"] == "identity_tenant.authorize_operation"
+    assert logger.events[-1]["status"] == "rejected"
+    assert logger.events[-1]["tenant_id"] == "tenant_alpha"
+    assert logger.events[-1]["tenant_isolation_tier"] == "bridge"
+    assert logger.events[-1]["payload"] == "[OMITIDO]"
+    assert logger.events[-1]["extra"]["authz_decision"] == "denied"
+    assert logger.events[-1]["extra"]["denial_reason"] == "insufficient_scope"
+    assert "raw-secret-token" not in serialized_event
+    assert "Authorization" not in serialized_event
+    assert "Bearer" not in serialized_event
+
+
+def test_application_service_logs_malformed_authorization_command_safely() -> None:
+    logger = InMemoryOperationLogger()
+    service = TenantApplicationService(
+        repository=InMemoryTenantRepository(),
+        operation_logger=logger,
+        environment="test",
+    )
+
+    with pytest.raises(InvalidAuthorizationContextError):
+        service.authorize_operation(
+            object(),  # type: ignore[arg-type]
+            context=ObservabilityContext.new(
+                correlation_id="corr-authz-malformed",
+                request_id="req-authz-malformed",
+                tenant_id="tenant_spoofed",
+                tenant_isolation_tier="silo",
+            ),
+        )
+
+    assert logger.events[-1]["operation"] == "identity_tenant.authorize_operation"
+    assert logger.events[-1]["source"] == "authorization-context"
+    assert logger.events[-1]["status"] == "rejected"
+    assert logger.events[-1]["payload"] == "[OMITIDO]"
+    assert "tenant_id" not in logger.events[-1]
+    assert "tenant_isolation_tier" not in logger.events[-1]
+    assert logger.events[-1]["extra"]["authz_decision"] == "denied"
+    assert logger.events[-1]["extra"]["operation_name"] == "unknown"
+    assert logger.events[-1]["extra"]["denial_reason"] == "invalid_authorization_context"
+
+
 def test_local_bootstrap_can_compose_m2m_verifier_for_harness() -> None:
     service = build_local_tenant_application_service(
         environment="test",
@@ -309,4 +429,21 @@ def _local_verifier() -> LocalM2MTokenVerifier:
                 key_id="kid-local",
             )
         },
+    )
+
+
+def _authorization_subject(
+    *,
+    scopes: tuple[str, ...],
+    roles: tuple[str, ...] = (),
+    token_id: str = "jti-alpha",
+) -> AuthorizationSubject:
+    return AuthorizationSubject(
+        subject_id="client-alpha",
+        tenant_id="tenant_alpha",
+        tenant_isolation_tier="bridge",
+        scopes=scopes,
+        roles=roles,
+        client_id="client-alpha",
+        token_id=token_id,
     )
