@@ -410,15 +410,17 @@ def _normalize_tokens(
         raise error_class("tokens de autorização inválidos")
 
     normalized_tokens: set[str] = set()
+    token_count = 0
     for value in values:
+        token_count += 1
+        if token_count > _MAX_AUTHORIZATION_TOKENS:
+            raise error_class("tokens de autorização excedem limite")
         if not isinstance(value, str):
             raise error_class("tokens de autorização inválidos")
         normalized_value = value.strip()
         if _AUTHORIZATION_TOKEN_PATTERN.fullmatch(normalized_value) is None:
             raise error_class("tokens de autorização inválidos")
         normalized_tokens.add(normalized_value)
-        if len(normalized_tokens) > _MAX_AUTHORIZATION_TOKENS:
-            raise error_class("tokens de autorização excedem limite")
 
     if required and not normalized_tokens:
         raise error_class("tokens de autorização obrigatórios")
