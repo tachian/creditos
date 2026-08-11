@@ -12,7 +12,11 @@ from creditos_observability.logging import build_structured_log
 from creditos_identity_tenant.application.ports.m2m_token_verifier import M2MTokenVerifier
 from creditos_identity_tenant.application.ports.operation_logger import OperationLogger
 from creditos_identity_tenant.application.ports.tenant_repository import TenantRepository
-from creditos_identity_tenant.application.security import OperatorContext
+from creditos_identity_tenant.application.security import AuthorizationSubject, OperatorContext
+from creditos_identity_tenant.application.use_cases.authorize_operation import (
+    AuthorizedOperationFacade,
+    AuthorizeOperationCommand,
+)
 from creditos_identity_tenant.application.use_cases.create_tenant import (
     CreateTenantCommand,
     CreateTenantUseCase,
@@ -47,6 +51,7 @@ class TenantApplicationService:
     ) -> None:
         self._operation_logger = operation_logger
         self._environment = environment
+        self._authorized_operation_facade = AuthorizedOperationFacade()
         self._resolve_m2m_tenant_context = (
             ResolveM2MTenantContextUseCase(
                 repository=repository,
@@ -129,6 +134,59 @@ class TenantApplicationService:
             )
             raise
 
+    def authorize_operation(
+        self,
+        command: AuthorizeOperationCommand,
+        *,
+        context: ObservabilityContext,
+    ) -> dict[str, object]:
+        started_at = perf_counter()
+        requirement = self._authorization_requirement_if_known(command)
+        try:
+            decision = self._authorized_operation_facade.authorize(command)
+            self._log_operation(
+                context=_context_with_authorization_subject(context, command.subject),
+                operation="identity_tenant.authorize_operation",
+                source="authorization-context",
+                status="accepted",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                extra=_authorization_log_extra(
+                    command=command,
+                    requirement=requirement,
+                    authz_decision="granted",
+                ),
+            )
+            return decision.to_metadata()
+        except Exception as error:
+            self._log_operation(
+                context=_context_with_authorization_subject_if_safe(context, command),
+                operation="identity_tenant.authorize_operation",
+                source="authorization-context",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                error_type=type(error).__name__,
+                extra=_authorization_log_extra(
+                    command=command,
+                    requirement=requirement,
+                    authz_decision="denied",
+                    denial_reason=getattr(error, "code", type(error).__name__),
+                ),
+            )
+            raise
+
+    def _authorization_requirement_if_known(
+        self,
+        command: object,
+    ) -> object | None:
+        if not isinstance(command, AuthorizeOperationCommand):
+            return None
+        try:
+            return self._authorized_operation_facade.requirement_for_operation(command.operation)
+        except Exception:
+            return None
+
     def resolve_m2m_tenant_context(
         self,
         command: ResolveM2MTenantContextCommand,
@@ -147,6 +205,7 @@ class TenantApplicationService:
             self._log_operation(
                 context=log_context,
                 operation="identity_tenant.resolve_m2m_tenant_context",
+                source="m2m-token-context",
                 status="accepted",
                 duration_ms=_duration_ms(started_at),
                 payload=command,
@@ -161,6 +220,7 @@ class TenantApplicationService:
             self._log_operation(
                 context=_context_without_tenant(context),
                 operation="identity_tenant.resolve_m2m_tenant_context",
+                source="m2m-token-context",
                 status="rejected",
                 duration_ms=_duration_ms(started_at),
                 payload=command,
@@ -174,6 +234,7 @@ class TenantApplicationService:
         *,
         context: ObservabilityContext,
         operation: str,
+        source: str = "operator-context",
         status: str,
         duration_ms: float,
         payload: Any,
@@ -186,7 +247,7 @@ class TenantApplicationService:
             service_version=SERVICE_VERSION,
             environment=self._environment,
             operation=operation,
-            source="operator-context",
+            source=source,
             destination=SERVICE_NAME,
             contract=CONTRACT,
             contract_version=CONTRACT_VERSION,
@@ -224,6 +285,67 @@ def _context_with_tenant(context: ObservabilityContext, tenant: Tenant) -> Obser
 
 def _context_without_tenant(context: ObservabilityContext) -> ObservabilityContext:
     return replace(context, tenant_id=None, tenant_isolation_tier=None)
+
+
+def _context_with_authorization_subject(
+    context: ObservabilityContext,
+    subject: AuthorizationSubject,
+) -> ObservabilityContext:
+    return replace(
+        context,
+        tenant_id=subject.tenant_id,
+        tenant_isolation_tier=subject.tenant_isolation_tier,
+    )
+
+
+def _context_with_authorization_subject_if_safe(
+    context: ObservabilityContext,
+    command: object,
+) -> ObservabilityContext:
+    subject = getattr(command, "subject", None)
+    if isinstance(subject, AuthorizationSubject):
+        return _context_with_authorization_subject(context, subject)
+    return _context_without_tenant(context)
+
+
+def _authorization_log_extra(
+    *,
+    command: object,
+    requirement: object | None,
+    authz_decision: str,
+    denial_reason: str | None = None,
+) -> dict[str, object]:
+    extra: dict[str, object] = {
+        "authz_decision": authz_decision,
+        "operation_name": _safe_log_value(getattr(command, "operation", None), "unknown"),
+    }
+    if requirement is not None:
+        extra["required_scopes"] = sorted(getattr(requirement, "required_scopes", ()))
+        extra["required_roles"] = sorted(getattr(requirement, "required_roles", ()))
+        extra["allow_scope_only"] = getattr(requirement, "allow_scope_only", False)
+
+    resource = getattr(command, "resource", None)
+    if resource is not None:
+        extra["resource_type"] = _safe_log_value(
+            getattr(resource, "resource_type", None),
+            "unknown",
+        )
+        extra["resource_id"] = _safe_log_value(getattr(resource, "resource_id", None), "unknown")
+
+    subject = getattr(command, "subject", None)
+    if isinstance(subject, AuthorizationSubject):
+        extra["subject_id"] = subject.subject_id
+        if subject.client_id is not None:
+            extra["client_id"] = subject.client_id
+    if denial_reason is not None:
+        extra["denial_reason"] = denial_reason
+    return extra
+
+
+def _safe_log_value(value: object, default: str) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()[:128]
+    return default
 
 
 def _duration_ms(started_at: float) -> float:
