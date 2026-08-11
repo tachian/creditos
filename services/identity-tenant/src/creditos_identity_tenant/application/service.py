@@ -144,7 +144,6 @@ class TenantApplicationService:
         requirement = self._authorization_requirement_if_known(command)
         try:
             decision = self._authorized_operation_facade.authorize(command)
-            requirement = self._authorization_requirement_if_known(command)
             self._log_operation(
                 context=_context_with_authorization_subject(context, command.subject),
                 operation="identity_tenant.authorize_operation",
