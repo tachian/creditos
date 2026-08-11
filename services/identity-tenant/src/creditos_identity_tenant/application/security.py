@@ -410,9 +410,7 @@ def _normalize_tokens(
         raise error_class("tokens de autorização inválidos")
 
     normalized_tokens: set[str] = set()
-    token_count = 0
-    for value in values:
-        token_count += 1
+    for token_count, value in enumerate(values, start=1):
         if token_count > _MAX_AUTHORIZATION_TOKENS:
             raise error_class("tokens de autorização excedem limite")
         if not isinstance(value, str):
