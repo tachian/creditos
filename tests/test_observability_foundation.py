@@ -38,15 +38,15 @@ def test_grpc_and_cloudevent_contexts_can_use_trusted_tenant_metadata() -> None:
     grpc_context = ObservabilityContext.from_grpc_metadata(
         [
             ("x-correlation-id", "corr-grpc"),
-            ("tenantid", "tenant-alpha"),
-            ("x-tenant-isolation-tier", "bridge"),
+            ("x-creditos-tenant-id", "tenant-alpha"),
+            ("x-creditos-tenant-isolation-tier", "bridge"),
         ]
     )
     event_context = ObservabilityContext.from_cloudevent_attributes(
         {
             "correlationid": "corr-event",
             "tenantid": "tenant-beta",
-            "x-tenant-isolation-tier": "bridge",
+            "tenanttier": "bridge",
         }
     )
 

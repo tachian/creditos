@@ -51,8 +51,16 @@ class ObservabilityContext:
         tenant_id = None
         tenant_isolation_tier = None
         if trusted_tenant:
-            tenant_id = normalized_carrier.get("x-tenant-id") or normalized_carrier.get("tenantid")
-            tenant_isolation_tier = normalized_carrier.get("x-tenant-isolation-tier")
+            tenant_id = (
+                normalized_carrier.get("x-creditos-tenant-id")
+                or normalized_carrier.get("x-tenant-id")
+                or normalized_carrier.get("tenantid")
+            )
+            tenant_isolation_tier = (
+                normalized_carrier.get("x-creditos-tenant-isolation-tier")
+                or normalized_carrier.get("x-tenant-isolation-tier")
+                or normalized_carrier.get("tenanttier")
+            )
 
         return cls.new(
             correlation_id=normalized_carrier.get("x-correlation-id")

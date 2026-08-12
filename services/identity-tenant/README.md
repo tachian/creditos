@@ -33,6 +33,23 @@ Microsserviço responsável pelo catálogo mínimo de tenants do CreditOS.
 - O modelo inicial é local e substituível, sem engine externa de policy; catálogo persistido e ABAC ficam para evolução futura.
 - Logs de autorização usam `source=authorization-context` e registram decisão minimizada em `authz_decision`, operação, requisitos, sujeito e tenant confiável, sem payload bruto, token ou segredo.
 
+## Propagação de contexto confiável
+
+- O serviço expõe adapters locais para derivar contexto propagável a partir de
+  `AuthorizationSubject` e `ResolvedM2MTenantContext`, sem propagar `token_id`.
+- Chamadas internas gRPC devem serializar o contexto como metadata técnica e
+  validar a metadata recebida e o tenant esperado antes do caso de uso.
+- Eventos CloudEvents devem transportar tenant, sujeito, scopes, correlação,
+  request ID, `traceparent` e versão de schema em atributos/extensões, não em
+  payload sensível; consumidores validam envelope core e `idempotencykey`.
+- A validação rejeita metadata ou atributos ausentes, malformados, binários,
+  com uppercase/underscore inválido, token, segredo, CPF/CNPJ ou e-mail bruto.
+- Rejeições de contexto podem ser registradas com `source=trusted-context`,
+  sempre limpando tenant recebido antes da validação.
+- O protobuf `TenantContextService` permanece backward-compatible: a propagação
+  padronizada nesta etapa usa metadata gRPC, portanto não exige novos campos na
+  mensagem estrutural.
+
 ## Camadas
 
 - `domain`: entidades, value objects, erros e invariantes puros.

@@ -6,6 +6,9 @@ package creditos.identity_tenant.v1;
 // creditos.contract.owner = "Identity & Tenant"
 // creditos.contract.compatibility = "backward-compatible"
 
+// Contexto confiável entre microsserviços é propagado por metadata gRPC
+// padronizada. As mensagens abaixo permanecem estáveis para preservar
+// compatibilidade do contrato estrutural v1.
 service TenantContextService {
   rpc ResolveTenantContext(TenantContextRequest) returns (TenantContextResponse);
 }

@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
+from time import perf_counter
+
+from creditos_observability.context import ObservabilityContext
+from creditos_observability.logging import build_structured_log
+from creditos_security.context import (
+    context_from_grpc_metadata,
+    context_to_grpc_metadata,
+)
+
+from creditos_identity_tenant.application.ports.operation_logger import OperationLogger
+from creditos_identity_tenant.application.security import AuthorizationSubject
+from creditos_identity_tenant.application.trusted_context import (
+    ensure_expected_tenant,
+    propagated_context_from_authorization_subject,
+)
+from creditos_identity_tenant.application.trusted_context import (
+    propagated_context_from_resolved_m2m_context as propagated_context_from_resolved_m2m_context,
+)
+
+SERVICE_NAME = "identity-tenant"
+SERVICE_VERSION = "0.1.0"
+CONTRACT = "identity-tenant-trusted-context"
+CONTRACT_VERSION = "v1"
+
+
+def grpc_metadata_from_authorization_subject(
+    subject: AuthorizationSubject,
+    context: ObservabilityContext,
+    *,
+    schema_version: str = "v1",
+) -> tuple[tuple[str, str], ...]:
+    return context_to_grpc_metadata(
+        propagated_context_from_authorization_subject(
+            subject,
+            context,
+            schema_version=schema_version,
+        )
+    )
+
+
+def authorization_subject_from_grpc_metadata(
+    metadata: Mapping[str, str] | Sequence[tuple[str, str]],
+    *,
+    expected_tenant_id: str | None = None,
+    operation_logger: OperationLogger | None = None,
+    observability_context: ObservabilityContext | None = None,
+    environment: str = "test",
+) -> AuthorizationSubject:
+    started_at = perf_counter()
+    try:
+        propagated_context = context_from_grpc_metadata(metadata)
+        ensure_expected_tenant(propagated_context, expected_tenant_id)
+        return AuthorizationSubject.from_resolved_tenant_context(
+            subject_id=propagated_context.trusted.subject_id,
+            tenant_id=propagated_context.trusted.tenant_id,
+            tenant_isolation_tier=propagated_context.trusted.tenant_isolation_tier,
+            scopes=propagated_context.trusted.scopes,
+            trusted_roles=propagated_context.trusted.roles,
+            client_id=propagated_context.trusted.client_id,
+            principal_type=propagated_context.trusted.principal_type,
+        )
+    except Exception as error:
+        _log_context_rejection(
+            operation_logger=operation_logger,
+            context=observability_context,
+            environment=environment,
+            operation="identity_tenant.validate_grpc_trusted_context",
+            duration_ms=_duration_ms(started_at),
+            error=error,
+        )
+        raise
+
+
+def _log_context_rejection(
+    *,
+    operation_logger: OperationLogger | None,
+    context: ObservabilityContext | None,
+    environment: str,
+    operation: str,
+    duration_ms: float,
+    error: Exception,
+) -> None:
+    if operation_logger is None or context is None:
+        return
+    event = build_structured_log(
+        context=replace(context, tenant_id=None, tenant_isolation_tier=None),
+        service_name=SERVICE_NAME,
+        service_version=SERVICE_VERSION,
+        environment=environment,
+        operation=operation,
+        source="trusted-context",
+        destination=SERVICE_NAME,
+        contract=CONTRACT,
+        contract_version=CONTRACT_VERSION,
+        status="rejected",
+        duration_ms=duration_ms,
+        error_type=type(error).__name__,
+        payload={"context": "[OMITIDO]"},
+        extra={"context_validation": "denied"},
+    )
+    try:
+        operation_logger.log(event)
+    except Exception:
+        return
+
+
+def _duration_ms(started_at: float) -> float:
+    return round((perf_counter() - started_at) * 1000, 6)
