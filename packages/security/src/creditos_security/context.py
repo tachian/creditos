@@ -363,6 +363,8 @@ def _metadata_to_mapping(
         if raw_key != raw_key.lower():
             raise InvalidTrustedContextError("metadata gRPC deve usar chaves lower-case")
         key = raw_key.strip()
+        if key != raw_key:
+            raise InvalidTrustedContextError("metadata gRPC inválida")
         if key.endswith("-bin") or key in _SENSITIVE_METADATA_KEYS or _is_sensitive_key(key):
             raise InvalidTrustedContextError("metadata gRPC proibida")
         if key not in _GRPC_METADATA_KEYS:
