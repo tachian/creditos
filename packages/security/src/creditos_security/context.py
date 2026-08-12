@@ -254,7 +254,7 @@ def _contains_brazilian_document(value: str) -> bool:
     if _BRAZILIAN_DOCUMENT_PATTERN.fullmatch(value) is not None:
         return True
     digits = re.sub(r"\D", "", value)
-    return bool(re.search(r"\d{11}|\d{14}", digits))
+    return len(digits) in (11, 14)
 
 
 def _normalize_required_tokens(values: Iterable[str]) -> frozenset[str]:
