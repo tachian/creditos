@@ -211,7 +211,6 @@ class TenantApplicationService:
                 payload=command,
                 extra={
                     "client_id": resolved_context.client_id,
-                    "token_id": resolved_context.token_id,
                     "scopes": sorted(resolved_context.scopes),
                 },
             )
