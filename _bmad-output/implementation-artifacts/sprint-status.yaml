@@ -62,7 +62,7 @@ development_status:
   1-2-autenticacao-m2m-com-resolucao-de-tenant: done
   1-3-autorizacao-por-rbac-scopes-e-claims-de-tenant: done
   1-4-propagacao-de-contexto-confiavel-entre-servicos: done
-  1-5-gates-de-seguranca-e-isolamento-do-epic-1: backlog
+  1-5-gates-de-seguranca-e-isolamento-do-epic-1: done
   epic-1-retrospective: optional
   epic-2: backlog
   2-1-definicao-do-contrato-canonico-de-proposta: backlog

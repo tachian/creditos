@@ -50,6 +50,22 @@ Microsserviço responsável pelo catálogo mínimo de tenants do CreditOS.
   padronizada nesta etapa usa metadata gRPC, portanto não exige novos campos na
   mensagem estrutural.
 
+## Gate de segurança e isolamento do Epic 1
+
+O fechamento do Epic 1 mantém uma matriz de gates bloqueantes rastreada por
+`CTOS-135` e validada por
+`services/identity-tenant/tests/integration/test_epic1_security_gates.py`. A
+premissa é consolidar segurança verificável sem nova tecnologia: os gates
+reutilizam os helpers, adapters e comandos já existentes.
+
+| Gate | Risco bloqueado | Evidência automatizada |
+| --- | --- | --- |
+| Autenticação M2M negativa | token ausente/inválido, issuer/audience incorretos, expiração, `kid`/algoritmo inválidos, assinatura inválida e claim obrigatória ausente | `test_epic1_gate_rejects_m2m_authentication_failures_without_sensitive_logs` |
+| Autorização e cross-tenant | operação desconhecida, scope/role insuficientes, requisito fora da registry e recurso de outro tenant | `test_epic1_gate_rejects_authorization_and_cross_tenant_failures_safely` |
+| Contexto confiável gRPC/CloudEvents | spoofing de tenant, metadata gRPC duplicada, metadata/atributos malformados, sensíveis ou sem rastreabilidade mínima | `test_epic1_gate_rejects_untrusted_grpc_context_before_rebuilding_subject` e `test_epic1_gate_rejects_untrusted_cloudevent_context_before_use_case` |
+| Logs mascarados e rastreáveis | vazamento de token, segredo, CPF, CNPJ, e-mail completo, payload bruto ou tenant não confiável | `_assert_no_sensitive_log_leakage` aplicado aos fluxos de autenticação, autorização e contexto confiável |
+| CI bloqueante | regressão que passa localmente mas não bloqueia merge | `test_epic1_gate_preserves_ci_and_local_blocking_commands` preserva secret scan, lockfile, lint, format, typecheck, contratos, harness e pytest |
+
 ## Camadas
 
 - `domain`: entidades, value objects, erros e invariantes puros.
