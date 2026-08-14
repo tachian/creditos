@@ -984,8 +984,12 @@ def _normalize_money_object(value: object, field_path: str, allowed_fields: set[
     _reject_unknown_fields(payload, allowed_fields, field_path)
     for key, item in payload.items():
         if key == "declared_cash_flow":
-            if isinstance(item, bool) or not isinstance(item, int):
-                raise ProposalValidationError("inteiro inválido", field_path=f"{field_path}.{key}")
+            _require_integer_range(
+                item,
+                field_path=f"{field_path}.{key}",
+                minimum=-1_000_000_000_000,
+                maximum=1_000_000_000_000,
+            )
         else:
             require_money_cents(item, field_path=f"{field_path}.{key}", allow_zero=True)
 
