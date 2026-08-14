@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "CreditOS Proposal Intake Public API Structural Contract",
+    "title": "CreditOS Proposal Intake Public API Contract",
     "version": "v1",
-    "description": "Contrato estrutural mínimo para validar organização e governança. Não é o contrato final de produto."
+    "description": "Contrato público versionado para submissão governada de propostas canônicas."
   },
   "x-creditos": {
     "owner": "Proposal Intake",
@@ -13,8 +13,8 @@
   "paths": {
     "/v1/proposals": {
       "post": {
-        "summary": "Placeholder estrutural de submissão de proposta",
-        "operationId": "submitProposalStructuralPlaceholder",
+        "summary": "Submissão pública canônica de proposta v1",
+        "operationId": "submitProposal",
         "parameters": [
           {
             "name": "X-Correlation-Id",
@@ -37,13 +37,25 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 8,
+              "maxLength": 120,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{7,119}$"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../../../../schemas/proposal/v1/proposal.schema.json"
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "description": "Proposta aceita para processamento assíncrono"
