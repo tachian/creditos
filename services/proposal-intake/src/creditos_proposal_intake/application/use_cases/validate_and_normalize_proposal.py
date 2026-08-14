@@ -185,6 +185,13 @@ def _require_idempotency_key(headers: Mapping[str, str]) -> str:
             code="invalid_headers",
             field_path="headers",
         )
+    for key, value in headers.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise ProposalValidationError(
+                "headers inválidos",
+                code="invalid_headers",
+                field_path="headers",
+            )
     lowered_keys = [key.lower() for key in headers]
     if len(lowered_keys) != len(set(lowered_keys)):
         raise ProposalValidationError(
