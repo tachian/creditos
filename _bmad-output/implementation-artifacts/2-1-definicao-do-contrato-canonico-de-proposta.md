@@ -25,8 +25,9 @@ so that a integração seja previsível e não dependa de payload arbitrário.
 2. **Núcleo comum e produtos MVP**
    - **Given** uma proposta `PF` ou `PJ`
    - **When** `product_type` for `personal_credit`, `bnpl`, `business_credit` ou `receivables`
-   - **Then** o contrato exige núcleo comum: `schema_version`, `external_proposal_id`, `idempotency_key`, `person_type`, `product_type`, `channel`, `operation.requested_terms`, `borrower` e `product_data`
+   - **Then** o contrato exige núcleo comum: `schema_version`, `external_proposal_id`, `person_type`, `product_type`, `channel`, `operation.requested_terms`, `borrower` e `product_data`
    - **And** `product_data` permite exatamente o sub-bloco compatível com `product_type`.
+   - **And** a idempotência da API pública é governada pelo header obrigatório `Idempotency-Key`.
 
 3. **Rejeição de payload arbitrário e planos externos**
    - **Given** campos proibidos como `selected_plan`, `plan_id`, `extra_data` livre, `tenant_id` como autoridade no body ou payload sem dono
