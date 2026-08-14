@@ -607,6 +607,11 @@ def validate_participant_example_shape(value: object, index: int, errors: list[s
     document_type = value.get("document_type")
     document = value.get("document")
 
+    if person_type is not None and person_type not in PROPOSAL_PERSON_TYPES:
+        errors.append(f"participants[{index}].person_type inválido: {person_type}")
+
+    if document_type is not None and document_type not in {"CPF", "CNPJ"}:
+        errors.append(f"participants[{index}].document_type inválido: {document_type}")
     if role in PROPOSAL_CRITICAL_PARTICIPANT_ROLES:
         missing = {"person_type", "document_type", "document"} - set(value)
         if missing:
