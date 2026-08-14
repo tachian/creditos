@@ -6,6 +6,7 @@ import json
 import re
 import sys
 import tomllib
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,39 @@ CLOUDEVENT_REQUIRED_FIELDS = {
     "schemaversion",
     "traceparent",
 }
+PROPOSAL_SCHEMA_PATH = "schemas/proposal/v1/proposal.schema.json"
+PROPOSAL_REQUIRED_FIELDS = {
+    "schema_version",
+    "external_proposal_id",
+    "person_type",
+    "product_type",
+    "channel",
+    "operation",
+    "borrower",
+    "product_data",
+}
+PROPOSAL_MVP_PRODUCTS = {"personal_credit", "bnpl", "business_credit", "receivables"}
+PROPOSAL_PERSON_TYPES = {"PF", "PJ"}
+PROPOSAL_FORBIDDEN_FIELDS = {
+    "idempotency_key",
+    "selected_plan",
+    "plan_id",
+    "extra_data",
+    "tenant_id",
+    "raw_payload",
+    "payload",
+}
+PROPOSAL_CHANNELS = {"api", "batch", "portal", "partner", "checkout", "backoffice"}
+PROPOSAL_CRITICAL_PARTICIPANT_ROLES = {
+    "beneficial_owner",
+    "co_borrower",
+    "guarantor",
+    "legal_representative",
+    "payer",
+    "shareholder",
+}
+PROPOSAL_MONEY_MAX = 1_000_000_000_000
+PROPOSAL_SENSITIVE_DIGITS = re.compile(r"^\d{10,15}$")
 OPENAPI_REQUIRED_HEADER_PARAMETERS = {"X-Correlation-Id", "X-Request-Id", "Idempotency-Key"}
 OPENAPI_REQUIRED_RESPONSES = {"202", "400", "401", "409", "500"}
 KIND_PATH_RULES = {
@@ -184,9 +218,30 @@ def validate_openapi_contract(path: Path, version: str) -> None:
             for parameter in parameters
             if isinstance(parameter, dict) and parameter.get("in") == "header"
         }
+        headers_by_name = {
+            str(parameter.get("name")): parameter
+            for parameter in parameters
+            if isinstance(parameter, dict) and parameter.get("in") == "header"
+        }
         require(
             header_parameters >= OPENAPI_REQUIRED_HEADER_PARAMETERS,
             f"OpenAPI operação deve declarar headers de rastreabilidade/idempotência: {path}",
+        )
+        idempotency_header = require_dict(
+            headers_by_name.get("Idempotency-Key"),
+            f"OpenAPI operação deve declarar Idempotency-Key como header: {path}",
+        )
+        idempotency_schema = require_dict(
+            idempotency_header.get("schema"),
+            f"OpenAPI Idempotency-Key deve declarar schema: {path}",
+        )
+        require(
+            idempotency_header.get("required") is True,
+            f"OpenAPI Idempotency-Key deve ser obrigatório: {path}",
+        )
+        require(
+            idempotency_schema.get("minLength") == 8,
+            f"OpenAPI Idempotency-Key deve exigir minLength 8: {path}",
         )
         require(
             set(responses) >= OPENAPI_REQUIRED_RESPONSES,
@@ -237,7 +292,7 @@ def validate_asyncapi_contract(path: Path, version: str) -> None:
         )
 
 
-def validate_json_schema_contract(path: Path, version: str) -> None:
+def validate_json_schema_contract(path: Path, version: str, raw_path: str) -> None:
     contract = load_json_object(path)
     creditos_metadata = require_dict(
         contract.get("x-creditos"), f"JSON Schema x-creditos deve ser objeto: {path}"
@@ -248,6 +303,373 @@ def validate_json_schema_contract(path: Path, version: str) -> None:
         f"JSON Schema deve declarar draft 2020-12: {path}",
     )
     require(creditos_metadata.get("version") == version, f"Versão JSON Schema divergente: {path}")
+    if raw_path == PROPOSAL_SCHEMA_PATH:
+        validate_proposal_schema_contract(contract, path)
+
+
+def validate_proposal_schema_contract(contract: dict[str, Any], path: Path) -> None:
+    properties = require_dict(
+        contract.get("properties"), f"Schema de proposta sem properties: {path}"
+    )
+    required = contract.get("required", [])
+    metadata = require_dict(
+        contract.get("x-creditos"), f"Schema de proposta sem x-creditos: {path}"
+    )
+
+    require(contract.get("type") == "object", f"Schema de proposta deve ter raiz object: {path}")
+    require(
+        contract.get("additionalProperties") is False,
+        f"Schema de proposta deve fechar a raiz com additionalProperties false: {path}",
+    )
+    require(isinstance(required, list), f"Schema de proposta required deve ser lista: {path}")
+    require(
+        set(required) >= PROPOSAL_REQUIRED_FIELDS,
+        f"Campos obrigatórios divergentes no schema de proposta: {path}",
+    )
+    require(
+        properties.get("schema_version", {}).get("const") == "1.0",
+        f"Schema de proposta deve exigir schema_version 1.0: {path}",
+    )
+    require(
+        set(properties.get("person_type", {}).get("enum", [])) == PROPOSAL_PERSON_TYPES,
+        f"Person types divergentes no schema de proposta: {path}",
+    )
+    require(
+        set(properties.get("product_type", {}).get("enum", [])) == PROPOSAL_MVP_PRODUCTS,
+        f"Produtos MVP divergentes no schema de proposta: {path}",
+    )
+    require(
+        set(properties.get("channel", {}).get("enum", [])) == PROPOSAL_CHANNELS,
+        f"Canais divergentes no schema de proposta: {path}",
+    )
+    require(
+        set(metadata.get("productTypes", [])) == PROPOSAL_MVP_PRODUCTS,
+        f"Metadados x-creditos.productTypes divergentes no schema de proposta: {path}",
+    )
+    require(
+        set(metadata.get("forbiddenFields", [])) >= PROPOSAL_FORBIDDEN_FIELDS,
+        f"Metadados x-creditos.forbiddenFields incompletos no schema de proposta: {path}",
+    )
+
+    forbidden_schema_fields = set(iter_property_names(contract)) & PROPOSAL_FORBIDDEN_FIELDS
+    require(
+        not forbidden_schema_fields,
+        "Campo proibido no schema de proposta: "
+        f"{sorted(forbidden_schema_fields)} em {display_path(path)}",
+    )
+    validate_governed_objects_are_closed(contract, path)
+    validate_proposal_shape_sections(contract, path)
+    validate_proposal_examples(contract, path)
+
+
+def validate_governed_objects_are_closed(contract: dict[str, Any], path: Path) -> None:
+    open_object_paths = [
+        schema_path
+        for schema_path, schema in iter_object_schemas(contract)
+        if schema.get("additionalProperties") is not False
+        and schema.get("unevaluatedProperties") is not False
+    ]
+    require(
+        not open_object_paths,
+        f"Objetos governados sem fechamento no schema de proposta: {open_object_paths} em {path}",
+    )
+
+
+def validate_proposal_shape_sections(contract: dict[str, Any], path: Path) -> None:
+    defs = require_dict(contract.get("$defs"), f"Schema de proposta deve declarar $defs: {path}")
+    operation = require_dict(defs.get("operation"), f"Schema de proposta sem operation: {path}")
+    requested_terms = require_dict(
+        defs.get("requested_terms"), f"Schema de proposta sem requested_terms: {path}"
+    )
+    borrower = require_dict(defs.get("borrower"), f"Schema de proposta sem borrower: {path}")
+    participant = require_dict(
+        defs.get("participant"), f"Schema de proposta sem participant: {path}"
+    )
+    product_data = require_dict(
+        defs.get("product_data"), f"Schema de proposta sem product_data: {path}"
+    )
+    decision_options = require_dict(
+        defs.get("decision_options"), f"Schema de proposta sem decision_options: {path}"
+    )
+    callback = require_dict(defs.get("callback"), f"Schema de proposta sem callback: {path}")
+
+    require(
+        set(operation.get("required", [])) >= {"requested_terms"},
+        f"operation deve exigir requested_terms: {path}",
+    )
+    require(
+        set(requested_terms.get("required", [])) >= {"amount", "currency"},
+        f"requested_terms deve exigir amount e currency: {path}",
+    )
+    require(
+        requested_terms.get("properties", {}).get("currency", {}).get("const") == "BRL",
+        f"requested_terms.currency deve ser BRL no MVP: {path}",
+    )
+    require(
+        requested_terms.get("properties", {}).get("amount", {}).get("maximum")
+        == PROPOSAL_MONEY_MAX,
+        f"requested_terms.amount deve declarar teto operacional: {path}",
+    )
+    require(
+        set(borrower.get("properties", {}).get("document_type", {}).get("enum", []))
+        == {"CPF", "CNPJ"},
+        f"borrower.document_type deve limitar CPF/CNPJ: {path}",
+    )
+    require(
+        bool(participant.get("allOf")),
+        f"participant deve declarar regras condicionais por papel/documento: {path}",
+    )
+    require(
+        set(product_data.get("properties", {})) == PROPOSAL_MVP_PRODUCTS,
+        f"product_data deve conter exatamente os produtos MVP: {path}",
+    )
+    require(product_data.get("minProperties") == 1, f"product_data deve exigir um bloco: {path}")
+    require(
+        product_data.get("maxProperties") == 1,
+        f"product_data deve permitir exatamente um bloco: {path}",
+    )
+    require(
+        "manual_review"
+        not in decision_options.get("properties", {}).get("review_strategy", {}).get("enum", []),
+        f"decision_options não pode permitir manual_review no MVP: {path}",
+    )
+    callback_properties = callback.get("properties", {})
+    require(
+        "url" not in callback_properties,
+        f"callback não pode aceitar URL livre no payload público: {path}",
+    )
+    require(
+        set(callback.get("required", [])) >= {"callback_profile_ref"},
+        f"callback deve exigir callback_profile_ref quando informado: {path}",
+    )
+
+
+def validate_proposal_examples(contract: dict[str, Any], path: Path) -> None:
+    examples = contract.get("examples", [])
+    metadata = require_dict(
+        contract.get("x-creditos"), f"Schema de proposta sem x-creditos: {path}"
+    )
+    invalid_examples = metadata.get("invalidExamples", [])
+
+    require(
+        isinstance(examples, list) and len(examples) > 0,
+        f"Schema de proposta deve ter exemplos: {path}",
+    )
+    require(
+        isinstance(invalid_examples, list) and len(invalid_examples) > 0,
+        f"Schema de proposta deve ter exemplos inválidos governados: {path}",
+    )
+    require(
+        {example.get("product_type") for example in examples if isinstance(example, dict)}
+        == PROPOSAL_MVP_PRODUCTS,
+        f"Exemplos válidos devem cobrir todos os produtos MVP: {path}",
+    )
+    require(
+        {example.get("person_type") for example in examples if isinstance(example, dict)}
+        >= PROPOSAL_PERSON_TYPES,
+        f"Exemplos válidos devem cobrir PF e PJ: {path}",
+    )
+    covered_forbidden_fields = {
+        key
+        for example in invalid_examples
+        if isinstance(example, dict)
+        for key in iter_payload_keys(example)
+        if key in PROPOSAL_FORBIDDEN_FIELDS
+    }
+    missing_forbidden_fields = PROPOSAL_FORBIDDEN_FIELDS - covered_forbidden_fields
+    require(
+        not missing_forbidden_fields,
+        "Exemplos inválidos devem cobrir todos os campos proibidos de proposta: "
+        f"{sorted(missing_forbidden_fields)}",
+    )
+
+    for index, example in enumerate(examples):
+        proposal_errors = validate_proposal_example_shape(example)
+        require(
+            not proposal_errors,
+            f"Exemplo válido de proposta #{index} falhou governança: {proposal_errors}",
+        )
+
+    invalid_outcomes = [validate_proposal_example_shape(example) for example in invalid_examples]
+    require(
+        all(invalid_outcomes),
+        f"Exemplos inválidos de proposta devem ser rejeitados: {path}",
+    )
+
+
+def validate_proposal_example_shape(value: object) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(value, dict):
+        return ["exemplo deve ser objeto"]
+
+    missing = PROPOSAL_REQUIRED_FIELDS - set(value)
+    if missing:
+        errors.append(f"campos obrigatórios ausentes: {sorted(missing)}")
+
+    forbidden_fields = set(iter_payload_keys(value)) & PROPOSAL_FORBIDDEN_FIELDS
+    if forbidden_fields:
+        errors.append(f"campos proibidos presentes: {sorted(forbidden_fields)}")
+
+    external_proposal_id = value.get("external_proposal_id")
+    if isinstance(external_proposal_id, str) and PROPOSAL_SENSITIVE_DIGITS.fullmatch(
+        external_proposal_id
+    ):
+        errors.append("external_proposal_id não pode parecer CPF, CNPJ ou telefone")
+
+    product_type = value.get("product_type")
+    if product_type not in PROPOSAL_MVP_PRODUCTS:
+        errors.append(f"produto fora do MVP: {product_type}")
+
+    person_type = value.get("person_type")
+    if person_type not in PROPOSAL_PERSON_TYPES:
+        errors.append(f"person_type inválido: {person_type}")
+
+    channel = value.get("channel")
+    if channel not in PROPOSAL_CHANNELS:
+        errors.append(f"channel inválido: {channel}")
+
+    operation = value.get("operation", {})
+    requested_terms = operation.get("requested_terms", {}) if isinstance(operation, dict) else {}
+    if not isinstance(requested_terms, dict):
+        errors.append("operation.requested_terms deve ser objeto")
+    else:
+        if requested_terms.get("currency") != "BRL":
+            errors.append("currency deve ser BRL")
+        amount = requested_terms.get("amount")
+        if not isinstance(amount, int) or amount <= 0:
+            errors.append("amount deve ser inteiro positivo")
+        elif amount > PROPOSAL_MONEY_MAX:
+            errors.append("amount acima do teto operacional")
+
+    borrower = value.get("borrower", {})
+    if not isinstance(borrower, dict):
+        errors.append("borrower deve ser objeto")
+    elif person_type == "PF":
+        if borrower.get("document_type") != "CPF":
+            errors.append("borrower.document_type deve ser CPF para PF")
+        if not document_matches(borrower.get("document"), 11):
+            errors.append("borrower.document deve ter 11 dígitos para CPF")
+    elif person_type == "PJ":
+        if borrower.get("document_type") != "CNPJ":
+            errors.append("borrower.document_type deve ser CNPJ para PJ")
+        if not document_matches(borrower.get("document"), 14):
+            errors.append("borrower.document deve ter 14 dígitos para CNPJ")
+
+    participants = value.get("participants", [])
+    if not isinstance(participants, list):
+        errors.append("participants deve ser lista")
+    elif len(participants) > 20:
+        errors.append("participants acima do limite operacional")
+    else:
+        for index, participant in enumerate(participants):
+            validate_participant_example_shape(participant, index, errors)
+
+    product_data = value.get("product_data", {})
+    if not isinstance(product_data, dict):
+        errors.append("product_data deve ser objeto")
+    elif set(product_data) != {product_type}:
+        errors.append("product_data deve conter exatamente o bloco do product_type")
+    elif product_type == "bnpl":
+        bnpl_data = product_data.get("bnpl", {})
+        if isinstance(bnpl_data, dict) and "purchase_amount" in bnpl_data:
+            errors.append("bnpl.purchase_amount não deve duplicar requested_terms.amount")
+
+    decision_options = value.get("decision_options", {})
+    has_manual_review = (
+        isinstance(decision_options, dict)
+        and decision_options.get("review_strategy") == "manual_review"
+    )
+    if has_manual_review:
+        errors.append("manual_review não faz parte do MVP")
+
+    callback = value.get("callback")
+    if callback is not None:
+        if not isinstance(callback, dict):
+            errors.append("callback deve ser objeto")
+        else:
+            if "url" in callback:
+                errors.append("callback.url não é permitido no payload público")
+            if "callback_profile_ref" not in callback:
+                errors.append(
+                    "callback.callback_profile_ref é obrigatório quando callback é informado"
+                )
+            callback_events = callback.get("events", [])
+            if isinstance(callback_events, list) and len(callback_events) > 20:
+                errors.append("callback.events acima do limite operacional")
+
+    return errors
+
+
+def validate_participant_example_shape(value: object, index: int, errors: list[str]) -> None:
+    if not isinstance(value, dict):
+        errors.append(f"participants[{index}] deve ser objeto")
+        return
+
+    role = value.get("role")
+    person_type = value.get("person_type")
+    document_type = value.get("document_type")
+    document = value.get("document")
+
+    if role in PROPOSAL_CRITICAL_PARTICIPANT_ROLES:
+        missing = {"person_type", "document_type", "document"} - set(value)
+        if missing:
+            errors.append(
+                f"participants[{index}] papel crítico sem identificação completa: {sorted(missing)}"
+            )
+
+    if person_type == "PF":
+        if document_type != "CPF":
+            errors.append(f"participants[{index}].document_type deve ser CPF para PF")
+        if not document_matches(document, 11):
+            errors.append(f"participants[{index}].document deve ter 11 dígitos para CPF")
+        if "name" not in value:
+            errors.append(f"participants[{index}].name é obrigatório para PF identificado")
+    elif person_type == "PJ":
+        if document_type != "CNPJ":
+            errors.append(f"participants[{index}].document_type deve ser CNPJ para PJ")
+        if not document_matches(document, 14):
+            errors.append(f"participants[{index}].document deve ter 14 dígitos para CNPJ")
+        if "legal_name" not in value:
+            errors.append(f"participants[{index}].legal_name é obrigatório para PJ identificado")
+
+
+def document_matches(value: object, length: int) -> bool:
+    return isinstance(value, str) and value.isdigit() and len(value) == length
+
+
+def iter_payload_keys(value: object) -> Iterator[str]:
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            yield str(key)
+            yield from iter_payload_keys(nested_value)
+    elif isinstance(value, list):
+        for nested_value in value:
+            yield from iter_payload_keys(nested_value)
+
+
+def iter_property_names(value: object) -> Iterator[str]:
+    if isinstance(value, dict):
+        properties = value.get("properties", {})
+        if isinstance(properties, dict):
+            yield from (str(property_name) for property_name in properties)
+        for nested_value in value.values():
+            yield from iter_property_names(nested_value)
+    elif isinstance(value, list):
+        for nested_value in value:
+            yield from iter_property_names(nested_value)
+
+
+def iter_object_schemas(
+    value: object, schema_path: str = "$"
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    if isinstance(value, dict):
+        if value.get("type") == "object":
+            yield schema_path, value
+        for key, nested_value in value.items():
+            yield from iter_object_schemas(nested_value, f"{schema_path}.{key}")
+    elif isinstance(value, list):
+        for index, nested_value in enumerate(value):
+            yield from iter_object_schemas(nested_value, f"{schema_path}[{index}]")
 
 
 def validate_proto_contract(path: Path, version: str) -> None:
@@ -334,7 +756,7 @@ def validate_entry(contracts_root: Path, entry: dict[str, Any]) -> None:
     elif kind == "asyncapi":
         validate_asyncapi_contract(contract_path, version)
     elif kind == "json-schema":
-        validate_json_schema_contract(contract_path, version)
+        validate_json_schema_contract(contract_path, version, raw_path)
     else:
         validate_proto_contract(contract_path, version)
 

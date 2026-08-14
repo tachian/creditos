@@ -4,11 +4,35 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from collections.abc import Iterator, Mapping
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = ROOT / "packages" / "contracts"
 CONTRACT_CHECK = ROOT / "scripts" / "check_contracts.py"
+PROPOSAL_SCHEMA = CONTRACTS / "schemas" / "proposal" / "v1" / "proposal.schema.json"
+PROPOSAL_OPENAPI = CONTRACTS / "openapi" / "public" / "proposal-intake" / "v1" / "openapi.json"
+CORE_PROPOSAL_FIELDS = {
+    "schema_version",
+    "external_proposal_id",
+    "person_type",
+    "product_type",
+    "channel",
+    "operation",
+    "borrower",
+    "product_data",
+}
+MVP_PRODUCT_TYPES = {"personal_credit", "bnpl", "business_credit", "receivables"}
+FORBIDDEN_PROPOSAL_FIELDS = {
+    "idempotency_key",
+    "selected_plan",
+    "plan_id",
+    "extra_data",
+    "tenant_id",
+    "raw_payload",
+    "payload",
+}
 
 REQUIRED_CONTRACT_DIRECTORIES = [
     "catalog",
@@ -185,3 +209,218 @@ def test_contract_governance_check_rejects_weak_breaking_controls(tmp_path: Path
 
     assert result.returncode == 1
     assert "versão sucessora maior" in result.stderr
+
+
+def test_proposal_schema_defines_canonical_versioned_public_contract() -> None:
+    schema = load_json(PROPOSAL_SCHEMA)
+
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert schema["x-creditos"]["version"] == "v1"
+    assert schema["x-creditos"]["owner"] == "Proposal Intake"
+    assert set(schema["required"]) >= CORE_PROPOSAL_FIELDS
+    assert schema["properties"]["schema_version"]["const"] == "1.0"
+    assert set(schema["properties"]["person_type"]["enum"]) == {"PF", "PJ"}
+    assert set(schema["properties"]["product_type"]["enum"]) == MVP_PRODUCT_TYPES
+    assert "idempotency_key" not in schema["properties"]
+    assert "selected_plan" not in set(iter_property_names(schema))
+    assert "plan_id" not in set(iter_property_names(schema))
+
+
+def test_proposal_schema_closes_governed_objects_and_product_extensions() -> None:
+    schema = load_json(PROPOSAL_SCHEMA)
+
+    for path, object_schema in iter_object_schemas(schema):
+        assert (
+            object_schema.get("additionalProperties") is False
+            or object_schema.get("unevaluatedProperties") is False
+        ), f"Objeto governado sem fechamento: {path}"
+
+    product_data = schema["$defs"]["product_data"]
+    product_refs = dumped(product_data)
+    for product_type in MVP_PRODUCT_TYPES:
+        assert product_type in product_refs
+
+    forbidden_properties = set(iter_property_names(schema)) & FORBIDDEN_PROPOSAL_FIELDS
+    assert forbidden_properties == set()
+
+
+def test_proposal_openapi_references_canonical_schema_in_submit_request_body() -> None:
+    openapi = load_json(PROPOSAL_OPENAPI)
+    operation = openapi["paths"]["/v1/proposals"]["post"]
+
+    assert operation["requestBody"]["required"] is True
+    proposal_ref = operation["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    assert proposal_ref == "../../../../schemas/proposal/v1/proposal.schema.json"
+    idempotency_header = next(
+        parameter for parameter in operation["parameters"] if parameter["name"] == "Idempotency-Key"
+    )
+    assert idempotency_header["required"] is True
+    assert idempotency_header["schema"]["minLength"] == 8
+    assert operation["summary"] == "Submissão pública canônica de proposta v1"
+
+
+def test_proposal_schema_examples_cover_mvp_products_pf_pj_and_rejections() -> None:
+    schema = load_json(PROPOSAL_SCHEMA)
+    examples = schema["examples"]
+    invalid_examples = schema["x-creditos"]["invalidExamples"]
+
+    assert {example["product_type"] for example in examples} == MVP_PRODUCT_TYPES
+    assert {example["person_type"] for example in examples} >= {"PF", "PJ"}
+    assert {example["product_type"] for example in invalid_examples} >= {"credit_card"}
+    covered_forbidden_fields = {
+        key
+        for example in invalid_examples
+        for key in iter_payload_keys(example)
+        if key in FORBIDDEN_PROPOSAL_FIELDS
+    }
+    assert covered_forbidden_fields >= FORBIDDEN_PROPOSAL_FIELDS
+    assert any(
+        "callback" in example and "url" in example["callback"] for example in invalid_examples
+    )
+
+
+def test_contract_governance_check_rejects_proposal_schema_forbidden_fields(tmp_path: Path) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = contracts_root / "schemas" / "proposal" / "v1" / "proposal.schema.json"
+    schema = load_json(schema_path)
+    schema["properties"]["selected_plan"] = {"type": "object"}
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Campo proibido no schema de proposta" in result.stderr
+
+
+def test_contract_governance_check_rejects_proposal_schema_outside_mvp(tmp_path: Path) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = contracts_root / "schemas" / "proposal" / "v1" / "proposal.schema.json"
+    schema = load_json(schema_path)
+    schema["properties"]["product_type"]["enum"].append("credit_card")
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Produtos MVP divergentes" in result.stderr
+
+
+def test_contract_governance_check_rejects_proposal_example_document_mismatch(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = contracts_root / "schemas" / "proposal" / "v1" / "proposal.schema.json"
+    schema = load_json(schema_path)
+    schema["examples"][0]["borrower"]["document"] = "00000000000191"
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "borrower.document deve ter 11 dígitos para CPF" in result.stderr
+
+
+def test_contract_governance_check_rejects_sensitive_external_proposal_id(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = contracts_root / "schemas" / "proposal" / "v1" / "proposal.schema.json"
+    schema = load_json(schema_path)
+    schema["examples"][0]["external_proposal_id"] = "12345678901"
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "external_proposal_id não pode parecer CPF" in result.stderr
+
+
+def test_contract_governance_check_rejects_product_data_mismatch(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = contracts_root / "schemas" / "proposal" / "v1" / "proposal.schema.json"
+    schema = load_json(schema_path)
+    schema["examples"][1]["product_data"]["personal_credit"] = {}
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "product_data deve conter exatamente o bloco do product_type" in result.stderr
+
+
+def test_contract_governance_check_rejects_free_callback_url(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = contracts_root / "schemas" / "proposal" / "v1" / "proposal.schema.json"
+    schema = load_json(schema_path)
+    schema["examples"][2]["callback"] = {"url": "http://127.0.0.1/internal"}
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "callback.url não é permitido" in result.stderr
+
+
+def test_contract_governance_check_rejects_underidentified_critical_participant(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = contracts_root / "schemas" / "proposal" / "v1" / "proposal.schema.json"
+    schema = load_json(schema_path)
+    schema["examples"][3]["participants"][0] = {"participant_ref": "payer-001", "role": "payer"}
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "papel crítico sem identificação completa" in result.stderr
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    import json
+
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def dumped(value: object) -> str:
+    import json
+
+    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def iter_property_names(value: object) -> Iterator[str]:
+    if isinstance(value, Mapping):
+        properties = value.get("properties", {})
+        if isinstance(properties, Mapping):
+            yield from (str(property_name) for property_name in properties)
+        for nested_value in value.values():
+            yield from iter_property_names(nested_value)
+    elif isinstance(value, list):
+        for nested_value in value:
+            yield from iter_property_names(nested_value)
+
+
+def iter_payload_keys(value: object) -> Iterator[str]:
+    if isinstance(value, Mapping):
+        for key, nested_value in value.items():
+            yield str(key)
+            yield from iter_payload_keys(nested_value)
+    elif isinstance(value, list):
+        for nested_value in value:
+            yield from iter_payload_keys(nested_value)
+
+
+def iter_object_schemas(value: object, path: str = "$") -> Iterator[tuple[str, Mapping[str, Any]]]:
+    if isinstance(value, Mapping):
+        is_object_schema = value.get("type") == "object"
+        if is_object_schema:
+            yield path, value
+        for key, nested_value in value.items():
+            yield from iter_object_schemas(nested_value, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, nested_value in enumerate(value):
+            yield from iter_object_schemas(nested_value, f"{path}[{index}]")

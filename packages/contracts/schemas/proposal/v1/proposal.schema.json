@@ -1,19 +1,809 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.creditos.local/schemas/proposal/v1/proposal.schema.json",
-  "title": "CreditOS Proposal Structural Schema",
-  "description": "Schema estrutural mínimo. O contrato canônico de proposta será definido no Epic 2.",
+  "title": "CreditOS Proposal Canonical Schema",
+  "description": "Contrato canônico público para submissão governada de propostas CPF/CNPJ dos produtos MVP.",
   "type": "object",
-  "required": ["contract_version", "correlation_id"],
+  "required": [
+    "schema_version",
+    "external_proposal_id",
+    "person_type",
+    "product_type",
+    "channel",
+    "operation",
+    "borrower",
+    "product_data"
+  ],
   "properties": {
-    "contract_version": {"const": "v1"},
-    "correlation_id": {"type": "string", "minLength": 1}
+    "schema_version": {"const": "1.0"},
+    "external_proposal_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$",
+      "not": {
+        "anyOf": [
+          {"pattern": "^\\d{11}$"},
+          {"pattern": "^\\d{14}$"},
+          {"pattern": "^\\d{10,15}$"}
+        ]
+      },
+      "description": "Identificador da proposta no cliente; não deve conter CPF, CNPJ, e-mail, telefone ou segredo."
+    },
+    "person_type": {"type": "string", "enum": ["PF", "PJ"]},
+    "product_type": {
+      "type": "string",
+      "enum": ["personal_credit", "bnpl", "business_credit", "receivables"]
+    },
+    "channel": {
+      "type": "string",
+      "enum": ["api", "batch", "portal", "partner", "checkout", "backoffice"]
+    },
+    "operation": {"$ref": "#/$defs/operation"},
+    "borrower": {"$ref": "#/$defs/borrower"},
+    "participants": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"$ref": "#/$defs/participant"},
+      "default": []
+    },
+    "consents": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"$ref": "#/$defs/consent"},
+      "default": []
+    },
+    "provided_data": {"$ref": "#/$defs/provided_data"},
+    "risk_context": {"$ref": "#/$defs/risk_context"},
+    "product_data": {"$ref": "#/$defs/product_data"},
+    "decision_options": {"$ref": "#/$defs/decision_options"},
+    "callback": {"$ref": "#/$defs/callback"}
   },
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {"required": ["person_type"], "properties": {"person_type": {"const": "PF"}}},
+      "then": {
+        "properties": {
+          "borrower": {
+            "required": ["document_type", "document", "name"],
+            "properties": {"document_type": {"const": "CPF"}, "document": {"pattern": "^\\d{11}$"}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"required": ["person_type"], "properties": {"person_type": {"const": "PJ"}}},
+      "then": {
+        "properties": {
+          "borrower": {
+            "required": ["document_type", "document", "legal_name"],
+            "properties": {"document_type": {"const": "CNPJ"}, "document": {"pattern": "^\\d{14}$"}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"required": ["product_type"], "properties": {"product_type": {"const": "personal_credit"}}},
+      "then": {"properties": {"product_data": {"required": ["personal_credit"]}}}
+    },
+    {
+      "if": {"required": ["product_type"], "properties": {"product_type": {"const": "bnpl"}}},
+      "then": {"properties": {"product_data": {"required": ["bnpl"]}}}
+    },
+    {
+      "if": {"required": ["product_type"], "properties": {"product_type": {"const": "business_credit"}}},
+      "then": {"properties": {"product_data": {"required": ["business_credit"]}}}
+    },
+    {
+      "if": {"required": ["product_type"], "properties": {"product_type": {"const": "receivables"}}},
+      "then": {"properties": {"product_data": {"required": ["receivables"]}}}
+    }
+  ],
+  "$defs": {
+    "operation": {
+      "type": "object",
+      "required": ["requested_terms"],
+      "properties": {
+        "requested_terms": {"$ref": "#/$defs/requested_terms"}
+      },
+      "additionalProperties": false
+    },
+    "requested_terms": {
+      "type": "object",
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000000,
+          "description": "Valor monetário em centavos para evitar ponto flutuante binário."
+        },
+        "currency": {"const": "BRL"},
+        "installments": {"type": "integer", "minimum": 1},
+        "down_payment": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+        "first_due_date": {"type": "string", "format": "date"}
+      },
+      "additionalProperties": false
+    },
+    "borrower": {
+      "type": "object",
+      "required": ["document_type", "document"],
+      "properties": {
+        "document_type": {"type": "string", "enum": ["CPF", "CNPJ"]},
+        "document": {"type": "string", "pattern": "^(?:\\d{11}|\\d{14})$"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 160},
+        "birth_date": {"type": "string", "format": "date"},
+        "legal_name": {"type": "string", "minLength": 1, "maxLength": 180},
+        "trade_name": {"type": "string", "minLength": 1, "maxLength": 180},
+        "foundation_date": {"type": "string", "format": "date"}
+      },
+      "additionalProperties": false
+    },
+    "participant": {
+      "type": "object",
+      "required": ["participant_ref", "role"],
+      "properties": {
+        "participant_ref": {"type": "string", "minLength": 1, "maxLength": 80},
+        "role": {
+          "type": "string",
+          "enum": [
+            "legal_representative",
+            "shareholder",
+            "guarantor",
+            "co_borrower",
+            "merchant",
+            "seller",
+            "payer",
+            "assignor",
+            "employer",
+            "beneficial_owner"
+          ]
+        },
+        "person_type": {"type": "string", "enum": ["PF", "PJ"]},
+        "document_type": {"type": "string", "enum": ["CPF", "CNPJ"]},
+        "document": {"type": "string", "pattern": "^(?:\\d{11}|\\d{14})$"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 160},
+        "legal_name": {"type": "string", "minLength": 1, "maxLength": 180},
+        "relationship": {"type": "string", "minLength": 1, "maxLength": 80},
+        "ownership_percentage": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "signature_required": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"required": ["document_type"], "properties": {"document_type": {"const": "CPF"}}},
+          "then": {"properties": {"document": {"pattern": "^\\d{11}$"}}}
+        },
+        {
+          "if": {"required": ["document_type"], "properties": {"document_type": {"const": "CNPJ"}}},
+          "then": {"properties": {"document": {"pattern": "^\\d{14}$"}}}
+        },
+        {
+          "if": {"required": ["person_type"], "properties": {"person_type": {"const": "PF"}}},
+          "then": {
+            "required": ["document_type", "document", "name"],
+            "properties": {"document_type": {"const": "CPF"}, "document": {"pattern": "^\\d{11}$"}}
+          }
+        },
+        {
+          "if": {"required": ["person_type"], "properties": {"person_type": {"const": "PJ"}}},
+          "then": {
+            "required": ["document_type", "document", "legal_name"],
+            "properties": {"document_type": {"const": "CNPJ"}, "document": {"pattern": "^\\d{14}$"}}
+          }
+        },
+        {
+          "if": {
+            "required": ["role"],
+            "properties": {
+              "role": {
+                "enum": [
+                  "legal_representative",
+                  "shareholder",
+                  "guarantor",
+                  "co_borrower",
+                  "payer",
+                  "beneficial_owner"
+                ]
+              }
+            }
+          },
+          "then": {"required": ["person_type", "document_type", "document"]}
+        }
+      ],
+      "additionalProperties": false
+    },
+    "consent": {
+      "type": "object",
+      "required": ["subject_ref", "purpose", "source"],
+      "properties": {
+        "subject_ref": {"type": "string", "minLength": 1, "maxLength": 80},
+        "basis": {
+          "type": "string",
+          "enum": [
+            "consent",
+            "contract_execution",
+            "legal_obligation",
+            "legitimate_interest",
+            "credit_protection"
+          ]
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "credit_analysis",
+            "risk_analysis",
+            "fraud_prevention",
+            "identity_validation",
+            "open_finance_data_access",
+            "audit"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "enum": ["customer", "open_finance", "bureau", "partner", "internal"]
+        },
+        "granted_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "reference_id": {"type": "string", "minLength": 1, "maxLength": 120}
+      },
+      "additionalProperties": false
+    },
+    "provided_data": {
+      "type": "object",
+      "properties": {
+        "contact": {"$ref": "#/$defs/contact_data"},
+        "address": {"$ref": "#/$defs/address_data"},
+        "financial": {"$ref": "#/$defs/financial_data"},
+        "relationship": {"$ref": "#/$defs/relationship_data"},
+        "employment": {"$ref": "#/$defs/employment_data"},
+        "banking": {"$ref": "#/$defs/banking_data"},
+        "commerce": {"$ref": "#/$defs/commerce_data"},
+        "documents": {"$ref": "#/$defs/document_references"}
+      },
+      "default": {},
+      "additionalProperties": false
+    },
+    "contact_data": {
+      "type": "object",
+      "properties": {
+        "email": {"type": "string", "format": "email"},
+        "phone": {"type": "string", "minLength": 8, "maxLength": 32}
+      },
+      "additionalProperties": false
+    },
+    "address_data": {
+      "type": "object",
+      "properties": {
+        "postal_code": {"type": "string", "minLength": 1, "maxLength": 16},
+        "city": {"type": "string", "minLength": 1, "maxLength": 120},
+        "state": {"type": "string", "minLength": 2, "maxLength": 2},
+        "country": {"const": "BR"}
+      },
+      "additionalProperties": false
+    },
+    "financial_data": {
+      "type": "object",
+      "properties": {
+        "declared_monthly_income": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+        "declared_monthly_revenue": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+        "declared_monthly_debt": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+        "declared_cash_flow": {"type": "integer"}
+      },
+      "additionalProperties": false
+    },
+    "relationship_data": {
+      "type": "object",
+      "properties": {
+        "relationship_months": {"type": "integer", "minimum": 0},
+        "internal_score_reference": {"type": "string", "minLength": 1, "maxLength": 120},
+        "days_past_due_last_12m": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "employment_data": {
+      "type": "object",
+      "properties": {
+        "employment_type": {"type": "string", "minLength": 1, "maxLength": 80},
+        "occupation": {"type": "string", "minLength": 1, "maxLength": 120},
+        "employer_ref": {"type": "string", "minLength": 1, "maxLength": 80}
+      },
+      "additionalProperties": false
+    },
+    "banking_data": {
+      "type": "object",
+      "properties": {
+        "account_age_months": {"type": "integer", "minimum": 0},
+        "bank_reference": {"type": "string", "minLength": 1, "maxLength": 120}
+      },
+      "additionalProperties": false
+    },
+    "commerce_data": {
+      "type": "object",
+      "properties": {
+        "merchant_reference": {"type": "string", "minLength": 1, "maxLength": 120},
+        "order_reference": {"type": "string", "minLength": 1, "maxLength": 120}
+      },
+      "additionalProperties": false
+    },
+    "document_references": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "required": ["document_ref", "document_type"],
+        "properties": {
+          "document_ref": {"type": "string", "minLength": 1, "maxLength": 120},
+          "document_type": {"type": "string", "minLength": 1, "maxLength": 80},
+          "issuer": {"type": "string", "minLength": 1, "maxLength": 120}
+        },
+        "additionalProperties": false
+      },
+      "default": []
+    },
+    "risk_context": {
+      "type": "object",
+      "properties": {
+        "ip_address": {"type": "string", "minLength": 3, "maxLength": 45},
+        "user_agent": {"type": "string", "minLength": 1, "maxLength": 512},
+        "device_id": {"type": "string", "minLength": 1, "maxLength": 120},
+        "session_id": {"type": "string", "minLength": 1, "maxLength": 120},
+        "geo": {"$ref": "#/$defs/geo_context"},
+        "transaction": {"$ref": "#/$defs/transaction_context"},
+        "customer_provided_signals": {"$ref": "#/$defs/customer_provided_signals"}
+      },
+      "default": {},
+      "additionalProperties": false
+    },
+    "geo_context": {
+      "type": "object",
+      "properties": {
+        "country": {"type": "string", "minLength": 2, "maxLength": 2},
+        "state": {"type": "string", "minLength": 2, "maxLength": 2},
+        "city": {"type": "string", "minLength": 1, "maxLength": 120}
+      },
+      "additionalProperties": false
+    },
+    "transaction_context": {
+      "type": "object",
+      "properties": {
+        "transaction_reference": {"type": "string", "minLength": 1, "maxLength": 120},
+        "attempt_number": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "customer_provided_signals": {
+      "type": "object",
+      "properties": {
+        "email_age_days": {"type": "integer", "minimum": 0},
+        "device_reputation": {"type": "string", "enum": ["unknown", "low", "medium", "high"]},
+        "velocity_24h": {"type": "integer", "minimum": 0},
+        "billing_shipping_match": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "product_data": {
+      "type": "object",
+      "properties": {
+        "personal_credit": {"$ref": "#/$defs/personal_credit_data"},
+        "bnpl": {"$ref": "#/$defs/bnpl_data"},
+        "business_credit": {"$ref": "#/$defs/business_credit_data"},
+        "receivables": {"$ref": "#/$defs/receivables_data"}
+      },
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": false
+    },
+    "personal_credit_data": {
+      "type": "object",
+      "properties": {
+        "employment_type": {"type": "string", "minLength": 1, "maxLength": 80},
+        "occupation": {"type": "string", "minLength": 1, "maxLength": 120},
+        "declared_monthly_income": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+        "declared_monthly_debt": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+        "income_source": {"type": "string", "minLength": 1, "maxLength": 80}
+      },
+      "additionalProperties": false
+    },
+    "bnpl_data": {
+      "type": "object",
+      "required": ["merchant_reference", "order_reference"],
+      "properties": {
+        "merchant_reference": {"type": "string", "minLength": 1, "maxLength": 120},
+        "order_reference": {"type": "string", "minLength": 1, "maxLength": 120},
+        "cart_items_count": {"type": "integer", "minimum": 1},
+        "delivery_method": {"type": "string", "minLength": 1, "maxLength": 80},
+        "shipping_address_ref": {"type": "string", "minLength": 1, "maxLength": 80}
+      },
+      "additionalProperties": false
+    },
+    "business_credit_data": {
+      "type": "object",
+      "properties": {
+        "business_activity_code": {"type": "string", "minLength": 1, "maxLength": 32},
+        "declared_monthly_revenue": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+        "declared_monthly_debt": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+        "company_age_months": {"type": "integer", "minimum": 0},
+        "requested_collateral": {"type": "string", "minLength": 1, "maxLength": 120}
+      },
+      "additionalProperties": false
+    },
+    "receivables_data": {
+      "type": "object",
+      "required": ["receivables"],
+      "properties": {
+        "receivables": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/receivable"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "receivable": {
+      "type": "object",
+      "required": ["external_receivable_id", "payer_ref", "face_value", "due_date"],
+      "properties": {
+        "external_receivable_id": {"type": "string", "minLength": 1, "maxLength": 120},
+        "payer_ref": {"type": "string", "minLength": 1, "maxLength": 80},
+        "face_value": {"type": "integer", "minimum": 1, "maximum": 1000000000000},
+        "due_date": {"type": "string", "format": "date"},
+        "document_number": {"type": "string", "minLength": 1, "maxLength": 120}
+      },
+      "additionalProperties": false
+    },
+    "decision_options": {
+      "type": "object",
+      "required": ["execution_mode", "review_strategy", "fallback_action"],
+      "properties": {
+        "execution_mode": {"type": "string", "enum": ["sync", "async"]},
+        "review_strategy": {"type": "string", "enum": ["policy_only", "ai_advisory"]},
+        "fallback_action": {
+          "type": "string",
+          "enum": ["request_more_data", "unable_to_decide", "reject_by_policy"]
+        },
+        "max_wait_ms": {"type": "integer", "minimum": 1, "maximum": 30000}
+      },
+      "additionalProperties": false
+    },
+    "callback": {
+      "type": "object",
+      "required": ["callback_profile_ref"],
+      "properties": {
+        "callback_profile_ref": {"type": "string", "minLength": 1, "maxLength": 120},
+        "events": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {"type": "string", "minLength": 1, "maxLength": 120},
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "schema_version": "1.0",
+      "external_proposal_id": "prop-personal-001",
+      "person_type": "PF",
+      "product_type": "personal_credit",
+      "channel": "api",
+      "operation": {
+        "requested_terms": {
+          "amount": 500000,
+          "currency": "BRL",
+          "installments": 6,
+          "down_payment": 0,
+          "first_due_date": "2026-09-15"
+        }
+      },
+      "borrower": {
+        "document_type": "CPF",
+        "document": "00000000191",
+        "name": "Pessoa Exemplo",
+        "birth_date": "1990-01-01"
+      },
+      "provided_data": {
+        "financial": {
+          "declared_monthly_income": 800000,
+          "declared_monthly_debt": 120000
+        }
+      },
+      "risk_context": {},
+      "product_data": {
+        "personal_credit": {
+          "employment_type": "formal",
+          "occupation": "analyst",
+          "declared_monthly_income": 800000,
+          "declared_monthly_debt": 120000,
+          "income_source": "salary"
+        }
+      },
+      "decision_options": {
+        "execution_mode": "sync",
+        "review_strategy": "ai_advisory",
+        "fallback_action": "request_more_data",
+        "max_wait_ms": 3000
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "external_proposal_id": "prop-bnpl-001",
+      "person_type": "PF",
+      "product_type": "bnpl",
+      "channel": "checkout",
+      "operation": {
+        "requested_terms": {
+          "amount": 129900,
+          "currency": "BRL",
+          "installments": 4
+        }
+      },
+      "borrower": {
+        "document_type": "CPF",
+        "document": "00000000191",
+        "name": "Comprador Exemplo"
+      },
+      "risk_context": {
+        "customer_provided_signals": {
+          "device_reputation": "unknown",
+          "velocity_24h": 1
+        }
+      },
+      "product_data": {
+        "bnpl": {
+          "merchant_reference": "merchant-001",
+          "order_reference": "order-001",
+          "cart_items_count": 3,
+          "delivery_method": "shipping"
+        }
+      },
+      "decision_options": {
+        "execution_mode": "sync",
+        "review_strategy": "policy_only",
+        "fallback_action": "unable_to_decide"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "external_proposal_id": "prop-business-001",
+      "person_type": "PJ",
+      "product_type": "business_credit",
+      "channel": "partner",
+      "operation": {
+        "requested_terms": {
+          "amount": 5000000,
+          "currency": "BRL",
+          "installments": 12
+        }
+      },
+      "borrower": {
+        "document_type": "CNPJ",
+        "document": "00000000000191",
+        "legal_name": "Empresa Exemplo Ltda",
+        "foundation_date": "2018-01-01"
+      },
+      "product_data": {
+        "business_credit": {
+          "business_activity_code": "6201501",
+          "declared_monthly_revenue": 25000000,
+          "declared_monthly_debt": 4000000,
+          "company_age_months": 96
+        }
+      },
+      "decision_options": {
+        "execution_mode": "async",
+        "review_strategy": "ai_advisory",
+        "fallback_action": "request_more_data"
+      },
+      "callback": {
+        "callback_profile_ref": "tenant-default-creditos-webhook",
+        "events": ["creditos.proposal.v1.submitted"]
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "external_proposal_id": "prop-receivables-001",
+      "person_type": "PJ",
+      "product_type": "receivables",
+      "channel": "api",
+      "operation": {
+        "requested_terms": {
+          "amount": 2000000,
+          "currency": "BRL"
+        }
+      },
+      "borrower": {
+        "document_type": "CNPJ",
+        "document": "00000000000191",
+        "legal_name": "Cedente Exemplo Ltda"
+      },
+      "participants": [
+        {
+          "participant_ref": "payer-001",
+          "role": "payer",
+          "person_type": "PJ",
+          "document_type": "CNPJ",
+          "document": "00000000000272",
+          "legal_name": "Sacado Exemplo Ltda"
+        }
+      ],
+      "product_data": {
+        "receivables": {
+          "receivables": [
+            {
+              "external_receivable_id": "rec-001",
+              "payer_ref": "payer-001",
+              "face_value": 2000000,
+              "due_date": "2026-10-10",
+              "document_number": "invoice-ref-001"
+            }
+          ]
+        }
+      },
+      "decision_options": {
+        "execution_mode": "async",
+        "review_strategy": "policy_only",
+        "fallback_action": "unable_to_decide"
+      }
+    }
+  ],
   "x-creditos": {
     "version": "v1",
     "owner": "Proposal Intake",
     "compatibility": "backward-compatible",
-    "breakingChangePolicy": "new-major-version-required"
+    "breakingChangePolicy": "new-major-version-required",
+    "productTypes": ["personal_credit", "bnpl", "business_credit", "receivables"],
+    "forbiddenFields": [
+      "idempotency_key",
+      "selected_plan",
+      "plan_id",
+      "extra_data",
+      "tenant_id",
+      "raw_payload",
+      "payload"
+    ],
+    "invalidExamples": [
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "prop-invalid-product",
+        "person_type": "PF",
+        "product_type": "credit_card",
+        "channel": "api",
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CPF", "document": "00000000191", "name": "Pessoa Exemplo"},
+        "product_data": {"personal_credit": {}}
+      },
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "prop-invalid-plan",
+        "person_type": "PF",
+        "product_type": "personal_credit",
+        "channel": "api",
+        "selected_plan": {"code": "financeira-plan-001"},
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CPF", "document": "00000000191", "name": "Pessoa Exemplo"},
+        "product_data": {"personal_credit": {}}
+      },
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "prop-invalid-tenant",
+        "person_type": "PJ",
+        "product_type": "business_credit",
+        "channel": "api",
+        "tenant_id": "tenant_alpha",
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CNPJ", "document": "00000000000191", "legal_name": "Empresa Exemplo Ltda"},
+        "product_data": {"business_credit": {}}
+      },
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "prop-invalid-body-idempotency",
+        "idempotency_key": "idem-invalid-body-key",
+        "person_type": "PF",
+        "product_type": "personal_credit",
+        "channel": "api",
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CPF", "document": "00000000191", "name": "Pessoa Exemplo"},
+        "product_data": {"personal_credit": {}}
+      },
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "prop-invalid-plan-id",
+        "person_type": "PF",
+        "product_type": "personal_credit",
+        "channel": "api",
+        "plan_id": "financeira-plan-001",
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CPF", "document": "00000000191", "name": "Pessoa Exemplo"},
+        "product_data": {"personal_credit": {}}
+      },
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "prop-invalid-extra-data",
+        "person_type": "PF",
+        "product_type": "personal_credit",
+        "channel": "api",
+        "extra_data": {"unbounded": true},
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CPF", "document": "00000000191", "name": "Pessoa Exemplo"},
+        "product_data": {"personal_credit": {}}
+      },
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "prop-invalid-raw-payload",
+        "person_type": "PF",
+        "product_type": "personal_credit",
+        "channel": "api",
+        "raw_payload": {"body": "não registrar payload bruto"},
+        "payload": {"body": "não aceitar payload sem dono"},
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CPF", "document": "00000000191", "name": "Pessoa Exemplo"},
+        "product_data": {"personal_credit": {}}
+      },
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "12345678901",
+        "person_type": "PF",
+        "product_type": "personal_credit",
+        "channel": "api",
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CPF", "document": "00000000191", "name": "Pessoa Exemplo"},
+        "product_data": {"personal_credit": {}}
+      },
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "prop-invalid-document-shape",
+        "person_type": "PF",
+        "product_type": "personal_credit",
+        "channel": "api",
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CPF", "document": "00000000000191", "name": "Pessoa Exemplo"},
+        "product_data": {"personal_credit": {}}
+      },
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "prop-invalid-product-block",
+        "person_type": "PF",
+        "product_type": "bnpl",
+        "channel": "checkout",
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CPF", "document": "00000000191", "name": "Pessoa Exemplo"},
+        "product_data": {"personal_credit": {}, "bnpl": {"merchant_reference": "merchant-001", "order_reference": "order-001"}}
+      },
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "prop-invalid-callback-url",
+        "person_type": "PJ",
+        "product_type": "business_credit",
+        "channel": "api",
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CNPJ", "document": "00000000000191", "legal_name": "Empresa Exemplo Ltda"},
+        "product_data": {"business_credit": {}},
+        "callback": {"url": "http://127.0.0.1/internal"}
+      },
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "prop-invalid-critical-participant",
+        "person_type": "PJ",
+        "product_type": "receivables",
+        "channel": "api",
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CNPJ", "document": "00000000000191", "legal_name": "Empresa Exemplo Ltda"},
+        "participants": [{"participant_ref": "payer-001", "role": "payer"}],
+        "product_data": {"receivables": {"receivables": [{"external_receivable_id": "rec-001", "payer_ref": "payer-001", "face_value": 100000, "due_date": "2026-10-10"}]}}
+      },
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "prop-invalid-bnpl-duplicate-amount",
+        "person_type": "PF",
+        "product_type": "bnpl",
+        "channel": "checkout",
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CPF", "document": "00000000191", "name": "Pessoa Exemplo"},
+        "product_data": {"bnpl": {"merchant_reference": "merchant-001", "order_reference": "order-001", "purchase_amount": 100000}}
+      }
+    ]
   }
 }
