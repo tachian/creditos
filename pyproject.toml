@@ -50,6 +50,7 @@ extraPaths = [
   "packages/observability/src",
   "packages/security/src",
   "services/identity-tenant/src",
+  "services/proposal-intake/src",
   "services/service-template/src",
 ]
 exclude = [
@@ -71,5 +72,6 @@ pythonpath = [
   "packages/observability/src",
   "packages/security/src",
   "services/identity-tenant/src",
+  "services/proposal-intake/src",
   "services/service-template/src",
 ]

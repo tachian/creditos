@@ -8,6 +8,7 @@ members = [
     "creditos-contracts",
     "creditos-identity-tenant",
     "creditos-observability",
+    "creditos-proposal-intake",
     "creditos-security",
     "creditos-service-template",
 ]
@@ -87,6 +88,21 @@ requires-dist = [
     { name = "creditos-security", editable = "packages/security" },
     { name = "opentelemetry-api", specifier = ">=1.44.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.44.0" },
+]
+
+[[package]]
+name = "creditos-proposal-intake"
+version = "0.1.0"
+source = { editable = "services/proposal-intake" }
+dependencies = [
+    { name = "creditos-observability" },
+    { name = "creditos-security" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "creditos-observability", editable = "packages/observability" },
+    { name = "creditos-security", editable = "packages/security" },
 ]
 
 [[package]]
