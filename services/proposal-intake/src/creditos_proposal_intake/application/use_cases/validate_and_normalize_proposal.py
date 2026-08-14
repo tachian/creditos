@@ -742,8 +742,10 @@ def _normalize_provided_data(value: object) -> None:
         if "email" in contact:
             _require_email(contact["email"], field_path="provided_data.contact.email")
         if "phone" in contact:
-            _require_text(contact["phone"], field_path="provided_data.contact.phone", max_length=32)
-            if len(contact["phone"]) < 8:
+            phone = _require_text(
+                contact["phone"], field_path="provided_data.contact.phone", max_length=32
+            )
+            if len(phone) < 8:
                 raise ProposalValidationError(
                     "telefone inválido", field_path="provided_data.contact.phone"
                 )
