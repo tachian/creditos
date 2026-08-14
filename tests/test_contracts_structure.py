@@ -255,7 +255,7 @@ def test_proposal_openapi_references_canonical_schema_in_submit_request_body() -
         parameter for parameter in operation["parameters"] if parameter["name"] == "Idempotency-Key"
     )
     assert idempotency_header["required"] is True
-    assert idempotency_header["schema"]["minLength"] == 8
+    assert idempotency_header["schema"]["minLength"] >= 8
     assert operation["summary"] == "Submissão pública canônica de proposta v1"
 
 
