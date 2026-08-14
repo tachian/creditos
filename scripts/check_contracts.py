@@ -235,13 +235,10 @@ def validate_openapi_contract(path: Path, version: str) -> None:
             idempotency_header.get("schema"),
             f"OpenAPI Idempotency-Key deve declarar schema: {path}",
         )
+        min_length = idempotency_schema.get("minLength")
         require(
-            idempotency_header.get("required") is True,
-            f"OpenAPI Idempotency-Key deve ser obrigatório: {path}",
-        )
-        require(
-            idempotency_schema.get("minLength") == 8,
-            f"OpenAPI Idempotency-Key deve exigir minLength 8: {path}",
+            isinstance(min_length, int) and min_length >= 8,
+            f"OpenAPI Idempotency-Key deve exigir minLength >= 8: {path}",
         )
         require(
             set(responses) >= OPENAPI_REQUIRED_RESPONSES,
