@@ -66,7 +66,7 @@ development_status:
   epic-1-retrospective: optional
   epic-2: in-progress
   2-1-definicao-do-contrato-canonico-de-proposta: done
-  2-2-validacao-e-normalizacao-da-proposta: backlog
+  2-2-validacao-e-normalizacao-da-proposta: done
   2-3-submissao-idempotente-de-propostas: backlog
   2-4-status-inicial-e-evento-de-proposta-submetida: backlog
   2-5-gates-de-contrato-para-proposal-intake: backlog
