@@ -14,6 +14,13 @@ class InMemoryIdempotentProposalSubmissionRepository:
         self._submissions: dict[IdempotencyScope, IdempotentProposalSubmission] = {}
         self._lock = RLock()
 
+    def find(
+        self,
+        scope: IdempotencyScope,
+    ) -> IdempotentProposalSubmission | None:
+        with self._lock:
+            return self._submissions.get(scope)
+
     def submit_once(
         self,
         submission: IdempotentProposalSubmission,

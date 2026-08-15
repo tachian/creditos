@@ -23,6 +23,7 @@ from creditos_proposal_intake.application.use_cases.validate_and_normalize_propo
 )
 from creditos_proposal_intake.domain.entities import (
     CanonicalProposal,
+    IdempotencyResolution,
     IdempotencyScope,
     IdempotentProposalSubmission,
 )
@@ -178,25 +179,29 @@ class ProposalIntakeApplicationService:
                     }
                 ),
             )
-            resolution = self._idempotency_repository.submit_once(submission)
-            if resolution.conflicted:
-                existing_proposal_fingerprint = resolution.submission.proposal_fingerprint
-                raise IdempotencyConflictError(
-                    attempted_proposal_fingerprint=proposal_fingerprint,
-                    existing_proposal_fingerprint=existing_proposal_fingerprint,
-                )
-            if resolution.created:
-                try:
-                    self._repository.save(proposal)
-                except Exception:
-                    self._idempotency_repository.rollback(
-                        submission.scope,
-                        proposal_fingerprint=proposal_fingerprint,
+            existing_submission = self._idempotency_repository.find(submission.scope)
+            if existing_submission is not None:
+                if existing_submission.proposal_fingerprint != proposal_fingerprint:
+                    existing_proposal_fingerprint = existing_submission.proposal_fingerprint
+                    raise IdempotencyConflictError(
+                        attempted_proposal_fingerprint=proposal_fingerprint,
+                        existing_proposal_fingerprint=existing_proposal_fingerprint,
                     )
-                    raise
-                resolved_proposal = proposal
-            else:
                 resolved_proposal = replace(
+                    proposal,
+                    proposal_id=existing_submission.result["proposal_id"],
+                )
+                resolution = IdempotencyResolution(status="replayed", submission=existing_submission)
+            else:
+                self._repository.save(proposal)
+                resolution = self._idempotency_repository.submit_once(submission)
+                if resolution.conflicted:
+                    existing_proposal_fingerprint = resolution.submission.proposal_fingerprint
+                    raise IdempotencyConflictError(
+                        attempted_proposal_fingerprint=proposal_fingerprint,
+                        existing_proposal_fingerprint=existing_proposal_fingerprint,
+                    )
+                resolved_proposal = proposal if resolution.created else replace(
                     proposal,
                     proposal_id=resolution.submission.result["proposal_id"],
                 )

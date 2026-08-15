@@ -10,6 +10,11 @@ from creditos_proposal_intake.domain.entities import (
 
 
 class IdempotentProposalSubmissionRepository(Protocol):
+    def find(
+        self,
+        scope: IdempotencyScope,
+    ) -> IdempotentProposalSubmission | None: ...
+
     def submit_once(
         self,
         submission: IdempotentProposalSubmission,
