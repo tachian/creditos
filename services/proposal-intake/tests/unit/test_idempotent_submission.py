@@ -412,7 +412,3 @@ class FailingCanonicalProposalRepository:
         return None
 
 
-class SlowCanonicalProposalRepository(InMemoryCanonicalProposalRepository):
-    def save(self, proposal: CanonicalProposal) -> None:
-        sleep(0.001)
-        super().save(proposal)
