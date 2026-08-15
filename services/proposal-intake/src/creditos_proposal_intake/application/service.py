@@ -197,6 +197,7 @@ class ProposalIntakeApplicationService:
                 resolution = self._idempotency_repository.submit_once(submission)
                 if resolution.conflicted:
                     existing_proposal_fingerprint = resolution.submission.proposal_fingerprint
+                    self._repository.delete(proposal)
                     raise IdempotencyConflictError(
                         attempted_proposal_fingerprint=proposal_fingerprint,
                         existing_proposal_fingerprint=existing_proposal_fingerprint,
