@@ -35,3 +35,25 @@ class SafeValidationIssue:
 class ProposalValidationError(ProposalDomainError):
     code = "proposal_validation_error"
     safe_message = "proposta inválida"
+
+
+class IdempotencyConflictError(ProposalDomainError):
+    code = "idempotency_conflict"
+    safe_message = "conflito de idempotência"
+
+    def __init__(
+        self,
+        *,
+        attempted_proposal_fingerprint: str | None = None,
+        existing_proposal_fingerprint: str | None = None,
+    ) -> None:
+        details = {"reason": "payload_fingerprint_mismatch"}
+        if attempted_proposal_fingerprint is not None:
+            details["attempted_proposal_fingerprint"] = attempted_proposal_fingerprint
+        if existing_proposal_fingerprint is not None:
+            details["existing_proposal_fingerprint"] = existing_proposal_fingerprint
+        super().__init__(
+            self.safe_message,
+            field_path="headers.Idempotency-Key",
+            details=details,
+        )

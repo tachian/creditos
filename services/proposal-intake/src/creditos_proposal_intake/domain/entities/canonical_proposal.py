@@ -19,6 +19,7 @@ class CanonicalProposal:
     requested_amount_cents: int
     requested_terms: MappingProxyType[str, Any]
     product_data: MappingProxyType[str, Any]
+    proposal_id: str | None = None
     participants: tuple[MappingProxyType[str, Any], ...] = ()
     risk_context: MappingProxyType[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     decision_options: MappingProxyType[str, Any] = field(

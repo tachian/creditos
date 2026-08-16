@@ -127,6 +127,7 @@ class ValidateAndNormalizeProposal:
         command: ValidateAndNormalizeProposalCommand,
         *,
         tenant_id: str,
+        persist: bool = True,
     ) -> ValidateAndNormalizeProposalResult:
         payload = _require_mapping(command.payload, "body")
         idempotency_key = _require_idempotency_key(command.headers)
@@ -174,7 +175,8 @@ class ValidateAndNormalizeProposal:
             consents_discarded=optional_structures["consents_discarded"],
             callback_profile_ref=callback_profile_ref,
         )
-        self._repository.save(proposal)
+        if persist:
+            self._repository.save(proposal)
         return ValidateAndNormalizeProposalResult(proposal=proposal)
 
 
@@ -650,10 +652,10 @@ def _normalize_optional_structures(payload: Mapping[str, Any]) -> dict[str, Any]
     }
     if "consents" in payload:
         _normalize_consents(payload["consents"])
-        normalized["consents_discarded"] = True
+        normalized["consents_discarded"] = bool(payload["consents"])
     if "provided_data" in payload:
         _normalize_provided_data(payload["provided_data"])
-        normalized["provided_data_discarded"] = True
+        normalized["provided_data_discarded"] = bool(payload["provided_data"])
     if "risk_context" in payload:
         normalized["risk_context"] = _normalize_risk_context(payload["risk_context"])
     if "decision_options" in payload:
