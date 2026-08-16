@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -15,7 +16,12 @@ from creditos_proposal_intake.application.service import (
     ProposalIntakeApplicationService,
     SubmitIdempotentProposalCommand,
 )
-from creditos_proposal_intake.domain.entities import CanonicalProposal
+from creditos_proposal_intake.domain.entities import (
+    CanonicalProposal,
+    IdempotencyResolution,
+    IdempotencyScope,
+    IdempotentProposalSubmission,
+)
 from creditos_proposal_intake.domain.errors import (
     IdempotencyConflictError,
     ProposalValidationError,
@@ -112,6 +118,33 @@ def test_same_key_with_incompatible_payload_raises_safe_conflict_and_does_not_sa
     assert "Pessoa Exemplo" not in log_text
     assert "700000" not in log_text
     assert "500000" not in log_text
+
+
+def test_concurrent_conflict_rolls_back_idempotency_and_canonical_proposal() -> None:
+    canonical_repository = InMemoryCanonicalProposalRepository()
+    idempotency_repository = ConflictOnSubmitIdempotencyRepository()
+    service = ProposalIntakeApplicationService(
+        repository=canonical_repository,
+        idempotency_repository=idempotency_repository,
+        sensitive_fingerprint_secret=_SENSITIVE_FINGERPRINT_SECRET,
+        environment="test",
+    )
+
+    with pytest.raises(IdempotencyConflictError):
+        service.submit_idempotent(
+            _submit_command(payload=_valid_personal_credit_payload()),
+            context=_context(),
+        )
+
+    assert canonical_repository.list_all() == []
+    assert len(idempotency_repository.rollback_calls) == 1
+    rollback_scope, rollback_fingerprint = idempotency_repository.rollback_calls[0]
+    assert rollback_scope == IdempotencyScope(
+        tenant_id="tenant-bridge-001",
+        technical_client_id="client-app-001",
+        idempotency_key="proposal-key-0001",
+    )
+    assert rollback_fingerprint.startswith("sha256:")
 
 
 def test_same_key_does_not_collide_across_tenants_or_technical_clients() -> None:
@@ -412,3 +445,43 @@ class FailingCanonicalProposalRepository:
 
     def delete(self, proposal: CanonicalProposal) -> None:
         return None
+
+
+class ConflictOnSubmitIdempotencyRepository:
+    def __init__(self) -> None:
+        self.rollback_calls: list[tuple[IdempotencyScope, str]] = []
+        self._existing_submission = IdempotentProposalSubmission(
+            scope=IdempotencyScope(
+                tenant_id="tenant-bridge-001",
+                technical_client_id="client-app-001",
+                idempotency_key="proposal-key-0001",
+            ),
+            external_proposal_id="prop-personal-001",
+            proposal_fingerprint="sha256:existing-fingerprint",
+            result=MappingProxyType(
+                {
+                    "proposal_id": "proposal_existing",
+                    "external_proposal_id": "prop-personal-001",
+                    "schema_version": "1.0",
+                    "product_type": "personal_credit",
+                    "status": "accepted",
+                }
+            ),
+        )
+
+    def find(self, scope: IdempotencyScope) -> IdempotentProposalSubmission | None:
+        return None
+
+    def submit_once(
+        self,
+        submission: IdempotentProposalSubmission,
+    ) -> IdempotencyResolution:
+        return IdempotencyResolution(status="conflicted", submission=self._existing_submission)
+
+    def rollback(
+        self,
+        scope: IdempotencyScope,
+        *,
+        proposal_fingerprint: str,
+    ) -> None:
+        self.rollback_calls.append((scope, proposal_fingerprint))
