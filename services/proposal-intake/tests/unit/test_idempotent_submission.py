@@ -3,7 +3,6 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
-from time import sleep
 from typing import Any
 
 import pytest
@@ -411,4 +410,5 @@ class FailingCanonicalProposalRepository:
     def get(self, tenant_id: str, external_proposal_id: str) -> CanonicalProposal | None:
         return None
 
-
+    def delete(self, proposal: CanonicalProposal) -> None:
+        return None

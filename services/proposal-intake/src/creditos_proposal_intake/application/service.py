@@ -191,7 +191,10 @@ class ProposalIntakeApplicationService:
                     proposal,
                     proposal_id=existing_submission.result["proposal_id"],
                 )
-                resolution = IdempotencyResolution(status="replayed", submission=existing_submission)
+                resolution = IdempotencyResolution(
+                    status="replayed",
+                    submission=existing_submission,
+                )
             else:
                 self._repository.save(proposal)
                 resolution = self._idempotency_repository.submit_once(submission)
@@ -202,9 +205,13 @@ class ProposalIntakeApplicationService:
                         attempted_proposal_fingerprint=proposal_fingerprint,
                         existing_proposal_fingerprint=existing_proposal_fingerprint,
                     )
-                resolved_proposal = proposal if resolution.created else replace(
-                    proposal,
-                    proposal_id=resolution.submission.result["proposal_id"],
+                resolved_proposal = (
+                    proposal
+                    if resolution.created
+                    else replace(
+                        proposal,
+                        proposal_id=resolution.submission.result["proposal_id"],
+                    )
                 )
             event = self._log_operation(
                 context=context,
