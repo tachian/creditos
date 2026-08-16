@@ -147,6 +147,26 @@ def test_concurrent_conflict_rolls_back_idempotency_and_canonical_proposal() -> 
     assert rollback_fingerprint.startswith("sha256:")
 
 
+def test_concurrent_conflict_attempts_idempotency_rollback_even_if_delete_fails() -> None:
+    canonical_repository = DeleteFailingCanonicalProposalRepository()
+    idempotency_repository = ConflictOnSubmitIdempotencyRepository()
+    service = ProposalIntakeApplicationService(
+        repository=canonical_repository,
+        idempotency_repository=idempotency_repository,
+        sensitive_fingerprint_secret=_SENSITIVE_FINGERPRINT_SECRET,
+        environment="test",
+    )
+
+    with pytest.raises(RuntimeError, match="falha ao excluir"):
+        service.submit_idempotent(
+            _submit_command(payload=_valid_personal_credit_payload()),
+            context=_context(),
+        )
+
+    assert len(canonical_repository.list_all()) == 1
+    assert len(idempotency_repository.rollback_calls) == 1
+
+
 def test_same_key_does_not_collide_across_tenants_or_technical_clients() -> None:
     canonical_repository = InMemoryCanonicalProposalRepository()
     idempotency_repository = InMemoryIdempotentProposalSubmissionRepository()
@@ -445,6 +465,11 @@ class FailingCanonicalProposalRepository:
 
     def delete(self, proposal: CanonicalProposal) -> None:
         return None
+
+
+class DeleteFailingCanonicalProposalRepository(InMemoryCanonicalProposalRepository):
+    def delete(self, proposal: CanonicalProposal) -> None:
+        raise RuntimeError("falha ao excluir")
 
 
 class ConflictOnSubmitIdempotencyRepository:
