@@ -662,7 +662,10 @@
       "extra_data",
       "tenant_id",
       "raw_payload",
-      "payload"
+      "payload",
+      "custom",
+      "metadata",
+      "attributes"
     ],
     "invalidExamples": [
       {
@@ -738,6 +741,19 @@
         "channel": "api",
         "raw_payload": {"body": "não registrar payload bruto"},
         "payload": {"body": "não aceitar payload sem dono"},
+        "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
+        "borrower": {"document_type": "CPF", "document": "00000000191", "name": "Pessoa Exemplo"},
+        "product_data": {"personal_credit": {}}
+      },
+      {
+        "schema_version": "1.0",
+        "external_proposal_id": "prop-invalid-runtime-aliases",
+        "person_type": "PF",
+        "product_type": "personal_credit",
+        "channel": "api",
+        "custom": {"unbounded": true},
+        "metadata": {"source": "payload-publico"},
+        "attributes": {"qualquer": "valor"},
         "operation": {"requested_terms": {"amount": 100000, "currency": "BRL"}},
         "borrower": {"document_type": "CPF", "document": "00000000191", "name": "Pessoa Exemplo"},
         "product_data": {"personal_credit": {}}

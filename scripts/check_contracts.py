@@ -49,6 +49,7 @@ CLOUDEVENT_REQUIRED_FIELDS = {
     "traceparent",
     "data",
 }
+CLOUDEVENT_OPTIONAL_FIELDS = {"roles"}
 PROPOSAL_SUBMITTED_DATA_FIELDS = {
     "proposal_id",
     "external_proposal_id",
@@ -97,6 +98,9 @@ PROPOSAL_FORBIDDEN_FIELDS = {
     "tenant_id",
     "raw_payload",
     "payload",
+    "custom",
+    "metadata",
+    "attributes",
 }
 PROPOSAL_CHANNELS = {"api", "batch", "portal", "partner", "checkout", "backoffice"}
 PROPOSAL_CRITICAL_PARTICIPANT_ROLES = {
@@ -110,6 +114,8 @@ PROPOSAL_CRITICAL_PARTICIPANT_ROLES = {
 PROPOSAL_MONEY_MAX = 1_000_000_000_000
 PROPOSAL_SENSITIVE_DIGITS = re.compile(r"^\d{10,15}$")
 OPENAPI_REQUIRED_HEADER_PARAMETERS = {"X-Correlation-Id", "X-Request-Id", "Idempotency-Key"}
+OPENAPI_MANDATORY_HEADER_PARAMETERS = OPENAPI_REQUIRED_HEADER_PARAMETERS
+PROPOSAL_OPENAPI_REQUEST_REF = "../../../../schemas/proposal/v1/proposal.schema.json"
 OPENAPI_REQUIRED_RESPONSES = {"202", "400", "401", "409", "500"}
 KIND_PATH_RULES = {
     "openapi": (("openapi", "public"), ".json"),
@@ -262,6 +268,16 @@ def validate_openapi_contract(path: Path, version: str) -> None:
             header_parameters >= OPENAPI_REQUIRED_HEADER_PARAMETERS,
             f"OpenAPI operação deve declarar headers de rastreabilidade/idempotência: {path}",
         )
+        optional_mandatory_headers = {
+            header_name
+            for header_name in OPENAPI_MANDATORY_HEADER_PARAMETERS
+            if headers_by_name.get(header_name, {}).get("required") is not True
+        }
+        require(
+            not optional_mandatory_headers,
+            "OpenAPI headers obrigatórios devem ser required=true: "
+            f"{sorted(optional_mandatory_headers)} em {path}",
+        )
         idempotency_header = require_dict(
             headers_by_name.get("Idempotency-Key"),
             f"OpenAPI operação deve declarar Idempotency-Key como header: {path}",
@@ -280,6 +296,50 @@ def validate_openapi_contract(path: Path, version: str) -> None:
             "OpenAPI operação deve declarar respostas padrão "
             f"{sorted(OPENAPI_REQUIRED_RESPONSES)}: {path}",
         )
+    validate_proposal_openapi_contract(paths, path)
+
+
+def validate_proposal_openapi_contract(paths: dict[str, Any], path: Path) -> None:
+    proposal_path = paths.get("/v1/proposals")
+    if not isinstance(proposal_path, dict) or "post" not in proposal_path:
+        return
+
+    proposal_path = require_dict(
+        proposal_path,
+        f"OpenAPI Proposal Intake deve declarar /v1/proposals: {path}",
+    )
+    submit_operation = require_dict(
+        proposal_path.get("post"),
+        f"OpenAPI Proposal Intake deve declarar POST /v1/proposals: {path}",
+    )
+    request_body = require_dict(
+        submit_operation.get("requestBody"),
+        f"OpenAPI Proposal Intake deve declarar requestBody: {path}",
+    )
+    content = require_dict(
+        request_body.get("content"),
+        f"OpenAPI Proposal Intake requestBody deve declarar content: {path}",
+    )
+    require(
+        set(content) == {"application/json"},
+        f"OpenAPI Proposal Intake requestBody deve aceitar somente application/json: {path}",
+    )
+    json_content = require_dict(
+        content.get("application/json"),
+        f"OpenAPI Proposal Intake requestBody deve aceitar application/json: {path}",
+    )
+    schema = require_dict(
+        json_content.get("schema"),
+        f"OpenAPI Proposal Intake requestBody deve declarar schema: {path}",
+    )
+    require(
+        request_body.get("required") is True,
+        f"OpenAPI Proposal Intake requestBody deve ser required=true: {path}",
+    )
+    require(
+        schema.get("$ref") == PROPOSAL_OPENAPI_REQUEST_REF,
+        f"OpenAPI Proposal Intake deve referenciar o schema canônico de proposta: {path}",
+    )
 
 
 def validate_asyncapi_contract(path: Path, version: str) -> None:
@@ -304,7 +364,9 @@ def validate_asyncapi_contract(path: Path, version: str) -> None:
     require(bool(operations), f"AsyncAPI deve declarar operations: {path}")
     require(bool(messages), f"AsyncAPI deve declarar mensagens: {path}")
 
-    for message in messages.values():
+    for message_name, message in messages.items():
+        if message_name != "ProposalSubmitted":
+            continue
         message_object = require_dict(message, f"AsyncAPI message deve ser objeto: {path}")
         payload = require_dict(
             message_object.get("payload"), f"AsyncAPI message.payload deve existir: {path}"
@@ -315,16 +377,28 @@ def validate_asyncapi_contract(path: Path, version: str) -> None:
         )
         require(isinstance(required, list), f"AsyncAPI payload.required deve ser lista: {path}")
         require(
-            set(required) >= CLOUDEVENT_REQUIRED_FIELDS,
+            payload.get("type") == "object",
+            f"AsyncAPI ProposalSubmitted payload deve ser object: {path}",
+        )
+        require(
+            set(required) == CLOUDEVENT_REQUIRED_FIELDS,
             f"AsyncAPI CloudEvent deve exigir extensões CreditOS: {path}",
         )
         require(
-            set(properties) >= CLOUDEVENT_REQUIRED_FIELDS,
+            set(properties) == CLOUDEVENT_REQUIRED_FIELDS | CLOUDEVENT_OPTIONAL_FIELDS,
             f"AsyncAPI CloudEvent deve declarar propriedades CreditOS: {path}",
+        )
+        require(
+            properties.get("specversion", {}).get("const") == "1.0",
+            f"AsyncAPI CloudEvent specversion deve ser 1.0: {path}",
         )
         data = require_dict(
             properties.get("data"),
             f"AsyncAPI CloudEvent deve declarar data: {path}",
+        )
+        require(
+            data.get("type") == "object",
+            f"AsyncAPI ProposalSubmitted data deve ser object: {path}",
         )
         data_required = data.get("required", [])
         data_properties = require_dict(
@@ -336,13 +410,24 @@ def validate_asyncapi_contract(path: Path, version: str) -> None:
             f"AsyncAPI ProposalSubmitted data deve exigir payload minimizado: {path}",
         )
         require(
-            set(data_properties) >= PROPOSAL_SUBMITTED_DATA_FIELDS,
+            set(data_properties) == PROPOSAL_SUBMITTED_DATA_FIELDS,
             f"AsyncAPI ProposalSubmitted data deve declarar payload minimizado: {path}",
         )
         require(
             data_properties.keys().isdisjoint(PROPOSAL_SUBMITTED_FORBIDDEN_DATA_FIELDS),
             f"AsyncAPI ProposalSubmitted data não pode expor dados sensíveis: {path}",
         )
+        require(
+            payload.get("additionalProperties") is False,
+            f"AsyncAPI ProposalSubmitted payload deve ser fechado: {path}",
+        )
+        require(
+            data.get("additionalProperties") is False,
+            f"AsyncAPI ProposalSubmitted data deve ser fechado: {path}",
+        )
+        return
+
+    require(False, f"AsyncAPI deve declarar mensagem ProposalSubmitted: {path}")
 
 
 def validate_json_schema_contract(path: Path, version: str, raw_path: str) -> None:

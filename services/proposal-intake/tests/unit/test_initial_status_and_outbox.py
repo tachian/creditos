@@ -242,6 +242,68 @@ def test_same_idempotency_key_isolated_across_tenants_for_status_and_outbox() ->
     }
 
 
+def test_same_external_proposal_id_is_isolated_across_tenants_for_status_and_outbox() -> None:
+    canonical_repository = InMemoryCanonicalProposalRepository()
+    status_repository = InMemoryProposalIntakeStatusRepository()
+    outbox_repository = InMemoryProposalOutboxRepository()
+    service = _service(
+        canonical_repository=canonical_repository,
+        status_repository=status_repository,
+        outbox_repository=outbox_repository,
+    )
+    payload = _valid_personal_credit_payload()
+
+    tenant_alpha = service.submit_with_initial_status_and_outbox(
+        _submit_command(payload=payload, idempotency_key="proposal-key-alpha"),
+        context=_context(tenant_id="tenant-bridge-001"),
+    )
+    tenant_beta = service.submit_with_initial_status_and_outbox(
+        _submit_command(payload=payload, idempotency_key="proposal-key-beta"),
+        context=_context(tenant_id="tenant-bridge-002"),
+    )
+
+    assert tenant_alpha.proposal.external_proposal_id == tenant_beta.proposal.external_proposal_id
+    assert tenant_alpha.proposal.proposal_id != tenant_beta.proposal.proposal_id
+    assert len(canonical_repository.list_all()) == 2
+    assert {proposal.tenant_id for proposal in canonical_repository.list_all()} == {
+        "tenant-bridge-001",
+        "tenant-bridge-002",
+    }
+    assert {status.tenant_id for status in status_repository.list_all()} == {
+        "tenant-bridge-001",
+        "tenant-bridge-002",
+    }
+    assert {message.payload["tenantid"] for message in outbox_repository.list_all()} == {
+        "tenant-bridge-001",
+        "tenant-bridge-002",
+    }
+
+
+def test_missing_trusted_tenant_does_not_persist_any_submission_state() -> None:
+    canonical_repository = InMemoryCanonicalProposalRepository()
+    idempotency_repository = InMemoryIdempotentProposalSubmissionRepository()
+    status_repository = InMemoryProposalIntakeStatusRepository()
+    outbox_repository = InMemoryProposalOutboxRepository()
+    service = _service(
+        canonical_repository=canonical_repository,
+        idempotency_repository=idempotency_repository,
+        status_repository=status_repository,
+        outbox_repository=outbox_repository,
+    )
+
+    with pytest.raises(ProposalValidationError) as error:
+        service.submit_with_initial_status_and_outbox(
+            _submit_command(payload=_valid_personal_credit_payload()),
+            context=_context(tenant_id=None),
+        )
+
+    assert error.value.code == "missing_trusted_tenant"
+    assert canonical_repository.list_all() == []
+    assert idempotency_repository.list_all() == []
+    assert status_repository.list_all() == []
+    assert outbox_repository.list_all() == []
+
+
 def test_status_failure_rolls_back_canonical_and_idempotency_without_outbox() -> None:
     canonical_repository = InMemoryCanonicalProposalRepository()
     idempotency_repository = InMemoryIdempotentProposalSubmissionRepository()
@@ -405,7 +467,7 @@ def _submit_command(
 
 
 def _context(
-    tenant_id: str = "tenant-bridge-001",
+    tenant_id: str | None = "tenant-bridge-001",
     tenant_isolation_tier: str = "bridge",
 ) -> ObservabilityContext:
     return ObservabilityContext.new(

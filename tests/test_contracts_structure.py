@@ -32,6 +32,9 @@ FORBIDDEN_PROPOSAL_FIELDS = {
     "tenant_id",
     "raw_payload",
     "payload",
+    "custom",
+    "metadata",
+    "attributes",
 }
 
 REQUIRED_CONTRACT_DIRECTORIES = [
@@ -286,6 +289,59 @@ def test_proposal_openapi_references_canonical_schema_in_submit_request_body() -
     assert operation["summary"] == "Submissão pública canônica de proposta v1"
 
 
+def test_contract_governance_check_rejects_openapi_request_body_ref_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "proposal-intake" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    operation = openapi["paths"]["/v1/proposals"]["post"]
+    operation["requestBody"]["content"]["application/json"]["schema"] = {
+        "$ref": "#/components/schemas/Proposal"
+    }
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "deve referenciar o schema canônico de proposta" in result.stderr
+
+
+def test_contract_governance_check_rejects_optional_mandatory_openapi_header(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "proposal-intake" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    operation = openapi["paths"]["/v1/proposals"]["post"]
+    for parameter in operation["parameters"]:
+        if parameter["name"] == "X-Correlation-Id":
+            parameter["required"] = False
+            break
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "headers obrigatórios devem ser required=true" in result.stderr
+
+
+def test_contract_governance_check_rejects_extra_openapi_request_body_media_type(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "proposal-intake" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    operation = openapi["paths"]["/v1/proposals"]["post"]
+    operation["requestBody"]["content"]["text/plain"] = {"schema": {"type": "string"}}
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "deve aceitar somente application/json" in result.stderr
+
+
 def test_proposal_schema_examples_cover_mvp_products_pf_pj_and_rejections() -> None:
     schema = load_json(PROPOSAL_SCHEMA)
     examples = schema["examples"]
@@ -317,6 +373,26 @@ def test_contract_governance_check_rejects_proposal_schema_forbidden_fields(tmp_
 
     assert result.returncode == 1
     assert "Campo proibido no schema de proposta" in result.stderr
+
+
+def test_contract_governance_check_rejects_missing_runtime_forbidden_aliases(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = contracts_root / "schemas" / "proposal" / "v1" / "proposal.schema.json"
+    schema = load_json(schema_path)
+    schema["x-creditos"]["forbiddenFields"].remove("custom")
+    schema["x-creditos"]["invalidExamples"] = [
+        example
+        for example in schema["x-creditos"]["invalidExamples"]
+        if "custom" not in set(iter_payload_keys(example))
+    ]
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "x-creditos.forbiddenFields incompletos" in result.stderr
 
 
 def test_contract_governance_check_rejects_proposal_schema_outside_mvp(tmp_path: Path) -> None:
@@ -405,6 +481,105 @@ def test_contract_governance_check_rejects_underidentified_critical_participant(
 
     assert result.returncode == 1
     assert "papel crítico sem identificação completa" in result.stderr
+
+
+def test_contract_governance_check_rejects_open_proposal_submitted_event_data(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    asyncapi_path = contracts_root / "asyncapi" / "events" / "proposal" / "v1" / "asyncapi.json"
+    asyncapi = load_json(asyncapi_path)
+    message = asyncapi["components"]["messages"]["ProposalSubmitted"]
+    message["payload"]["properties"]["data"]["additionalProperties"] = True
+    asyncapi_path.write_text(dumped(asyncapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "ProposalSubmitted data deve ser fechado" in result.stderr
+
+
+def test_contract_governance_check_rejects_open_proposal_submitted_envelope(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    asyncapi_path = contracts_root / "asyncapi" / "events" / "proposal" / "v1" / "asyncapi.json"
+    asyncapi = load_json(asyncapi_path)
+    message = asyncapi["components"]["messages"]["ProposalSubmitted"]
+    message["payload"]["additionalProperties"] = True
+    asyncapi_path.write_text(dumped(asyncapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "ProposalSubmitted payload deve ser fechado" in result.stderr
+
+
+def test_contract_governance_check_rejects_extra_proposal_submitted_data_field(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    asyncapi_path = contracts_root / "asyncapi" / "events" / "proposal" / "v1" / "asyncapi.json"
+    asyncapi = load_json(asyncapi_path)
+    data_properties = asyncapi["components"]["messages"]["ProposalSubmitted"]["payload"][
+        "properties"
+    ]["data"]["properties"]
+    data_properties["requested_amount"] = {"type": "integer"}
+    asyncapi_path.write_text(dumped(asyncapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "data deve declarar payload minimizado" in result.stderr
+
+
+def test_contract_governance_check_rejects_extra_cloudevent_extension(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    asyncapi_path = contracts_root / "asyncapi" / "events" / "proposal" / "v1" / "asyncapi.json"
+    asyncapi = load_json(asyncapi_path)
+    payload = asyncapi["components"]["messages"]["ProposalSubmitted"]["payload"]
+    payload["required"].append("authorization")
+    payload["properties"]["authorization"] = {"type": "string"}
+    asyncapi_path.write_text(dumped(asyncapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "CloudEvent deve exigir extensões CreditOS" in result.stderr
+
+
+def test_contract_governance_check_rejects_unstable_cloudevent_specversion(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    asyncapi_path = contracts_root / "asyncapi" / "events" / "proposal" / "v1" / "asyncapi.json"
+    asyncapi = load_json(asyncapi_path)
+    payload = asyncapi["components"]["messages"]["ProposalSubmitted"]["payload"]
+    payload["properties"]["specversion"]["const"] = "1.1"
+    asyncapi_path.write_text(dumped(asyncapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "specversion deve ser 1.0" in result.stderr
+
+
+def test_contract_governance_check_rejects_non_object_proposal_submitted_payload(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    asyncapi_path = contracts_root / "asyncapi" / "events" / "proposal" / "v1" / "asyncapi.json"
+    asyncapi = load_json(asyncapi_path)
+    message = asyncapi["components"]["messages"]["ProposalSubmitted"]
+    message["payload"]["type"] = "string"
+    asyncapi_path.write_text(dumped(asyncapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "ProposalSubmitted payload deve ser object" in result.stderr
 
 
 def load_json(path: Path) -> dict[str, Any]:
