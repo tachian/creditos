@@ -1,9 +1,9 @@
 {
   "asyncapi": "3.1.0",
   "info": {
-    "title": "CreditOS Proposal Events Structural Contract",
+    "title": "CreditOS Proposal Submitted Event Contract",
     "version": "v1",
-    "description": "Contrato assíncrono mínimo para validar organização AsyncAPI. Não é o contrato final de evento."
+    "description": "Contrato assíncrono v1 para evento minimizado de proposta submetida pelo Proposal Intake."
   },
   "x-creditos": {
     "owner": "Proposal Intake",
@@ -44,9 +44,10 @@
     "messages": {
       "ProposalSubmitted": {
         "name": "ProposalSubmitted",
-        "title": "Placeholder estrutural de proposta submetida",
+        "title": "Proposta submetida",
         "payload": {
           "type": "object",
+          "additionalProperties": false,
           "required": [
             "specversion",
             "id",
@@ -55,25 +56,29 @@
             "subject",
             "time",
             "datacontenttype",
+            "dataschema",
             "tenantid",
             "tenanttier",
             "subjectid",
+            "clientid",
             "principaltype",
             "scopes",
             "correlationid",
             "requestid",
             "idempotencykey",
             "schemaversion",
-            "traceparent"
+            "traceparent",
+            "data"
           ],
           "properties": {
             "specversion": {"const": "1.0"},
             "id": {"type": "string"},
-            "source": {"type": "string"},
+            "source": {"const": "creditos://proposal-intake"},
             "type": {"const": "creditos.proposal.v1.submitted"},
-            "subject": {"type": "string"},
+            "subject": {"type": "string", "pattern": "^proposal/proposal_[a-f0-9]{24}$"},
             "time": {"type": "string", "format": "date-time"},
             "datacontenttype": {"const": "application/json"},
+            "dataschema": {"const": "creditos://contracts/asyncapi/events/proposal/v1"},
             "tenantid": {"type": "string"},
             "tenanttier": {"type": "string", "enum": ["bridge", "silo"]},
             "subjectid": {"type": "string"},
@@ -85,7 +90,39 @@
             "requestid": {"type": "string"},
             "idempotencykey": {"type": "string"},
             "schemaversion": {"const": "v1"},
-            "traceparent": {"type": "string"}
+            "traceparent": {"type": "string"},
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "proposal_id",
+                "external_proposal_id",
+                "product_type",
+                "schema_version",
+                "channel",
+                "intake_status",
+                "provided_data_discarded",
+                "consents_discarded",
+                "callback_configured"
+              ],
+              "properties": {
+                "proposal_id": {"type": "string", "pattern": "^proposal_[a-f0-9]{24}$"},
+                "external_proposal_id": {"type": "string"},
+                "product_type": {
+                  "type": "string",
+                  "enum": ["personal_credit", "bnpl", "business_credit", "receivables"]
+                },
+                "schema_version": {"const": "1.0"},
+                "channel": {
+                  "type": "string",
+                  "enum": ["api", "batch", "portal", "partner", "checkout", "backoffice"]
+                },
+                "intake_status": {"const": "submitted"},
+                "provided_data_discarded": {"type": "boolean"},
+                "consents_discarded": {"type": "boolean"},
+                "callback_configured": {"type": "boolean"}
+              }
+            }
           }
         }
       }

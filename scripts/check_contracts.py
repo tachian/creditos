@@ -35,11 +35,46 @@ CLOUDEVENT_REQUIRED_FIELDS = {
     "subject",
     "time",
     "datacontenttype",
+    "dataschema",
     "tenantid",
+    "tenanttier",
+    "subjectid",
+    "clientid",
+    "principaltype",
+    "scopes",
     "correlationid",
+    "requestid",
     "idempotencykey",
     "schemaversion",
     "traceparent",
+    "data",
+}
+PROPOSAL_SUBMITTED_DATA_FIELDS = {
+    "proposal_id",
+    "external_proposal_id",
+    "product_type",
+    "schema_version",
+    "channel",
+    "intake_status",
+    "provided_data_discarded",
+    "consents_discarded",
+    "callback_configured",
+}
+PROPOSAL_SUBMITTED_FORBIDDEN_DATA_FIELDS = {
+    "authorization",
+    "borrower",
+    "consents",
+    "customer",
+    "declared_monthly_debt",
+    "declared_monthly_income",
+    "document",
+    "email",
+    "name",
+    "participants",
+    "password",
+    "provided_data",
+    "secret",
+    "token",
 }
 PROPOSAL_SCHEMA_PATH = "schemas/proposal/v1/proposal.schema.json"
 PROPOSAL_REQUIRED_FIELDS = {
@@ -286,6 +321,27 @@ def validate_asyncapi_contract(path: Path, version: str) -> None:
         require(
             set(properties) >= CLOUDEVENT_REQUIRED_FIELDS,
             f"AsyncAPI CloudEvent deve declarar propriedades CreditOS: {path}",
+        )
+        data = require_dict(
+            properties.get("data"),
+            f"AsyncAPI CloudEvent deve declarar data: {path}",
+        )
+        data_required = data.get("required", [])
+        data_properties = require_dict(
+            data.get("properties"), f"AsyncAPI CloudEvent data.properties deve existir: {path}"
+        )
+        require(
+            isinstance(data_required, list)
+            and set(data_required) >= PROPOSAL_SUBMITTED_DATA_FIELDS,
+            f"AsyncAPI ProposalSubmitted data deve exigir payload minimizado: {path}",
+        )
+        require(
+            set(data_properties) >= PROPOSAL_SUBMITTED_DATA_FIELDS,
+            f"AsyncAPI ProposalSubmitted data deve declarar payload minimizado: {path}",
+        )
+        require(
+            data_properties.keys().isdisjoint(PROPOSAL_SUBMITTED_FORBIDDEN_DATA_FIELDS),
+            f"AsyncAPI ProposalSubmitted data não pode expor dados sensíveis: {path}",
         )
 
 
