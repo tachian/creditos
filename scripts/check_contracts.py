@@ -300,9 +300,9 @@ def validate_openapi_contract(path: Path, version: str) -> None:
 
 
 def validate_proposal_openapi_contract(paths: dict[str, Any], path: Path) -> None:
-    proposal_path = paths.get("/v1/proposals")
-    if not isinstance(proposal_path, dict) or "post" not in proposal_path:
+    if "proposal-intake" not in path.parts:
         return
+    proposal_path = paths.get("/v1/proposals")
 
     proposal_path = require_dict(
         proposal_path,
