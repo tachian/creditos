@@ -29,6 +29,6 @@ class ProposalOutboxMessage:
 def _freeze_value(value: Any) -> Any:
     if isinstance(value, Mapping):
         return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
-    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return tuple(_freeze_value(item) for item in value)
     return value
