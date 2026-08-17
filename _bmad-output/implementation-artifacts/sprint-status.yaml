@@ -1,5 +1,5 @@
 # generated: 2026-07-30
-# last_updated: 2026-08-14
+# last_updated: 2026-08-16
 # project: CreditOS
 # project_key: NOKEY
 # tracking_system: file-system
@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-30
-last_updated: 2026-08-14
+last_updated: 2026-08-16
 project: CreditOS
 project_key: NOKEY
 tracking_system: file-system
@@ -68,7 +68,7 @@ development_status:
   2-1-definicao-do-contrato-canonico-de-proposta: done
   2-2-validacao-e-normalizacao-da-proposta: done
   2-3-submissao-idempotente-de-propostas: done
-  2-4-status-inicial-e-evento-de-proposta-submetida: backlog
+  2-4-status-inicial-e-evento-de-proposta-submetida: done
   2-5-gates-de-contrato-para-proposal-intake: backlog
   epic-2-retrospective: optional
   epic-3: backlog

@@ -12,6 +12,9 @@ Microsserviço responsável pelo primeiro recorte de recebimento de propostas no
 - Submeter propostas de forma idempotente por `tenant_id`, cliente técnico e `Idempotency-Key`.
 - Retornar replay seguro para payload equivalente e conflito controlado para payload incompatível.
 - Calcular fingerprint sensível com HMAC e segredo explícito da aplicação, sem armazenar CPF/CNPJ bruto.
+- Registrar status inicial `submitted` para submissões novas aceitas pelo intake.
+- Preparar item de outbox `pending` com CloudEvents `creditos.proposal.v1.submitted`.
+- Minimizar payload de evento, sem CPF, CNPJ, nome, e-mail, endereço, payload bruto, tokens, secrets ou valores financeiros detalhados.
 - Produzir logs estruturados com payload omitido e dados sensíveis mascarados.
 - Validar dígitos verificadores de CPF/CNPJ sem dependência externa.
 
@@ -19,7 +22,8 @@ Microsserviço responsável pelo primeiro recorte de recebimento de propostas no
 
 - Endpoint HTTP público completo.
 - Banco real, migrations e lock/transação distribuída de produção para idempotência.
-- Status inicial, outbox/eventos, decisão, IA, integrações externas e chamadas gRPC.
+- Publicação real em NATS JetStream, banco real, migrations e lock/transação distribuída de produção para outbox.
+- Decisão, IA, integrações externas, auditoria oficial e chamadas gRPC reais.
 
 ## Comandos
 

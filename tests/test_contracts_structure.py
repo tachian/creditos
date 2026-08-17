@@ -173,6 +173,33 @@ def test_contract_governance_check_rejects_incomplete_asyncapi_cloudevent(tmp_pa
     assert "CloudEvent deve exigir extensões CreditOS" in result.stderr
 
 
+def test_proposal_submitted_asyncapi_defines_minimized_event_data() -> None:
+    asyncapi = load_json(CONTRACTS / "asyncapi" / "events" / "proposal" / "v1" / "asyncapi.json")
+    payload = asyncapi["components"]["messages"]["ProposalSubmitted"]["payload"]
+    data = payload["properties"]["data"]
+
+    assert payload["properties"]["type"]["const"] == "creditos.proposal.v1.submitted"
+    assert payload["properties"]["source"]["const"] == "creditos://proposal-intake"
+    assert payload["properties"]["dataschema"]["const"] == (
+        "creditos://contracts/asyncapi/events/proposal/v1"
+    )
+    assert set(data["required"]) >= {
+        "proposal_id",
+        "external_proposal_id",
+        "product_type",
+        "schema_version",
+        "channel",
+        "intake_status",
+        "provided_data_discarded",
+        "consents_discarded",
+        "callback_configured",
+    }
+    assert "borrower" not in data["properties"]
+    assert "participants" not in data["properties"]
+    assert "provided_data" not in data["properties"]
+    assert "consents" not in data["properties"]
+
+
 def test_contract_governance_check_rejects_proto_without_grpc_service(tmp_path: Path) -> None:
     contracts_root = copy_contracts_fixture(tmp_path)
     proto_path = (
