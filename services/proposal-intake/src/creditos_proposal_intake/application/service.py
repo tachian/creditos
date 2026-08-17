@@ -486,6 +486,7 @@ def _require_trusted_tenant(context: ObservabilityContext) -> str:
 
         raise ProposalValidationError(
             "tenant confiável ausente",
+            code="missing_trusted_tenant",
             field_path="context.tenant_id",
         )
     return context.tenant_id

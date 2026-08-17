@@ -28,7 +28,7 @@
           {
             "name": "X-Request-Id",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
               "minLength": 1
