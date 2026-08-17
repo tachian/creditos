@@ -5,10 +5,7 @@ público de submissão de propostas podem assumir no MVP.
 
 ## Invariantes Esperados
 
-- `POST /v1/proposals` referencia o schema canônico
-  `schemas/proposal/v1/proposal.schema.json`.
-- `X-Correlation-Id` e `Idempotency-Key` são headers obrigatórios.
-- Payloads públicos não aceitam `tenant_id`, `idempotency_key`,
+- `X-Correlation-Id`, `X-Request-Id` e `Idempotency-Key` são headers obrigatórios.
   `selected_plan`, `plan_id`, `extra_data`, `raw_payload`, `payload`,
   `custom`, `metadata` ou `attributes`.
 - Exemplos válidos do schema são aceitos pelo runtime do `Proposal Intake`.
