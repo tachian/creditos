@@ -352,9 +352,23 @@ class IntegrationCatalogApplicationService:
         payload: Any,
         error_type: str | None = None,
     ) -> None:
+        from dataclasses import replace
+
+        safe_context = context
+        if context.tenant_id or context.tenant_isolation_tier:
+            candidate_tenant = (context.tenant_id or "").strip()
+            if (
+                candidate_tenant
+                and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{2,120}", candidate_tenant)
+                and context.tenant_isolation_tier == "bridge"
+            ):
+                safe_context = replace(context, tenant_id=candidate_tenant)
+            else:
+                safe_context = replace(context, tenant_id=None, tenant_isolation_tier=None)
+
         self._logged_events.append(
             build_structured_log(
-                context=context,
+                context=safe_context,
                 service_name=SERVICE_NAME,
                 service_version=SERVICE_VERSION,
                 environment=self._environment,
