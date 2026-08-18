@@ -99,7 +99,10 @@ class IntegrationCatalogApplicationService:
             _require_scope(command.scopes, "integration_catalog:write")
             product_type = parse_product_type(command.product_type)
             integration_class = parse_integration_class(command.integration_class)
-            if not self._adapter_registry.is_adapter_allowed(integration_class, command.adapter_id):
+            from creditos_integration.domain.value_objects.catalog import validate_adapter_id
+
+            adapter_id = validate_adapter_id(command.adapter_id)
+            if not self._adapter_registry.is_adapter_allowed(integration_class, adapter_id):
                 raise IntegrationValidationError(
                     "adapter não registrado para a classe de integração",
                     code="adapter_not_registered",
