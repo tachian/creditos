@@ -7,6 +7,7 @@ members = [
     "creditos",
     "creditos-contracts",
     "creditos-identity-tenant",
+    "creditos-integration",
     "creditos-observability",
     "creditos-proposal-intake",
     "creditos-security",
@@ -62,6 +63,21 @@ source = { editable = "packages/contracts" }
 name = "creditos-identity-tenant"
 version = "0.1.0"
 source = { editable = "services/identity-tenant" }
+dependencies = [
+    { name = "creditos-observability" },
+    { name = "creditos-security" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "creditos-observability", editable = "packages/observability" },
+    { name = "creditos-security", editable = "packages/security" },
+]
+
+[[package]]
+name = "creditos-integration"
+version = "0.1.0"
+source = { editable = "services/integration" }
 dependencies = [
     { name = "creditos-observability" },
     { name = "creditos-security" },
