@@ -433,7 +433,7 @@ def _require_trusted_tenant(context: ObservabilityContext) -> str:
 
 
 def _require_scope(scopes: tuple[str, ...], required_scope: str) -> None:
-    if required_scope not in set(scopes):
+    if required_scope not in scopes:
         raise IntegrationValidationError(
             "escopo insuficiente para configurar catálogo de integrações",
             code="insufficient_scope",
