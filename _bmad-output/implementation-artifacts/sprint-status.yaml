@@ -64,15 +64,15 @@ development_status:
   1-4-propagacao-de-contexto-confiavel-entre-servicos: done
   1-5-gates-de-seguranca-e-isolamento-do-epic-1: done
   epic-1-retrospective: optional
-  epic-2: in-progress
+  epic-2: done
   2-1-definicao-do-contrato-canonico-de-proposta: done
   2-2-validacao-e-normalizacao-da-proposta: done
   2-3-submissao-idempotente-de-propostas: done
   2-4-status-inicial-e-evento-de-proposta-submetida: done
-  2-5-gates-de-contrato-para-proposal-intake: review
+  2-5-gates-de-contrato-para-proposal-intake: done
   epic-2-retrospective: optional
-  epic-3: backlog
-  3-1-catalogo-de-classes-de-integracao-por-tenant-e-produto: backlog
+  epic-3: in-progress
+  3-1-catalogo-de-classes-de-integracao-por-tenant-e-produto: review
   3-2-adapter-mock-sandbox-para-integracoes-externas: backlog
   3-3-execucao-assincrona-com-fan-out-fan-in: backlog
   3-4-resiliencia-retry-dlq-e-reprocessamento-controlado: backlog
