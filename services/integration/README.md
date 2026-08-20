@@ -24,7 +24,16 @@ integrações externas.
 - Logs estruturados minimizados com rastreabilidade por tenant, produto, classe,
   adapter, status, cenário, correlação e trace.
 
+## Escopo da Story 3.3
+
+- Execução assíncrona local/testável de `IntegrationPlan` com fan-out/fan-in.
+- Entidades canônicas de execução e job, com status versionados e rastreáveis.
+- Portas hexagonais para dispatcher, store de idempotência e publicação futura de resultado.
+- Dispatcher in-memory paralelizável, determinístico e sem broker real.
+- Idempotência por tenant, `idempotency_key` e fingerprint seguro do plano.
+- Logs estruturados minimizados para execução, job despachado, reutilização idempotente e fan-in.
+
 ## Fora de Escopo Atual
 
-Esta story não executa fornecedor real, NATS JetStream real, fan-out/fan-in,
-retry/DLQ, banco real, migration ou gRPC real.
+Esta fase não executa fornecedor real, NATS JetStream real, retry/DLQ, replay,
+banco real, migration, transactional outbox/inbox real, AsyncAPI final ou gRPC real.

@@ -5,6 +5,10 @@ from creditos_integration.domain.value_objects.catalog import (
     IntegrationRequirement,
     ProductType,
 )
+from creditos_integration.domain.value_objects.execution import (
+    IntegrationExecutionJobStatus,
+    IntegrationExecutionStatus,
+)
 from creditos_integration.domain.value_objects.result import (
     IntegrationResultStatus,
     MockIntegrationScenario,
@@ -14,6 +18,8 @@ from creditos_integration.domain.value_objects.result import (
 __all__ = [
     "FallbackStrategy",
     "IntegrationClass",
+    "IntegrationExecutionJobStatus",
+    "IntegrationExecutionStatus",
     "IntegrationPlanStatus",
     "IntegrationRequirement",
     "IntegrationResultStatus",
