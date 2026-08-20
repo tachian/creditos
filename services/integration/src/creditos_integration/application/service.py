@@ -565,6 +565,24 @@ def _mock_rejection_log_extra(
     plan_items = getattr(plan, "items", ())
     scenario_by_class = command.scenario_by_class or {}
     item_classes = tuple(getattr(item, "integration_class", "") for item in plan_items)
+    allowed_scenarios = frozenset(
+        {
+            MockIntegrationScenario.SYNTHETIC_SUCCESS.value,
+            MockIntegrationScenario.SYNTHETIC_PARTIAL.value,
+            MockIntegrationScenario.SYNTHETIC_NOT_FOUND.value,
+            MockIntegrationScenario.SYNTHETIC_FAILURE.value,
+        }
+    )
+    scenarios = tuple(
+        (raw if raw in allowed_scenarios else "invalid")
+        for raw in (
+            scenario_by_class.get(
+                integration_class,
+                MockIntegrationScenario.SYNTHETIC_SUCCESS.value,
+            )
+            for integration_class in item_classes
+        )
+    )
     return {
         "tenant_id_present": tenant_id_present,
         "product_type": getattr(plan, "product_type", ""),
@@ -572,13 +590,7 @@ def _mock_rejection_log_extra(
         "configured_items": len(plan_items),
         "integration_classes": item_classes,
         "adapter_ids": tuple(getattr(item, "adapter_id", "") for item in plan_items),
-        "scenarios": tuple(
-            scenario_by_class.get(
-                integration_class,
-                MockIntegrationScenario.SYNTHETIC_SUCCESS.value,
-            )
-            for integration_class in item_classes
-        ),
+        "scenarios": scenarios,
         "denial_reason": denial_reason,
     }
 
