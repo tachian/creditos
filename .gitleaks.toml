@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allow idempotency_key test fixtures (not real secrets)"
+regexTarget = "match"
+regexes = [
+  '''idempotency.key''',
+]
+paths = [
+  '''(^|/)tests/''',
+]
