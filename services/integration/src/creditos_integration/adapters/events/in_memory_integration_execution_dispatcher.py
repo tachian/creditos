@@ -55,31 +55,38 @@ class InMemoryIntegrationExecutionDispatcher:
         )
         jobs_by_index: dict[int, IntegrationExecutionJob] = {}
         results_by_index: dict[int, IntegrationResult] = {}
-        self._active_jobs = 0
-        self.max_observed_concurrency = 0
+        with self._lock:
+            dispatch_lock = getattr(self, "_dispatch_lock", None)
+            if dispatch_lock is None:
+                dispatch_lock = Lock()
+                self._dispatch_lock = dispatch_lock
 
-        with ThreadPoolExecutor(max_workers=effective_concurrency) as executor:
-            futures = {
-                executor.submit(
-                    self._execute_job,
-                    execution_id=execution_id,
-                    request=request,
-                    synthetic_subject_reference=synthetic_subject_reference,
-                    context=context,
-                    clock=clock,
-                ): index
-                for index, request in enumerate(job_requests)
-            }
-            for future, index in futures.items():
-                job, result = future.result()
-                jobs_by_index[index] = job
-                results_by_index[index] = result
+        with dispatch_lock:
+            self._active_jobs = 0
+            self.max_observed_concurrency = 0
 
-        return IntegrationExecutionDispatchResult(
-            jobs=tuple(jobs_by_index[index] for index in range(len(job_requests))),
-            results=tuple(results_by_index[index] for index in range(len(job_requests))),
-            max_observed_concurrency=self.max_observed_concurrency,
-        )
+            with ThreadPoolExecutor(max_workers=effective_concurrency) as executor:
+                futures = {
+                    executor.submit(
+                        self._execute_job,
+                        execution_id=execution_id,
+                        request=request,
+                        synthetic_subject_reference=synthetic_subject_reference,
+                        context=context,
+                        clock=clock,
+                    ): index
+                    for index, request in enumerate(job_requests)
+                }
+                for future, index in futures.items():
+                    job, result = future.result()
+                    jobs_by_index[index] = job
+                    results_by_index[index] = result
+
+            return IntegrationExecutionDispatchResult(
+                jobs=tuple(jobs_by_index[index] for index in range(len(job_requests))),
+                results=tuple(results_by_index[index] for index in range(len(job_requests))),
+                max_observed_concurrency=self.max_observed_concurrency,
+            )
 
     def _execute_job(
         self,
