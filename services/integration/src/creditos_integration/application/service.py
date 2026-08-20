@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -17,16 +17,27 @@ from creditos_integration.application.ports.audit_event_publisher import (
     IntegrationAuditEvent,
 )
 from creditos_integration.application.ports.catalog_repository import IntegrationCatalogRepository
+from creditos_integration.application.ports.mock_integration_adapter import (
+    MockIntegrationAdapter,
+    MockIntegrationAdapterRegistry,
+)
 from creditos_integration.domain.entities import (
     IntegrationConfiguration,
     IntegrationPlan,
     IntegrationPlanItem,
+    IntegrationResult,
 )
 from creditos_integration.domain.errors import IntegrationValidationError
 from creditos_integration.domain.value_objects.catalog import (
     IntegrationPlanStatus,
     parse_integration_class,
     parse_product_type,
+)
+from creditos_integration.domain.value_objects.result import (
+    MockIntegrationScenario,
+    parse_mock_scenario,
+    validate_supported_mock_integration_class,
+    validate_synthetic_subject_reference,
 )
 
 SERVICE_NAME = "integration"
@@ -63,6 +74,14 @@ class ListIntegrationConfigurationsQuery:
     product_type: str
 
 
+@dataclass(frozen=True, slots=True)
+class ExecuteMockIntegrationCommand:
+    plan: IntegrationPlan
+    scenario_by_class: Mapping[str, str] | None = None
+    synthetic_subject_reference: str = "synthetic-subject"
+    scopes: tuple[str, ...] = ()
+
+
 class IntegrationCatalogApplicationService:
     def __init__(
         self,
@@ -71,6 +90,7 @@ class IntegrationCatalogApplicationService:
         adapter_registry: AdapterRegistry,
         audit_publisher: AuditEventPublisher,
         environment: str,
+        mock_adapter_registry: MockIntegrationAdapterRegistry | None = None,
         clock: Callable[[], datetime] | None = None,
         configuration_id_factory: Callable[[str], str] | None = None,
     ) -> None:
@@ -78,6 +98,7 @@ class IntegrationCatalogApplicationService:
         self._adapter_registry = adapter_registry
         self._audit_publisher = audit_publisher
         self._environment = environment
+        self._mock_adapter_registry = mock_adapter_registry
         self._clock = clock or (lambda: datetime.now(UTC))
         self._configuration_id_factory = configuration_id_factory or _default_configuration_id
         self._logged_events: list[dict[str, Any]] = []
@@ -296,6 +317,107 @@ class IntegrationCatalogApplicationService:
             )
             raise
 
+    def execute_mock_integration_plan(
+        self,
+        command: ExecuteMockIntegrationCommand,
+        *,
+        context: ObservabilityContext,
+    ) -> tuple[IntegrationResult, ...]:
+        started_at = perf_counter()
+        tenant_id = context.tenant_id
+        try:
+            _require_non_production_environment(self._environment)
+            tenant_id = _require_trusted_tenant(context)
+            _require_scope(command.scopes, "integration_mock:execute")
+            if command.plan.tenant_id != tenant_id:
+                raise IntegrationValidationError(
+                    "plano de integração pertence a outro tenant",
+                    code="cross_tenant_integration_plan",
+                    field_path="plan.tenant_id",
+                )
+            if command.plan.status != IntegrationPlanStatus.READY.value:
+                raise IntegrationValidationError(
+                    "plano de integração não está pronto para execução mock",
+                    code="integration_plan_not_ready",
+                    field_path="plan.status",
+                )
+            if not command.plan.items:
+                raise IntegrationValidationError(
+                    "plano de integração não possui itens executáveis",
+                    code="empty_integration_plan",
+                    field_path="plan.items",
+                )
+            if self._mock_adapter_registry is None:
+                raise IntegrationValidationError(
+                    "registry de adapters mock/sandbox não configurado",
+                    code="mock_adapter_registry_not_configured",
+                    field_path="mock_adapter_registry",
+                )
+
+            scenario_by_class = command.scenario_by_class or {}
+            synthetic_subject_reference = validate_synthetic_subject_reference(
+                command.synthetic_subject_reference
+            )
+            execution_items = _preflight_mock_execution(
+                plan=command.plan,
+                tenant_id=tenant_id,
+                scenario_by_class=scenario_by_class,
+                registry=self._mock_adapter_registry,
+            )
+            results: list[IntegrationResult] = []
+            for item, scenario, adapter in execution_items:
+                result_started_at = self._clock()
+                result_perf_started_at = perf_counter()
+                raw_result = adapter.execute(
+                    item,
+                    scenario=scenario,
+                    synthetic_subject_reference=synthetic_subject_reference,
+                    context=context,
+                    started_at=result_started_at,
+                    completed_at=result_started_at,
+                    duration_ms=0.0,
+                )
+                result = _finalize_mock_result(
+                    result=raw_result,
+                    completed_at=self._clock(),
+                    duration_ms=_duration_ms(result_perf_started_at),
+                )
+                _validate_mock_result(
+                    result=result,
+                    item=item,
+                    tenant_id=tenant_id,
+                    scenario=scenario,
+                )
+                results.append(result)
+
+            self._log_operation(
+                context=context,
+                operation="integration_mock.execute_plan",
+                status="accepted",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                extra=_mock_execution_log_extra(
+                    product_type=command.plan.product_type,
+                    results=tuple(results),
+                ),
+            )
+            return tuple(results)
+        except Exception as error:
+            self._log_operation(
+                context=context,
+                operation="integration_mock.execute_plan",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                error_type=type(error).__name__,
+                extra=_mock_rejection_log_extra(
+                    command=command,
+                    tenant_id_present=_tenant_id_present(tenant_id),
+                    denial_reason=getattr(error, "code", type(error).__name__),
+                ),
+            )
+            raise
+
     def list_integration_configurations(
         self,
         query: ListIntegrationConfigurationsQuery,
@@ -417,6 +539,190 @@ def _plan_log_extra(*, product_type: str, plan: IntegrationPlan) -> dict[str, ob
     }
 
 
+def _mock_execution_log_extra(
+    *,
+    product_type: str,
+    results: tuple[IntegrationResult, ...],
+) -> dict[str, object]:
+    return {
+        "product_type": product_type,
+        "result_count": len(results),
+        "integration_classes": tuple(result.integration_class for result in results),
+        "adapter_ids": tuple(result.adapter_id for result in results),
+        "result_statuses": tuple(result.status for result in results),
+        "scenarios": tuple(result.scenario for result in results),
+        "result_schema_versions": tuple(result.schema_version for result in results),
+    }
+
+
+def _mock_rejection_log_extra(
+    *,
+    command: ExecuteMockIntegrationCommand,
+    tenant_id_present: bool,
+    denial_reason: str,
+) -> dict[str, object]:
+    plan = command.plan
+    plan_items = getattr(plan, "items", ())
+    scenario_by_class = command.scenario_by_class or {}
+    item_classes = tuple(getattr(item, "integration_class", "") for item in plan_items)
+    allowed_scenarios = frozenset(
+        {
+            MockIntegrationScenario.SYNTHETIC_SUCCESS.value,
+            MockIntegrationScenario.SYNTHETIC_PARTIAL.value,
+            MockIntegrationScenario.SYNTHETIC_NOT_FOUND.value,
+            MockIntegrationScenario.SYNTHETIC_FAILURE.value,
+        }
+    )
+    scenarios = tuple(
+        (raw if raw in allowed_scenarios else "invalid")
+        for raw in (
+            scenario_by_class.get(
+                integration_class,
+                MockIntegrationScenario.SYNTHETIC_SUCCESS.value,
+            )
+            for integration_class in item_classes
+        )
+    )
+    return {
+        "tenant_id_present": tenant_id_present,
+        "product_type": getattr(plan, "product_type", ""),
+        "plan_status": getattr(plan, "status", ""),
+        "configured_items": len(plan_items),
+        "integration_classes": item_classes,
+        "adapter_ids": tuple(getattr(item, "adapter_id", "") for item in plan_items),
+        "scenarios": scenarios,
+        "denial_reason": denial_reason,
+    }
+
+
+def _preflight_mock_execution(
+    *,
+    plan: IntegrationPlan,
+    tenant_id: str,
+    scenario_by_class: Mapping[str, str],
+    registry: MockIntegrationAdapterRegistry,
+) -> tuple[tuple[IntegrationPlanItem, str, MockIntegrationAdapter], ...]:
+    item_classes = {item.integration_class for item in plan.items}
+    unknown_scenario_classes = tuple(sorted(set(scenario_by_class) - item_classes))
+    if unknown_scenario_classes:
+        raise IntegrationValidationError(
+            "cenário mock informado para classe fora do plano",
+            code="unknown_mock_scenario_class",
+            field_path="scenario_by_class",
+            details={"integration_classes": unknown_scenario_classes},
+        )
+
+    execution_items: list[tuple[IntegrationPlanItem, str, MockIntegrationAdapter]] = []
+    for index, item in enumerate(plan.items):
+        if item.tenant_id != tenant_id:
+            raise IntegrationValidationError(
+                "item do plano pertence a outro tenant",
+                code="cross_tenant_integration_plan_item",
+                field_path=f"plan.items[{index}].tenant_id",
+            )
+        if item.product_type != plan.product_type:
+            raise IntegrationValidationError(
+                "item do plano pertence a outro produto",
+                code="cross_product_integration_plan_item",
+                field_path=f"plan.items[{index}].product_type",
+            )
+        validate_supported_mock_integration_class(item.integration_class)
+        scenario = parse_mock_scenario(
+            scenario_by_class.get(
+                item.integration_class,
+                MockIntegrationScenario.SYNTHETIC_SUCCESS.value,
+            )
+        )
+        adapter = registry.get_adapter(item.integration_class, item.adapter_id)
+        if adapter is None:
+            raise IntegrationValidationError(
+                "adapter mock/sandbox não registrado para execução",
+                code="mock_adapter_not_registered",
+                field_path=f"plan.items[{index}].adapter_id",
+            )
+    for item in plan.items:
+        scenario = parse_mock_scenario(
+            scenario_by_class.get(
+                item.integration_class,
+                MockIntegrationScenario.SYNTHETIC_SUCCESS.value,
+            )
+        )
+        adapter = registry.get_adapter(item.integration_class, item.adapter_id)
+        if adapter is not None:
+            execution_items.append((item, scenario, adapter))
+    return tuple(execution_items)
+
+
+def _finalize_mock_result(
+    *,
+    result: IntegrationResult,
+    completed_at: datetime,
+    duration_ms: float,
+) -> IntegrationResult:
+    return IntegrationResult.create(
+        result_id=result.result_id,
+        tenant_id=result.tenant_id,
+        product_type=result.product_type,
+        integration_class=result.integration_class,
+        adapter_id=result.adapter_id,
+        status=result.status,
+        scenario=result.scenario,
+        schema_version=result.schema_version,
+        reason_codes=result.reason_codes,
+        summary=result.summary,
+        correlation_id=result.correlation_id,
+        trace_id=result.trace_id,
+        started_at=result.started_at,
+        completed_at=completed_at,
+        duration_ms=duration_ms,
+    )
+
+
+def _validate_mock_result(
+    *,
+    result: IntegrationResult,
+    item: IntegrationPlanItem,
+    tenant_id: str,
+    scenario: str,
+) -> None:
+    if result.tenant_id != tenant_id:
+        raise IntegrationValidationError(
+            "resultado mock/sandbox pertence a outro tenant",
+            code="mock_result_tenant_mismatch",
+            field_path="result.tenant_id",
+        )
+    if result.product_type != item.product_type:
+        raise IntegrationValidationError(
+            "resultado mock/sandbox pertence a outro produto",
+            code="mock_result_product_mismatch",
+            field_path="result.product_type",
+        )
+    if result.integration_class != item.integration_class:
+        raise IntegrationValidationError(
+            "resultado mock/sandbox pertence a outra classe",
+            code="mock_result_class_mismatch",
+            field_path="result.integration_class",
+        )
+    if result.adapter_id != item.adapter_id:
+        raise IntegrationValidationError(
+            "resultado mock/sandbox pertence a outro adapter",
+            code="mock_result_adapter_mismatch",
+            field_path="result.adapter_id",
+        )
+    if result.scenario != scenario:
+        raise IntegrationValidationError(
+            "resultado mock/sandbox pertence a outro cenário",
+            code="mock_result_scenario_mismatch",
+            field_path="result.scenario",
+        )
+    if result.schema_version != "1.0":
+        raise IntegrationValidationError(
+            "schema de resultado mock/sandbox não suportado",
+            code="unsupported_mock_result_schema_version",
+            field_path="result.schema_version",
+        )
+
+
 def _require_trusted_tenant(context: ObservabilityContext) -> str:
     if not context.tenant_id or not context.tenant_id.strip():
         raise IntegrationValidationError(
@@ -449,7 +755,7 @@ def _require_trusted_tenant(context: ObservabilityContext) -> str:
 def _require_scope(scopes: tuple[str, ...], required_scope: str) -> None:
     if required_scope not in scopes:
         raise IntegrationValidationError(
-            "escopo insuficiente para configurar catálogo de integrações",
+            "escopo insuficiente para operação de integração",
             code="insufficient_scope",
             field_path="scopes",
         )
@@ -457,6 +763,57 @@ def _require_scope(scopes: tuple[str, ...], required_scope: str) -> None:
 
 def _parse_classes(values: tuple[str, ...]) -> set[str]:
     return {parse_integration_class(value) for value in values}
+
+
+def _require_non_production_environment(environment: str) -> None:
+    normalized_environment = environment.strip().lower()
+    allowed_non_production = {
+        "ci",
+        "dev",
+        "development",
+        "homolog",
+        "homologation",
+        "hml",
+        "local",
+        "qa",
+        "sandbox",
+        "stage",
+        "staging",
+        "test",
+        "testing",
+    }
+    if normalized_environment in allowed_non_production:
+        return
+    if normalized_environment.startswith(
+        (
+            "ci-",
+            "dev-",
+            "development-",
+            "homolog-",
+            "hml-",
+            "local-",
+            "qa-",
+            "sandbox-",
+            "stage-",
+            "staging-",
+            "test-",
+            "testing-",
+        )
+    ):
+        return
+    if normalized_environment in {"prod", "production", "prd"} or normalized_environment.startswith(
+        ("prod-", "production-", "prd-")
+    ):
+        raise IntegrationValidationError(
+            "execução mock/sandbox não permitida em ambiente produtivo",
+            code="mock_execution_not_allowed_in_production",
+            field_path="environment",
+        )
+    raise IntegrationValidationError(
+        "execução mock/sandbox permitida apenas em ambiente não produtivo conhecido",
+        code="unknown_mock_execution_environment",
+        field_path="environment",
+    )
 
 
 def _invalid_configuration_classes(

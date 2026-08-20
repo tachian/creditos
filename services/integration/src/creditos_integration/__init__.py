@@ -3,6 +3,7 @@
 from creditos_integration.application import (
     BuildIntegrationPlanCommand,
     ConfigureIntegrationClassCommand,
+    ExecuteMockIntegrationCommand,
     IntegrationCatalogApplicationService,
     ListIntegrationConfigurationsQuery,
 )
@@ -10,6 +11,7 @@ from creditos_integration.application import (
 __all__ = [
     "BuildIntegrationPlanCommand",
     "ConfigureIntegrationClassCommand",
+    "ExecuteMockIntegrationCommand",
     "IntegrationCatalogApplicationService",
     "ListIntegrationConfigurationsQuery",
 ]

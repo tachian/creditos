@@ -8,6 +8,10 @@ from creditos_integration.application.ports.audit_event_publisher import (
     IntegrationAuditEvent,
 )
 from creditos_integration.application.ports.catalog_repository import IntegrationCatalogRepository
+from creditos_integration.application.ports.mock_integration_adapter import (
+    MockIntegrationAdapter,
+    MockIntegrationAdapterRegistry,
+)
 
 __all__ = [
     "AdapterRegistry",
@@ -16,4 +20,6 @@ __all__ = [
     "InMemoryAuditEventPublisher",
     "IntegrationAuditEvent",
     "IntegrationCatalogRepository",
+    "MockIntegrationAdapter",
+    "MockIntegrationAdapterRegistry",
 ]
