@@ -74,7 +74,7 @@ development_status:
   epic-3: in-progress
   3-1-catalogo-de-classes-de-integracao-por-tenant-e-produto: done
   3-2-adapter-mock-sandbox-para-integracoes-externas: done
-  3-3-execucao-assincrona-com-fan-out-fan-in: backlog
+  3-3-execucao-assincrona-com-fan-out-fan-in: done
   3-4-resiliencia-retry-dlq-e-reprocessamento-controlado: backlog
   3-5-registro-de-custo-e-resultado-de-integracao: backlog
   3-6-contratos-e-gates-de-integracao: backlog
