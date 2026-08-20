@@ -107,7 +107,7 @@ class InMemoryMockIntegrationAdapterRegistry:
         for adapter in self._adapters.values():
             if isinstance(adapter, InMemoryMockIntegrationAdapter):
                 attempts.extend(adapter.execution_attempts)
-        return tuple(attempts)
+        return tuple(sorted(attempts, key=lambda a: a[0]))
 
     def get_adapter(self, integration_class: str, adapter_id: str) -> MockIntegrationAdapter | None:
         return self._adapters.get((integration_class, adapter_id))
