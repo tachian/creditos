@@ -276,7 +276,7 @@ def _failed_result(
     )
 
 
-def _failure_summary_for(integration_class: str) -> dict[str, object]:
+def _failure_summary_for(integration_class: str) -> dict[str, str]:
     synthetic_data_type = SyntheticDataType.MOCK_INTEGRATION_RESULT.value
     return {
         "kyc_kyb": {
