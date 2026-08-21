@@ -1,6 +1,7 @@
 from creditos_integration.domain.entities.integration_configuration import IntegrationConfiguration
 from creditos_integration.domain.entities.integration_execution import (
     IntegrationExecution,
+    IntegrationExecutionDlqRecord,
     IntegrationExecutionJob,
 )
 from creditos_integration.domain.entities.integration_plan import (
@@ -12,6 +13,7 @@ from creditos_integration.domain.entities.integration_result import IntegrationR
 __all__ = [
     "IntegrationConfiguration",
     "IntegrationExecution",
+    "IntegrationExecutionDlqRecord",
     "IntegrationExecutionJob",
     "IntegrationPlan",
     "IntegrationPlanItem",

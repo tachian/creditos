@@ -17,9 +17,11 @@ class IntegrationAuditEvent:
     trace_id: str
     schema_version: str
     occurred_at: datetime
+    dlq_id: str | None = None
+    reprocess_execution_id: str | None = None
 
-    def to_log_safe_dict(self) -> dict[str, str]:
-        return {
+    def to_log_safe_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
             "tenant_id": self.tenant_id,
             "operation": self.operation,
             "product_type": self.product_type,
@@ -31,6 +33,11 @@ class IntegrationAuditEvent:
             "schema_version": self.schema_version,
             "occurred_at": self.occurred_at.isoformat(),
         }
+        if self.dlq_id is not None:
+            payload["dlq_id"] = self.dlq_id
+        if self.reprocess_execution_id is not None:
+            payload["reprocess_execution_id"] = self.reprocess_execution_id
+        return payload
 
 
 class AuditEventPublisher(Protocol):

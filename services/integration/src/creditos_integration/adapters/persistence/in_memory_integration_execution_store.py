@@ -58,6 +58,18 @@ class InMemoryIntegrationExecutionStore:
             self._reservations.pop(key, None)
             self._condition.notify_all()
 
+    def get_by_execution_id(
+        self,
+        *,
+        tenant_id: str,
+        execution_id: str,
+    ) -> IntegrationExecution | None:
+        with self._condition:
+            for (stored_tenant_id, _), execution in self._executions.items():
+                if stored_tenant_id == tenant_id and execution.execution_id == execution_id:
+                    return execution
+        return None
+
     def release_reservation(
         self,
         *,

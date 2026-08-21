@@ -8,6 +8,8 @@ from creditos_integration.domain.value_objects.catalog import (
 from creditos_integration.domain.value_objects.execution import (
     IntegrationExecutionJobStatus,
     IntegrationExecutionStatus,
+    IntegrationFailureClass,
+    IntegrationRetryDecision,
 )
 from creditos_integration.domain.value_objects.result import (
     IntegrationResultStatus,
@@ -20,8 +22,10 @@ __all__ = [
     "IntegrationClass",
     "IntegrationExecutionJobStatus",
     "IntegrationExecutionStatus",
+    "IntegrationFailureClass",
     "IntegrationPlanStatus",
     "IntegrationRequirement",
+    "IntegrationRetryDecision",
     "IntegrationResultStatus",
     "MockIntegrationScenario",
     "ProductType",
