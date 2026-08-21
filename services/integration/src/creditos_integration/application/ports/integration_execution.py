@@ -32,7 +32,7 @@ JETSTREAM_RESILIENCE_MAPPING = MappingProxyType(
         "ack_wait_source": "integration_plan_item.timeout_ms",
         "max_deliver_source": "integration_plan_item.max_attempts",
         "backoff_source": "integration_retry_policy.backoff_ms",
-        "max_deliver_advisory": "creditos.integration.job.dlq_recorded.v1",
+        "max_deliver_advisory": "$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.{stream}.{consumer}",
         "poison_message_action": "term_and_record_dlq",
     }
 )
@@ -185,6 +185,7 @@ class IntegrationDlqStore(Protocol):
         dlq_id: str,
         idempotency_key: str,
         reprocessed_at: datetime,
+        reprocess_execution_id: str,
     ) -> IntegrationExecutionDlqRecord: ...
 
 

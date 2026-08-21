@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from creditos_integration.adapters.events import InMemoryIntegrationExecutionDispatcher
@@ -139,6 +139,22 @@ def test_invalid_result_is_classified_and_sent_to_dlq_without_raw_exception() ->
     assert dlq_records[0].failure_code == "integration_job_result_trace_mismatch"
 
 
+def test_invalid_result_contract_is_classified_and_sent_to_dlq() -> None:
+    service_bundle = _service_with_adapter(MalformedResultMockIntegrationAdapter())
+
+    execution = _start_single_class_execution(service_bundle, "resilience-key-dlq-invalid-contract")
+
+    dlq_records = service_bundle.dlq_store.list_for_execution(
+        tenant_id="tenant-bridge-001",
+        execution_id=execution.execution_id,
+    )
+    assert execution.status == "failed"
+    assert service_bundle.dispatcher.retry_schedule_count == 0
+    assert len(dlq_records) == 1
+    assert dlq_records[0].failure_class == "invalid_result"
+    assert dlq_records[0].failure_code == "integration_job_result_invalid_type"
+
+
 def test_controlled_failed_result_is_retried_and_sent_to_dlq() -> None:
     service_bundle = _service_with_adapter(
         InMemoryMockIntegrationAdapter(
@@ -254,8 +270,16 @@ def test_reprocess_is_idempotent_and_does_not_duplicate_original_results() -> No
         for log in service_bundle.service.logged_events
         if log["operation"] == "integration_execution.reprocess_requested"
     ][0]
+    assert first_reprocess.reprocess_execution_ids == (
+        reprocess_log["extra"]["reprocess_execution_id"],
+    )
     assert reprocess_log["extra"]["reprocess_execution_id"].startswith("iexec_")
     assert reprocess_log["extra"]["idempotency_hit"] is False
+    assert service_bundle.audit_publisher.events[-1].dlq_id == dlq_record.dlq_id
+    assert (
+        service_bundle.audit_publisher.events[-1].reprocess_execution_id
+        == reprocess_log["extra"]["reprocess_execution_id"]
+    )
 
 
 def test_reprocess_idempotency_key_cannot_be_reused_for_another_dlq() -> None:
@@ -338,6 +362,12 @@ def test_non_retryable_dlq_is_not_eligible_for_automatic_reprocess() -> None:
         )
 
     assert error.value.code == "integration_dlq_record_not_retryable"
+    assert (
+        service_bundle.audit_publisher.events[-1].operation
+        == "integration_execution.reprocess_requested"
+    )
+    assert service_bundle.audit_publisher.events[-1].result == "rejected"
+    assert service_bundle.audit_publisher.events[-1].dlq_id == dlq_record.dlq_id
 
 
 def test_resilience_mapping_documents_future_nats_jetstream_concepts() -> None:
@@ -345,6 +375,10 @@ def test_resilience_mapping_documents_future_nats_jetstream_concepts() -> None:
     assert JETSTREAM_RESILIENCE_MAPPING["ack_wait_source"] == "integration_plan_item.timeout_ms"
     assert (
         JETSTREAM_RESILIENCE_MAPPING["max_deliver_source"] == "integration_plan_item.max_attempts"
+    )
+    assert (
+        JETSTREAM_RESILIENCE_MAPPING["max_deliver_advisory"]
+        == "$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.{stream}.{consumer}"
     )
     assert (
         INTEGRATION_RESILIENCE_EVENT_TYPES["dlq_recorded"]
@@ -425,6 +459,7 @@ def _service_with_adapters(adapters: tuple[InMemoryMockIntegrationAdapter, ...])
     execution_store = InMemoryIntegrationExecutionStore()
     dlq_store = InMemoryIntegrationDlqStore()
     dispatcher = InMemoryIntegrationExecutionDispatcher(dlq_store=dlq_store)
+    audit_publisher = InMemoryAuditEventPublisher()
     service = IntegrationCatalogApplicationService(
         repository=InMemoryIntegrationCatalogRepository(),
         adapter_registry=InMemoryAdapterRegistry(
@@ -437,7 +472,7 @@ def _service_with_adapters(adapters: tuple[InMemoryMockIntegrationAdapter, ...])
         integration_execution_store=execution_store,
         integration_dlq_store=dlq_store,
         integration_execution_dispatcher=dispatcher,
-        audit_publisher=InMemoryAuditEventPublisher(),
+        audit_publisher=audit_publisher,
         environment="test",
         clock=lambda: _FIXED_TIME,
         configuration_id_factory=lambda seed: f"icfg_{seed}",
@@ -447,6 +482,7 @@ def _service_with_adapters(adapters: tuple[InMemoryMockIntegrationAdapter, ...])
         dispatcher=dispatcher,
         execution_store=execution_store,
         dlq_store=dlq_store,
+        audit_publisher=audit_publisher,
     )
 
 
@@ -498,11 +534,13 @@ class ServiceBundle:
         dispatcher: InMemoryIntegrationExecutionDispatcher,
         execution_store: InMemoryIntegrationExecutionStore,
         dlq_store: InMemoryIntegrationDlqStore,
+        audit_publisher: InMemoryAuditEventPublisher,
     ) -> None:
         self.service = service
         self.dispatcher = dispatcher
         self.execution_store = execution_store
         self.dlq_store = dlq_store
+        self.audit_publisher = audit_publisher
 
 
 class FlakyMockIntegrationAdapter(InMemoryMockIntegrationAdapter):
@@ -644,3 +682,21 @@ class WrongTraceMockIntegrationAdapter(InMemoryMockIntegrationAdapter):
             completed_at=result.completed_at,
             duration_ms=result.duration_ms,
         )
+
+
+class MalformedResultMockIntegrationAdapter(InMemoryMockIntegrationAdapter):
+    def __init__(self) -> None:
+        super().__init__(integration_class="kyc_kyb", adapter_id="mock-kyc-basic-v1")
+
+    def execute(
+        self,
+        item: IntegrationPlanItem,
+        *,
+        scenario: str,
+        synthetic_subject_reference: str,
+        context: ObservabilityContext,
+        started_at: datetime,
+        completed_at: datetime,
+        duration_ms: float,
+    ) -> IntegrationResult:
+        return cast(IntegrationResult, {"status": "completed"})

@@ -166,6 +166,7 @@ class IntegrationExecutionDlqRecord:
     created_at: datetime
     reprocess_count: int = 0
     last_reprocess_at: datetime | None = None
+    reprocess_execution_ids: tuple[str, ...] = ()
 
     @classmethod
     def create(
@@ -186,6 +187,7 @@ class IntegrationExecutionDlqRecord:
         created_at: datetime,
         reprocess_count: int = 0,
         last_reprocess_at: datetime | None = None,
+        reprocess_execution_ids: tuple[str, ...] = (),
         schema_version: str = "1.0",
     ) -> IntegrationExecutionDlqRecord:
         if reprocess_count < 0:
@@ -217,6 +219,10 @@ class IntegrationExecutionDlqRecord:
             created_at=created_at,
             reprocess_count=reprocess_count,
             last_reprocess_at=last_reprocess_at,
+            reprocess_execution_ids=tuple(
+                validate_execution_id(execution_id)
+                for execution_id in reprocess_execution_ids
+            ),
         )
 
     @classmethod
@@ -246,7 +252,12 @@ class IntegrationExecutionDlqRecord:
             created_at=created_at,
         )
 
-    def mark_reprocessed(self, *, reprocessed_at: datetime) -> IntegrationExecutionDlqRecord:
+    def mark_reprocessed(
+        self,
+        *,
+        reprocessed_at: datetime,
+        reprocess_execution_id: str,
+    ) -> IntegrationExecutionDlqRecord:
         return IntegrationExecutionDlqRecord.create(
             dlq_id=self.dlq_id,
             execution_id=self.execution_id,
@@ -264,6 +275,10 @@ class IntegrationExecutionDlqRecord:
             created_at=self.created_at,
             reprocess_count=self.reprocess_count + 1,
             last_reprocess_at=reprocessed_at,
+            reprocess_execution_ids=(
+                *self.reprocess_execution_ids,
+                validate_execution_id(reprocess_execution_id),
+            ),
         )
 
     @property
@@ -293,6 +308,7 @@ class IntegrationExecutionDlqRecord:
             "last_reprocess_at": self.last_reprocess_at.isoformat()
             if self.last_reprocess_at is not None
             else None,
+            "reprocess_execution_ids": self.reprocess_execution_ids,
         }
 
 

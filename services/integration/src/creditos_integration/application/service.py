@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -690,6 +691,8 @@ class IntegrationCatalogApplicationService:
         idempotency_key = ""
         plan_fingerprint = ""
         reservation_acquired = False
+        record: IntegrationExecutionDlqRecord | None = None
+        reprocess_execution_id: str | None = None
         try:
             _require_non_production_environment(self._environment)
             tenant_id = _require_trusted_tenant(context)
@@ -830,11 +833,29 @@ class IntegrationCatalogApplicationService:
                     )
             else:
                 reprocess_execution_id = existing_execution.execution_id
+            assert reprocess_execution_id is not None
             updated_record = self._integration_dlq_store.mark_reprocessed(
                 tenant_id=tenant_id,
                 dlq_id=dlq_id,
                 idempotency_key=idempotency_key,
                 reprocessed_at=self._clock(),
+                reprocess_execution_id=reprocess_execution_id,
+            )
+            self._audit_publisher.publish(
+                IntegrationAuditEvent(
+                    tenant_id=tenant_id,
+                    operation="integration_execution.reprocess_requested",
+                    product_type=updated_record.product_type,
+                    integration_class=updated_record.integration_class,
+                    adapter_id=updated_record.adapter_id,
+                    result="accepted",
+                    correlation_id=context.correlation_id,
+                    trace_id=context.trace_id,
+                    schema_version=updated_record.schema_version,
+                    occurred_at=updated_record.last_reprocess_at or self._clock(),
+                    dlq_id=updated_record.dlq_id,
+                    reprocess_execution_id=reprocess_execution_id,
+                )
             )
             self._log_operation(
                 context=context,
@@ -870,6 +891,23 @@ class IntegrationCatalogApplicationService:
                     "denial_reason": getattr(error, "code", type(error).__name__),
                 },
             )
+            with suppress(Exception):
+                self._audit_publisher.publish(
+                    IntegrationAuditEvent(
+                        tenant_id=tenant_id or "",
+                        operation="integration_execution.reprocess_requested",
+                        product_type=record.product_type if record is not None else "",
+                        integration_class=record.integration_class if record is not None else "",
+                        adapter_id=record.adapter_id if record is not None else "",
+                        result="rejected",
+                        correlation_id=context.correlation_id,
+                        trace_id=context.trace_id,
+                        schema_version=record.schema_version if record is not None else "1.0",
+                        occurred_at=self._clock(),
+                        dlq_id=dlq_id or getattr(command, "dlq_id", ""),
+                        reprocess_execution_id=reprocess_execution_id,
+                    )
+                )
             raise
 
     def list_integration_configurations(

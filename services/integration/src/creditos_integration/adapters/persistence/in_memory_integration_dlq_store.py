@@ -59,6 +59,7 @@ class InMemoryIntegrationDlqStore:
         dlq_id: str,
         idempotency_key: str,
         reprocessed_at: datetime,
+        reprocess_execution_id: str,
     ) -> IntegrationExecutionDlqRecord:
         idempotency_key = validate_idempotency_key(idempotency_key)
         key = (tenant_id, dlq_id)
@@ -80,7 +81,10 @@ class InMemoryIntegrationDlqStore:
                 )
             if existing_dlq_id == dlq_id:
                 return record
-            updated = record.mark_reprocessed(reprocessed_at=reprocessed_at)
+            updated = record.mark_reprocessed(
+                reprocessed_at=reprocessed_at,
+                reprocess_execution_id=reprocess_execution_id,
+            )
             self._records[key] = updated
             self._reprocess_keys[reprocess_key] = dlq_id
             return updated

@@ -6,6 +6,7 @@ from datetime import datetime
 from hashlib import sha256
 from threading import Lock
 from time import perf_counter
+from typing import Any
 
 from creditos_observability.context import ObservabilityContext
 
@@ -160,7 +161,7 @@ class InMemoryIntegrationExecutionDispatcher:
                         failure_code = "timed_out"
                     else:
                         result = _finalize_result(
-                            result=raw_result,
+                            result=_validated_result(raw_result),
                             completed_at=clock(),
                             duration_ms=duration_ms,
                         )
@@ -434,6 +435,16 @@ def _finalize_result(
         completed_at=completed_at,
         duration_ms=duration_ms,
     )
+
+
+def _validated_result(result: Any) -> IntegrationResult:
+    if not isinstance(result, IntegrationResult):
+        raise IntegrationValidationError(
+            "resultado de job fora do contrato esperado",
+            code="integration_job_result_invalid_type",
+            field_path="result",
+        )
+    return result
 
 
 def _validate_result(
