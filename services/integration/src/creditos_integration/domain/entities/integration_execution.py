@@ -20,10 +20,14 @@ from creditos_integration.domain.value_objects.catalog import (
 from creditos_integration.domain.value_objects.execution import (
     IntegrationExecutionJobStatus,
     IntegrationExecutionStatus,
+    IntegrationFailureClass,
     parse_execution_status,
+    parse_failure_class,
     parse_job_status,
     validate_attempt_count,
+    validate_dlq_id,
     validate_execution_id,
+    validate_failure_code,
     validate_idempotency_key,
     validate_job_id,
     validate_plan_fingerprint,
@@ -141,6 +145,154 @@ class IntegrationExecutionJob:
             "schema_version": self.schema_version,
             "correlation_id": self.correlation_id,
             "trace_id": self.trace_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class IntegrationExecutionDlqRecord:
+    dlq_id: str
+    execution_id: str
+    job_id: str
+    tenant_id: str
+    product_type: str
+    integration_class: str
+    adapter_id: str
+    failure_class: str
+    failure_code: str
+    attempt_count: int
+    schema_version: str
+    correlation_id: str
+    trace_id: str
+    created_at: datetime
+    reprocess_count: int = 0
+    last_reprocess_at: datetime | None = None
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        dlq_id: str,
+        execution_id: str,
+        job_id: str,
+        tenant_id: str,
+        product_type: str,
+        integration_class: str,
+        adapter_id: str,
+        failure_class: str,
+        failure_code: str,
+        attempt_count: int,
+        correlation_id: str,
+        trace_id: str,
+        created_at: datetime,
+        reprocess_count: int = 0,
+        last_reprocess_at: datetime | None = None,
+        schema_version: str = "1.0",
+    ) -> IntegrationExecutionDlqRecord:
+        if reprocess_count < 0:
+            raise IntegrationValidationError(
+                "contador de reprocessamento inválido",
+                code="invalid_integration_dlq_reprocess_count",
+                field_path="reprocess_count",
+            )
+        if last_reprocess_at is not None and last_reprocess_at < created_at:
+            raise IntegrationValidationError(
+                "janela temporal de reprocessamento inválida",
+                code="invalid_integration_dlq_reprocess_time_window",
+                field_path="last_reprocess_at",
+            )
+        return cls(
+            dlq_id=validate_dlq_id(dlq_id),
+            execution_id=validate_execution_id(execution_id),
+            job_id=validate_job_id(job_id),
+            tenant_id=tenant_id,
+            product_type=parse_product_type(product_type),
+            integration_class=validate_supported_mock_integration_class(integration_class),
+            adapter_id=validate_adapter_id(adapter_id),
+            failure_class=parse_failure_class(failure_class),
+            failure_code=validate_failure_code(failure_code),
+            attempt_count=validate_attempt_count(attempt_count),
+            schema_version=validate_schema_version(schema_version),
+            correlation_id=correlation_id,
+            trace_id=trace_id,
+            created_at=created_at,
+            reprocess_count=reprocess_count,
+            last_reprocess_at=last_reprocess_at,
+        )
+
+    @classmethod
+    def from_job(
+        cls,
+        *,
+        dlq_id: str,
+        job: IntegrationExecutionJob,
+        failure_class: str,
+        failure_code: str,
+        created_at: datetime,
+    ) -> IntegrationExecutionDlqRecord:
+        return cls.create(
+            dlq_id=dlq_id,
+            execution_id=job.execution_id,
+            job_id=job.job_id,
+            tenant_id=job.tenant_id,
+            product_type=job.product_type,
+            integration_class=job.integration_class,
+            adapter_id=job.adapter_id,
+            failure_class=failure_class,
+            failure_code=failure_code,
+            attempt_count=job.attempt_count,
+            schema_version=job.schema_version,
+            correlation_id=job.correlation_id,
+            trace_id=job.trace_id,
+            created_at=created_at,
+        )
+
+    def mark_reprocessed(self, *, reprocessed_at: datetime) -> IntegrationExecutionDlqRecord:
+        return IntegrationExecutionDlqRecord.create(
+            dlq_id=self.dlq_id,
+            execution_id=self.execution_id,
+            job_id=self.job_id,
+            tenant_id=self.tenant_id,
+            product_type=self.product_type,
+            integration_class=self.integration_class,
+            adapter_id=self.adapter_id,
+            failure_class=self.failure_class,
+            failure_code=self.failure_code,
+            attempt_count=self.attempt_count,
+            schema_version=self.schema_version,
+            correlation_id=self.correlation_id,
+            trace_id=self.trace_id,
+            created_at=self.created_at,
+            reprocess_count=self.reprocess_count + 1,
+            last_reprocess_at=reprocessed_at,
+        )
+
+    @property
+    def is_retryable_failure(self) -> bool:
+        return self.failure_class in {
+            IntegrationFailureClass.RECOVERABLE.value,
+            IntegrationFailureClass.TIMEOUT.value,
+        }
+
+    def to_log_safe_dict(self) -> dict[str, object]:
+        return {
+            "dlq_id": self.dlq_id,
+            "execution_id": self.execution_id,
+            "job_id": self.job_id,
+            "tenant_id": self.tenant_id,
+            "product_type": self.product_type,
+            "integration_class": self.integration_class,
+            "adapter_id": self.adapter_id,
+            "failure_class": self.failure_class,
+            "failure_code": self.failure_code,
+            "attempt_count": self.attempt_count,
+            "schema_version": self.schema_version,
+            "correlation_id": self.correlation_id,
+            "trace_id": self.trace_id,
+            "created_at": self.created_at.isoformat(),
+            "reprocess_count": self.reprocess_count,
+            "last_reprocess_at": self.last_reprocess_at.isoformat()
+            if self.last_reprocess_at is not None
+            else None,
         }
 
 

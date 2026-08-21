@@ -20,6 +20,7 @@ from creditos_integration.application.ports.audit_event_publisher import (
 )
 from creditos_integration.application.ports.catalog_repository import IntegrationCatalogRepository
 from creditos_integration.application.ports.integration_execution import (
+    IntegrationDlqStore,
     IntegrationExecutionDispatcher,
     IntegrationExecutionEvent,
     IntegrationExecutionJobRequest,
@@ -33,6 +34,7 @@ from creditos_integration.application.ports.mock_integration_adapter import (
 from creditos_integration.domain.entities import (
     IntegrationConfiguration,
     IntegrationExecution,
+    IntegrationExecutionDlqRecord,
     IntegrationPlan,
     IntegrationPlanItem,
     IntegrationResult,
@@ -43,7 +45,11 @@ from creditos_integration.domain.value_objects.catalog import (
     parse_integration_class,
     parse_product_type,
 )
-from creditos_integration.domain.value_objects.execution import validate_idempotency_key
+from creditos_integration.domain.value_objects.execution import (
+    validate_dlq_id,
+    validate_failure_code,
+    validate_idempotency_key,
+)
 from creditos_integration.domain.value_objects.result import (
     MockIntegrationScenario,
     parse_mock_scenario,
@@ -102,6 +108,14 @@ class StartIntegrationExecutionCommand:
     scopes: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class ReprocessIntegrationDlqCommand:
+    dlq_id: str
+    idempotency_key: str
+    reason_code: str = "operator_requested"
+    scopes: tuple[str, ...] = ()
+
+
 class IntegrationCatalogApplicationService:
     def __init__(
         self,
@@ -114,6 +128,7 @@ class IntegrationCatalogApplicationService:
         clock: Callable[[], datetime] | None = None,
         configuration_id_factory: Callable[[str], str] | None = None,
         integration_execution_store: IntegrationExecutionStore | None = None,
+        integration_dlq_store: IntegrationDlqStore | None = None,
         integration_execution_dispatcher: IntegrationExecutionDispatcher | None = None,
         integration_execution_result_publisher: IntegrationExecutionResultPublisher | None = None,
         execution_id_factory: Callable[[str], str] | None = None,
@@ -125,6 +140,7 @@ class IntegrationCatalogApplicationService:
         self._environment = environment
         self._mock_adapter_registry = mock_adapter_registry
         self._integration_execution_store = integration_execution_store
+        self._integration_dlq_store = integration_dlq_store
         self._integration_execution_dispatcher = integration_execution_dispatcher
         self._integration_execution_result_publisher = integration_execution_result_publisher
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -485,6 +501,12 @@ class IntegrationCatalogApplicationService:
                     code="integration_execution_store_not_configured",
                     field_path="integration_execution_store",
                 )
+            if self._integration_dlq_store is None:
+                raise IntegrationValidationError(
+                    "store de DLQ de integração não configurado",
+                    code="integration_dlq_store_not_configured",
+                    field_path="integration_dlq_store",
+                )
             existing_execution = self._integration_execution_store.reserve_or_get(
                 tenant_id=tenant_id,
                 idempotency_key=idempotency_key,
@@ -584,6 +606,24 @@ class IntegrationCatalogApplicationService:
                 context=context,
                 clock=self._clock,
             )
+            for retry_schedule in dispatch_result.retry_schedules:
+                self._log_operation(
+                    context=context,
+                    operation="integration_execution.retry_scheduled",
+                    status="accepted",
+                    duration_ms=0.0,
+                    payload=command,
+                    extra=retry_schedule.to_log_safe_dict(),
+                )
+            for dlq_record in dispatch_result.dlq_records:
+                self._log_operation(
+                    context=context,
+                    operation="integration_execution.dlq_recorded",
+                    status="accepted",
+                    duration_ms=0.0,
+                    payload=command,
+                    extra=dlq_record.to_log_safe_dict(),
+                )
             execution = IntegrationExecution.create(
                 execution_id=execution_id,
                 tenant_id=tenant_id,
@@ -635,6 +675,200 @@ class IntegrationCatalogApplicationService:
                     tenant_id_present=_tenant_id_present(tenant_id),
                     denial_reason=getattr(error, "code", type(error).__name__),
                 ),
+            )
+            raise
+
+    def reprocess_integration_dlq(
+        self,
+        command: ReprocessIntegrationDlqCommand,
+        *,
+        context: ObservabilityContext,
+    ) -> IntegrationExecutionDlqRecord:
+        started_at = perf_counter()
+        tenant_id = context.tenant_id
+        dlq_id = ""
+        idempotency_key = ""
+        plan_fingerprint = ""
+        reservation_acquired = False
+        try:
+            _require_non_production_environment(self._environment)
+            tenant_id = _require_trusted_tenant(context)
+            _require_scope(command.scopes, "integration_execution:reprocess")
+            dlq_id = validate_dlq_id(command.dlq_id)
+            idempotency_key = validate_idempotency_key(command.idempotency_key)
+            reason_code = validate_failure_code(command.reason_code)
+            if self._integration_dlq_store is None:
+                raise IntegrationValidationError(
+                    "store de DLQ de integração não configurado",
+                    code="integration_dlq_store_not_configured",
+                    field_path="integration_dlq_store",
+                )
+            if self._integration_execution_store is None:
+                raise IntegrationValidationError(
+                    "store de execução de integração não configurado",
+                    code="integration_execution_store_not_configured",
+                    field_path="integration_execution_store",
+                )
+            if self._mock_adapter_registry is None:
+                raise IntegrationValidationError(
+                    "registry de adapters mock/sandbox não configurado",
+                    code="mock_adapter_registry_not_configured",
+                    field_path="mock_adapter_registry",
+                )
+            if self._integration_execution_dispatcher is None:
+                raise IntegrationValidationError(
+                    "dispatcher de execução de integração não configurado",
+                    code="integration_execution_dispatcher_not_configured",
+                    field_path="integration_execution_dispatcher",
+                )
+            record = self._integration_dlq_store.get(tenant_id=tenant_id, dlq_id=dlq_id)
+            if record is None:
+                raise IntegrationValidationError(
+                    "registro de DLQ não encontrado",
+                    code="integration_dlq_record_not_found",
+                    field_path="dlq_id",
+                )
+            if not record.is_retryable_failure:
+                raise IntegrationValidationError(
+                    "registro de DLQ não elegível para reprocessamento automático",
+                    code="integration_dlq_record_not_retryable",
+                    field_path="dlq_id",
+                )
+            execution = self._integration_execution_store.get_by_execution_id(
+                tenant_id=tenant_id,
+                execution_id=record.execution_id,
+            )
+            if execution is None:
+                raise IntegrationValidationError(
+                    "execução original da DLQ não encontrada",
+                    code="integration_execution_not_found",
+                    field_path="dlq_id",
+                )
+            job = next((job for job in execution.jobs if job.job_id == record.job_id), None)
+            if job is None:
+                raise IntegrationValidationError(
+                    "job original da DLQ não encontrado",
+                    code="integration_dlq_job_not_found",
+                    field_path="dlq_id",
+                )
+            adapter = self._mock_adapter_registry.get_adapter(job.integration_class, job.adapter_id)
+            if adapter is None:
+                raise IntegrationValidationError(
+                    "adapter mock/sandbox não registrado para reprocessamento",
+                    code="mock_adapter_not_registered",
+                    field_path="adapter_id",
+                )
+            plan_fingerprint = _reprocess_plan_fingerprint(
+                tenant_id=tenant_id,
+                dlq_id=record.dlq_id,
+                execution_id=record.execution_id,
+                job_id=record.job_id,
+            )
+            existing_execution = self._integration_execution_store.reserve_or_get(
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
+                plan_fingerprint=plan_fingerprint,
+            )
+            if existing_execution is None:
+                reservation_acquired = True
+                reprocess_execution_id = self._execution_id_factory(
+                    "|".join((tenant_id, dlq_id, idempotency_key, plan_fingerprint))
+                )
+                reprocess_started_at = self._clock()
+                job_request = IntegrationExecutionJobRequest(
+                    job_id=self._job_id_factory(
+                        "|".join((reprocess_execution_id, record.job_id, idempotency_key))
+                    ),
+                    item=_plan_item_from_job(job),
+                    scenario=MockIntegrationScenario.SYNTHETIC_SUCCESS.value,
+                    adapter=adapter,
+                    event_type="creditos.integration.job.reprocess_requested.v1",
+                )
+                dispatch_result = self._integration_execution_dispatcher.dispatch(
+                    execution_id=reprocess_execution_id,
+                    job_requests=(job_request,),
+                    synthetic_subject_reference="synthetic-reprocess-without-pii",
+                    context=context,
+                    clock=self._clock,
+                )
+                for retry_schedule in dispatch_result.retry_schedules:
+                    self._log_operation(
+                        context=context,
+                        operation="integration_execution.retry_scheduled",
+                        status="accepted",
+                        duration_ms=0.0,
+                        payload=command,
+                        extra=retry_schedule.to_log_safe_dict(),
+                    )
+                for dlq_record in dispatch_result.dlq_records:
+                    self._log_operation(
+                        context=context,
+                        operation="integration_execution.dlq_recorded",
+                        status="accepted",
+                        duration_ms=0.0,
+                        payload=command,
+                        extra=dlq_record.to_log_safe_dict(),
+                    )
+                reprocess_execution = IntegrationExecution.create(
+                    execution_id=reprocess_execution_id,
+                    tenant_id=tenant_id,
+                    product_type=record.product_type,
+                    plan_fingerprint=plan_fingerprint,
+                    idempotency_key=idempotency_key,
+                    jobs=dispatch_result.jobs,
+                    results=dispatch_result.results,
+                    correlation_id=context.correlation_id,
+                    trace_id=context.trace_id,
+                    started_at=reprocess_started_at,
+                    completed_at=self._clock(),
+                    duration_ms=_duration_ms(started_at),
+                )
+                self._integration_execution_store.save(reprocess_execution)
+                if self._integration_execution_result_publisher is not None:
+                    self._integration_execution_result_publisher.publish(
+                        _integration_execution_event(reprocess_execution)
+                    )
+            else:
+                reprocess_execution_id = existing_execution.execution_id
+            updated_record = self._integration_dlq_store.mark_reprocessed(
+                tenant_id=tenant_id,
+                dlq_id=dlq_id,
+                idempotency_key=idempotency_key,
+                reprocessed_at=self._clock(),
+            )
+            self._log_operation(
+                context=context,
+                operation="integration_execution.reprocess_requested",
+                status="accepted",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                extra=updated_record.to_log_safe_dict()
+                | {
+                    "reason_code": reason_code,
+                    "reprocess_execution_id": reprocess_execution_id,
+                    "idempotency_hit": existing_execution is not None,
+                },
+            )
+            return updated_record
+        except Exception as error:
+            if reservation_acquired and self._integration_execution_store is not None:
+                self._integration_execution_store.release_reservation(
+                    tenant_id=tenant_id or "",
+                    idempotency_key=idempotency_key,
+                    plan_fingerprint=plan_fingerprint,
+                )
+            self._log_operation(
+                context=context,
+                operation="integration_execution.reprocess_requested",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                error_type=type(error).__name__,
+                extra={
+                    "tenant_id_present": _tenant_id_present(tenant_id),
+                    "dlq_id": dlq_id or getattr(command, "dlq_id", ""),
+                    "denial_reason": getattr(error, "code", type(error).__name__),
+                },
             )
             raise
 
@@ -955,12 +1189,47 @@ def _integration_plan_fingerprint(
     return f"iplan_{sha256(encoded).hexdigest()}"
 
 
+def _reprocess_plan_fingerprint(
+    *,
+    tenant_id: str,
+    dlq_id: str,
+    execution_id: str,
+    job_id: str,
+) -> str:
+    safe_plan = {
+        "operation": "integration_dlq_reprocess",
+        "tenant_id": tenant_id,
+        "dlq_id": dlq_id,
+        "execution_id": execution_id,
+        "job_id": job_id,
+        "schema_version": "1.0",
+    }
+    encoded = dumps(safe_plan, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"iplan_{sha256(encoded).hexdigest()}"
+
+
 def _plan_item_fingerprint_key(item: IntegrationPlanItem) -> tuple[str, str, str, str]:
     return (
         item.integration_class,
         item.requirement,
         item.fallback_strategy,
         item.adapter_id,
+    )
+
+
+def _plan_item_from_job(job) -> IntegrationPlanItem:
+    return IntegrationPlanItem(
+        tenant_id=job.tenant_id,
+        product_type=job.product_type,
+        integration_class=job.integration_class,
+        adapter_id=job.adapter_id,
+        requirement=job.requirement,
+        timeout_ms=job.timeout_ms,
+        max_attempts=job.max_attempts,
+        max_concurrency=job.max_concurrency,
+        estimated_cost_units=0,
+        fallback_strategy=job.fallback_strategy,
+        configuration_id=job.configuration_id,
     )
 
 

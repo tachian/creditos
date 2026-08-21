@@ -6,3 +6,6 @@
 
 - Confirmar branch protection/required checks no GitHub como controle operacional fora do repositório. Descrição: a story valida comandos bloqueantes no CI versionado, mas a obrigatoriedade do check para merge depende de configuração do repositório/ambiente GitHub.
 - Criar teste de bloqueio antes de caso de uso sensível real quando o primeiro fluxo de negócio consumir o gate do Epic 1. Descrição: nesta story o Identity & Tenant expõe o gate; a prova ponta a ponta deve ocorrer quando houver uma operação de negócio protegida além do próprio serviço de autorização.
+## Deferred from: code review of 3-4-resiliencia-retry-dlq-e-reprocessamento-controlado (2026-08-21)
+
+- Timeout com cancelamento/deadline real de adapter travado: o dispatcher in-memory mede timeout após retorno do adapter; implementação robusta exige worker com deadline cooperativo, cancelamento real ou isolamento de execução compatível com NATS/worker durável.

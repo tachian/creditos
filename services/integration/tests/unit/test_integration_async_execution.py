@@ -13,6 +13,7 @@ from creditos_integration.adapters.external import (
 )
 from creditos_integration.adapters.persistence import (
     InMemoryIntegrationCatalogRepository,
+    InMemoryIntegrationDlqStore,
     InMemoryIntegrationExecutionStore,
 )
 from creditos_integration.application.ports.adapter_registry import InMemoryAdapterRegistry
@@ -580,12 +581,15 @@ def _service(
     result_publisher: CapturingIntegrationExecutionResultPublisher | None = None,
     environment: str = "test",
 ) -> IntegrationCatalogApplicationService:
+    dlq_store = InMemoryIntegrationDlqStore()
+    dispatcher._dlq_store = dlq_store
     return IntegrationCatalogApplicationService(
         repository=repository or InMemoryIntegrationCatalogRepository(),
         adapter_registry=adapter_registry or InMemoryAdapterRegistry(_allowed_adapters()),
         mock_adapter_registry=mock_adapter_registry
         or InMemoryMockIntegrationAdapterRegistry.for_mvp_defaults(),
         integration_execution_store=execution_store or InMemoryIntegrationExecutionStore(),
+        integration_dlq_store=dlq_store,
         integration_execution_dispatcher=dispatcher,
         integration_execution_result_publisher=result_publisher,
         audit_publisher=InMemoryAuditEventPublisher(),

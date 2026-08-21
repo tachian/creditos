@@ -33,7 +33,19 @@ integrações externas.
 - Idempotência por tenant, `idempotency_key` e fingerprint seguro do plano.
 - Logs estruturados minimizados para execução, job despachado, reutilização idempotente e fan-in.
 
+## Escopo da Story 3.4
+
+- Retry local/testável para falhas recuperáveis e timeouts, respeitando `max_attempts`.
+- Backoff e jitter determinísticos, sem `sleep` real entre tentativas de retry.
+- Classificação controlada de falhas: `recoverable`, `non_recoverable`, `timeout` e `invalid_result`.
+- DLQ canônica in-memory, minimizada, append-like e sem payload proprietário.
+- Reprocessamento controlado por `dlq_id`, `idempotency_key`, tenant confiável e escopo
+  `integration_execution:reprocess`.
+- Logs estruturados seguros para `integration_execution.retry_scheduled`,
+  `integration_execution.dlq_recorded` e `integration_execution.reprocess_requested`.
+- Conceitos compatíveis com evolução futura para NATS JetStream, sem acoplar domínio ou testes a NATS.
+
 ## Fora de Escopo Atual
 
-Esta fase não executa fornecedor real, NATS JetStream real, retry/DLQ, replay,
+Esta fase não executa fornecedor real, NATS JetStream real, replay durável,
 banco real, migration, transactional outbox/inbox real, AsyncAPI final ou gRPC real.
