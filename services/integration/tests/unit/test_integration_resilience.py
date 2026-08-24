@@ -21,6 +21,7 @@ from creditos_integration.application.ports.audit_event_publisher import InMemor
 from creditos_integration.application.ports.integration_execution import (
     INTEGRATION_RESILIENCE_EVENT_TYPES,
     JETSTREAM_RESILIENCE_MAPPING,
+    IntegrationExecutionEvent,
 )
 from creditos_integration.application.service import (
     BuildIntegrationPlanCommand,
@@ -82,6 +83,12 @@ def test_recoverable_failure_exceeding_max_attempts_creates_canonical_dlq() -> N
     assert dlq_records[0].failure_code == "adapter_error"
     assert dlq_records[0].attempt_count == 2
     assert _only_log(service_bundle.service, "integration_execution.dlq_recorded")
+    cost_log = _only_log(service_bundle.service, "integration_execution.cost_recorded")
+    assert cost_log["extra"]["total_estimated_cost_units"] == 12
+    assert cost_log["extra"]["total_actual_cost_units"] == 24
+    assert cost_log["extra"]["records"][0]["call_count"] == 2
+    assert cost_log["extra"]["records"][0]["attempt_count"] == 2
+    assert cost_log["extra"]["records"][0]["result_status"] == "failed"
 
 
 def test_non_recoverable_failure_goes_to_dlq_without_retry_extra() -> None:
@@ -280,6 +287,32 @@ def test_reprocess_is_idempotent_and_does_not_duplicate_original_results() -> No
         service_bundle.audit_publisher.events[-1].reprocess_execution_id
         == reprocess_log["extra"]["reprocess_execution_id"]
     )
+
+
+def test_reprocess_marks_dlq_before_publishing_cost_projection() -> None:
+    publisher = ReprocessMarkingAssertingPublisher()
+    service_bundle = _service_with_adapter(
+        RaisingMockIntegrationAdapter(),
+        result_publisher=publisher,
+    )
+    publisher.dlq_store = service_bundle.dlq_store
+    execution = _start_single_class_execution(service_bundle, "resilience-key-reprocess-publish")
+    dlq_record = service_bundle.dlq_store.list_for_execution(
+        tenant_id="tenant-bridge-001",
+        execution_id=execution.execution_id,
+    )[0]
+    publisher.expected_dlq_id = dlq_record.dlq_id
+
+    service_bundle.service.reprocess_integration_dlq(
+        ReprocessIntegrationDlqCommand(
+            dlq_id=dlq_record.dlq_id,
+            idempotency_key="idempotency-key-reprocess-publish",
+            scopes=("integration_execution:reprocess",),
+        ),
+        context=_context(),
+    )
+
+    assert publisher.checked_reprocess_publish is True
 
 
 def test_reprocess_rejects_new_key_after_terminal_reprocess() -> None:
@@ -593,11 +626,19 @@ def _start_single_class_execution(
     )
 
 
-def _service_with_adapter(adapter: InMemoryMockIntegrationAdapter) -> ServiceBundle:
-    return _service_with_adapters((adapter,))
+def _service_with_adapter(
+    adapter: InMemoryMockIntegrationAdapter,
+    *,
+    result_publisher: Any | None = None,
+) -> ServiceBundle:
+    return _service_with_adapters((adapter,), result_publisher=result_publisher)
 
 
-def _service_with_adapters(adapters: tuple[InMemoryMockIntegrationAdapter, ...]) -> ServiceBundle:
+def _service_with_adapters(
+    adapters: tuple[InMemoryMockIntegrationAdapter, ...],
+    *,
+    result_publisher: Any | None = None,
+) -> ServiceBundle:
     execution_store = InMemoryIntegrationExecutionStore()
     dlq_store = InMemoryIntegrationDlqStore()
     dispatcher = InMemoryIntegrationExecutionDispatcher(dlq_store=dlq_store)
@@ -614,6 +655,7 @@ def _service_with_adapters(adapters: tuple[InMemoryMockIntegrationAdapter, ...])
         integration_execution_store=execution_store,
         integration_dlq_store=dlq_store,
         integration_execution_dispatcher=dispatcher,
+        integration_execution_result_publisher=result_publisher,
         audit_publisher=audit_publisher,
         environment="test",
         clock=lambda: _FIXED_TIME,
@@ -683,6 +725,24 @@ class ServiceBundle:
         self.execution_store = execution_store
         self.dlq_store = dlq_store
         self.audit_publisher = audit_publisher
+
+
+class ReprocessMarkingAssertingPublisher:
+    def __init__(self) -> None:
+        self.dlq_store: InMemoryIntegrationDlqStore | None = None
+        self.expected_dlq_id: str | None = None
+        self.checked_reprocess_publish = False
+
+    def publish(self, event: IntegrationExecutionEvent) -> None:
+        if self.dlq_store is None or self.expected_dlq_id is None:
+            return
+        record = self.dlq_store.get(
+            tenant_id=event.tenant_id,
+            dlq_id=self.expected_dlq_id,
+        )
+        if record is not None and event.data["execution_id"] in record.reprocess_execution_ids:
+            assert record.reprocess_count > 0
+            self.checked_reprocess_publish = True
 
 
 class FlakyMockIntegrationAdapter(InMemoryMockIntegrationAdapter):

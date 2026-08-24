@@ -13,6 +13,7 @@ from creditos_integration.domain.value_objects.catalog import (
     parse_requirement,
     validate_adapter_id,
     validate_configuration_id,
+    validate_estimated_cost_units,
     validate_max_attempts,
     validate_max_concurrency,
     validate_timeout_ms,
@@ -25,16 +26,20 @@ from creditos_integration.domain.value_objects.execution import (
     parse_failure_class,
     parse_job_status,
     validate_attempt_count,
+    validate_call_count,
     validate_dlq_id,
     validate_execution_id,
     validate_failure_code,
     validate_idempotency_key,
+    validate_integration_cost_units,
     validate_job_id,
     validate_plan_fingerprint,
+    validate_provider_id,
     validate_schema_version,
 )
 from creditos_integration.domain.value_objects.result import (
     IntegrationResultStatus,
+    parse_result_status,
     validate_supported_mock_integration_class,
 )
 
@@ -52,6 +57,7 @@ class IntegrationExecutionJob:
     timeout_ms: int
     max_attempts: int
     max_concurrency: int
+    estimated_cost_units: int
     fallback_strategy: str
     status: str
     attempt_count: int
@@ -59,6 +65,7 @@ class IntegrationExecutionJob:
     schema_version: str
     correlation_id: str
     trace_id: str
+    provider_id: str | None = None
 
     @classmethod
     def create(
@@ -86,6 +93,7 @@ class IntegrationExecutionJob:
             timeout_ms=validate_timeout_ms(item.timeout_ms),
             max_attempts=validate_max_attempts(item.max_attempts),
             max_concurrency=validate_max_concurrency(item.max_concurrency),
+            estimated_cost_units=validate_estimated_cost_units(item.estimated_cost_units),
             fallback_strategy=parse_fallback_strategy(item.fallback_strategy),
             status=parse_job_status(status),
             attempt_count=validate_attempt_count(attempt_count),
@@ -93,6 +101,7 @@ class IntegrationExecutionJob:
             schema_version=validate_schema_version(schema_version),
             correlation_id=correlation_id,
             trace_id=trace_id,
+            provider_id=validate_provider_id(item.provider_id),
         )
 
     def with_result(
@@ -113,9 +122,10 @@ class IntegrationExecutionJob:
                 timeout_ms=self.timeout_ms,
                 max_attempts=self.max_attempts,
                 max_concurrency=self.max_concurrency,
-                estimated_cost_units=0,
+                estimated_cost_units=self.estimated_cost_units,
                 fallback_strategy=self.fallback_strategy,
                 configuration_id=self.configuration_id,
+                provider_id=self.provider_id,
             ),
             status=status or _job_status_from_result(result),
             attempt_count=self.attempt_count,
@@ -138,10 +148,134 @@ class IntegrationExecutionJob:
             "timeout_ms": self.timeout_ms,
             "max_attempts": self.max_attempts,
             "max_concurrency": self.max_concurrency,
+            "estimated_cost_units": self.estimated_cost_units,
             "fallback_strategy": self.fallback_strategy,
             "status": self.status,
             "attempt_count": self.attempt_count,
             "result_id": self.result_id,
+            "schema_version": self.schema_version,
+            "correlation_id": self.correlation_id,
+            "trace_id": self.trace_id,
+            "provider_id": self.provider_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class IntegrationExecutionCostRecord:
+    execution_id: str
+    job_id: str
+    tenant_id: str
+    product_type: str
+    integration_class: str
+    adapter_id: str
+    provider_id: str | None
+    result_status: str
+    call_count: int
+    attempt_count: int
+    fallback_strategy: str
+    estimated_cost_units: int
+    actual_cost_units: int
+    schema_version: str
+    correlation_id: str
+    trace_id: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        execution_id: str,
+        job_id: str,
+        tenant_id: str,
+        product_type: str,
+        integration_class: str,
+        adapter_id: str,
+        provider_id: str | None,
+        result_status: str,
+        call_count: int,
+        attempt_count: int,
+        fallback_strategy: str,
+        estimated_cost_units: int,
+        actual_cost_units: int,
+        correlation_id: str,
+        trace_id: str,
+        schema_version: str = "1.0",
+    ) -> IntegrationExecutionCostRecord:
+        return cls(
+            execution_id=validate_execution_id(execution_id),
+            job_id=validate_job_id(job_id),
+            tenant_id=tenant_id,
+            product_type=parse_product_type(product_type),
+            integration_class=validate_supported_mock_integration_class(integration_class),
+            adapter_id=validate_adapter_id(adapter_id),
+            provider_id=validate_provider_id(provider_id),
+            result_status=parse_result_status(result_status),
+            call_count=validate_call_count(call_count),
+            attempt_count=validate_attempt_count(attempt_count),
+            fallback_strategy=parse_fallback_strategy(fallback_strategy),
+            estimated_cost_units=validate_integration_cost_units(
+                estimated_cost_units,
+                field_path="estimated_cost_units",
+            ),
+            actual_cost_units=validate_integration_cost_units(
+                actual_cost_units,
+                field_path="actual_cost_units",
+            ),
+            schema_version=validate_schema_version(schema_version),
+            correlation_id=correlation_id,
+            trace_id=trace_id,
+        )
+
+    @classmethod
+    def from_job_result(
+        cls,
+        *,
+        job: IntegrationExecutionJob,
+        result: IntegrationResult,
+        provider_id: str | None = None,
+        call_count: int | None = None,
+        actual_cost_units: int | None = None,
+    ) -> IntegrationExecutionCostRecord:
+        _validate_cost_record_boundaries(job=job, result=result)
+        effective_call_count = job.attempt_count if call_count is None else call_count
+        effective_actual_cost_units = (
+            job.estimated_cost_units * effective_call_count
+            if actual_cost_units is None
+            else actual_cost_units
+        )
+        return cls.create(
+            execution_id=job.execution_id,
+            job_id=job.job_id,
+            tenant_id=job.tenant_id,
+            product_type=job.product_type,
+            integration_class=job.integration_class,
+            adapter_id=job.adapter_id,
+            provider_id=job.provider_id if provider_id is None else provider_id,
+            result_status=result.status,
+            call_count=effective_call_count,
+            attempt_count=job.attempt_count,
+            fallback_strategy=job.fallback_strategy,
+            estimated_cost_units=job.estimated_cost_units,
+            actual_cost_units=effective_actual_cost_units,
+            schema_version=job.schema_version,
+            correlation_id=job.correlation_id,
+            trace_id=job.trace_id,
+        )
+
+    def to_log_safe_dict(self) -> dict[str, object]:
+        return {
+            "execution_id": self.execution_id,
+            "job_id": self.job_id,
+            "tenant_id": self.tenant_id,
+            "product_type": self.product_type,
+            "integration_class": self.integration_class,
+            "adapter_id": self.adapter_id,
+            "provider_id": self.provider_id,
+            "result_status": self.result_status,
+            "call_count": self.call_count,
+            "attempt_count": self.attempt_count,
+            "fallback_strategy": self.fallback_strategy,
+            "estimated_cost_units": self.estimated_cost_units,
+            "actual_cost_units": self.actual_cost_units,
             "schema_version": self.schema_version,
             "correlation_id": self.correlation_id,
             "trace_id": self.trace_id,
@@ -485,6 +619,49 @@ def _job_status_from_result(result: IntegrationResult) -> str:
     if result.status == IntegrationResultStatus.NOT_FOUND.value:
         return IntegrationExecutionJobStatus.MISSING.value
     return IntegrationExecutionJobStatus.FAILED.value
+
+
+def _validate_cost_record_boundaries(
+    *,
+    job: IntegrationExecutionJob,
+    result: IntegrationResult,
+) -> None:
+    if job.result_id != result.result_id:
+        raise IntegrationValidationError(
+            "registro de custo referencia resultado divergente do job",
+            code="cross_result_integration_cost_record",
+            field_path="result.result_id",
+        )
+    if result.tenant_id != job.tenant_id:
+        raise IntegrationValidationError(
+            "registro de custo referencia resultado de outro tenant",
+            code="cross_tenant_integration_cost_record",
+            field_path="result.tenant_id",
+        )
+    if result.product_type != job.product_type:
+        raise IntegrationValidationError(
+            "registro de custo referencia resultado de outro produto",
+            code="cross_product_integration_cost_record",
+            field_path="result.product_type",
+        )
+    if result.integration_class != job.integration_class:
+        raise IntegrationValidationError(
+            "registro de custo referencia resultado de outra classe",
+            code="cross_class_integration_cost_record",
+            field_path="result.integration_class",
+        )
+    if result.adapter_id != job.adapter_id:
+        raise IntegrationValidationError(
+            "registro de custo referencia resultado de outro adapter",
+            code="cross_adapter_integration_cost_record",
+            field_path="result.adapter_id",
+        )
+    if result.correlation_id != job.correlation_id or result.trace_id != job.trace_id:
+        raise IntegrationValidationError(
+            "registro de custo referencia resultado com rastreabilidade divergente",
+            code="cross_context_integration_cost_record",
+            field_path="result.trace_context",
+        )
 
 
 def _execution_status_from_jobs(jobs: tuple[IntegrationExecutionJob, ...]) -> str:

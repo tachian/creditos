@@ -10,6 +10,9 @@ from creditos_integration.domain.value_objects.execution import (
     IntegrationExecutionStatus,
     IntegrationFailureClass,
     IntegrationRetryDecision,
+    validate_call_count,
+    validate_integration_cost_units,
+    validate_provider_id,
 )
 from creditos_integration.domain.value_objects.result import (
     IntegrationResultStatus,
@@ -30,4 +33,7 @@ __all__ = [
     "MockIntegrationScenario",
     "ProductType",
     "SyntheticDataType",
+    "validate_call_count",
+    "validate_integration_cost_units",
+    "validate_provider_id",
 ]

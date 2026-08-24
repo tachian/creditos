@@ -9,3 +9,7 @@
 ## Deferred from: code review of 3-4-resiliencia-retry-dlq-e-reprocessamento-controlado (2026-08-21)
 
 - Timeout com cancelamento/deadline real de adapter travado: o dispatcher in-memory mede timeout após retorno do adapter; implementação robusta exige worker com deadline cooperativo, cancelamento real ou isolamento de execução compatível com NATS/worker durável.
+
+## Deferred from: code review of 3-5-registro-de-custo-e-resultado-de-integracao (2026-08-24)
+
+- Durabilidade transacional de projeção/outbox para custo e resultado: a story prepara projeção minimizada local/testável, mas a garantia de entrega durável para Reporting depende de outbox/inbox, broker real ou persistência transacional futura, explicitamente fora do escopo desta story.

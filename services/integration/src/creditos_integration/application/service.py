@@ -35,6 +35,7 @@ from creditos_integration.application.ports.mock_integration_adapter import (
 from creditos_integration.domain.entities import (
     IntegrationConfiguration,
     IntegrationExecution,
+    IntegrationExecutionCostRecord,
     IntegrationExecutionDlqRecord,
     IntegrationPlan,
     IntegrationPlanItem,
@@ -76,6 +77,7 @@ class ConfigureIntegrationClassCommand:
     max_concurrency: int
     estimated_cost_units: int
     fallback_strategy: str
+    provider_id: str | None = None
     enabled: bool = True
     scopes: tuple[str, ...] = ()
 
@@ -202,6 +204,7 @@ class IntegrationCatalogApplicationService:
                 created_at=previous_configuration.created_at
                 if previous_configuration is not None
                 else None,
+                provider_id=command.provider_id,
             )
             operation = (
                 "integration_catalog.update_configuration"
@@ -640,10 +643,28 @@ class IntegrationCatalogApplicationService:
                 completed_at=self._clock(),
                 duration_ms=_duration_ms(started_at),
             )
+            cost_records = _validate_cost_records(
+                execution=execution,
+                cost_records=dispatch_result.cost_records,
+            )
             self._integration_execution_store.save(execution)
+            self._log_operation(
+                context=context,
+                operation="integration_execution.cost_recorded",
+                status="accepted",
+                duration_ms=0.0,
+                payload=command,
+                extra=_cost_projection_log_extra(
+                    execution=execution,
+                    cost_records=cost_records,
+                ),
+            )
             if self._integration_execution_result_publisher is not None:
                 self._integration_execution_result_publisher.publish(
-                    _integration_execution_event(execution)
+                    _integration_execution_event(
+                        execution,
+                        cost_records=cost_records,
+                    )
                 )
             self._log_operation(
                 context=context,
@@ -839,21 +860,46 @@ class IntegrationCatalogApplicationService:
                     completed_at=self._clock(),
                     duration_ms=_duration_ms(started_at),
                 )
+                cost_records = _validate_cost_records(
+                    execution=reprocess_execution,
+                    cost_records=dispatch_result.cost_records,
+                )
                 self._integration_execution_store.save(reprocess_execution)
+                updated_record = self._integration_dlq_store.mark_reprocessed(
+                    tenant_id=tenant_id,
+                    dlq_id=dlq_id,
+                    idempotency_key=idempotency_key,
+                    reprocessed_at=self._clock(),
+                    reprocess_execution_id=reprocess_execution_id,
+                )
+                self._log_operation(
+                    context=context,
+                    operation="integration_execution.cost_recorded",
+                    status="accepted",
+                    duration_ms=0.0,
+                    payload=command,
+                    extra=_cost_projection_log_extra(
+                        execution=reprocess_execution,
+                        cost_records=cost_records,
+                    ),
+                )
                 if self._integration_execution_result_publisher is not None:
                     self._integration_execution_result_publisher.publish(
-                        _integration_execution_event(reprocess_execution)
+                        _integration_execution_event(
+                            reprocess_execution,
+                            cost_records=cost_records,
+                        )
                     )
             else:
                 reprocess_execution_id = existing_execution.execution_id
+                updated_record = self._integration_dlq_store.mark_reprocessed(
+                    tenant_id=tenant_id,
+                    dlq_id=dlq_id,
+                    idempotency_key=idempotency_key,
+                    reprocessed_at=self._clock(),
+                    reprocess_execution_id=reprocess_execution_id,
+                )
             assert reprocess_execution_id is not None
-            updated_record = self._integration_dlq_store.mark_reprocessed(
-                tenant_id=tenant_id,
-                dlq_id=dlq_id,
-                idempotency_key=idempotency_key,
-                reprocessed_at=self._clock(),
-                reprocess_execution_id=reprocess_execution_id,
-            )
             self._audit_publisher.publish(
                 IntegrationAuditEvent(
                     tenant_id=tenant_id,
@@ -1025,6 +1071,7 @@ def _configuration_log_extra(configuration: IntegrationConfiguration) -> dict[st
         "max_attempts": configuration.max_attempts,
         "max_concurrency": configuration.max_concurrency,
         "estimated_cost_units": configuration.estimated_cost_units,
+        "provider_id": configuration.provider_id,
     }
 
 
@@ -1113,6 +1160,122 @@ def _execution_log_extra(execution: IntegrationExecution) -> dict[str, object]:
         "result_statuses": tuple(result.status for result in execution.results),
         "schema_version": execution.schema_version,
     }
+
+
+def _cost_projection_log_extra(
+    *,
+    execution: IntegrationExecution,
+    cost_records: tuple[IntegrationExecutionCostRecord, ...],
+) -> dict[str, object]:
+    return {
+        "execution_id": execution.execution_id,
+        "tenant_id": execution.tenant_id,
+        "product_type": execution.product_type,
+        "execution_status": execution.status,
+        "schema_version": execution.schema_version,
+        "correlation_id": execution.correlation_id,
+        "trace_id": execution.trace_id,
+        "cost_projection_type": "creditos.integration.execution.cost_recorded.v1",
+        "cost_record_count": len(cost_records),
+        "total_estimated_cost_units": sum(record.estimated_cost_units for record in cost_records),
+        "total_actual_cost_units": sum(record.actual_cost_units for record in cost_records),
+        "records": tuple(record.to_log_safe_dict() for record in cost_records),
+    }
+
+
+def _validate_cost_records(
+    *,
+    execution: IntegrationExecution,
+    cost_records: tuple[IntegrationExecutionCostRecord, ...],
+) -> tuple[IntegrationExecutionCostRecord, ...]:
+    if len(cost_records) != len(execution.jobs):
+        raise IntegrationValidationError(
+            "projeção de custo deve conter um registro por job",
+            code="invalid_integration_cost_record_count",
+            field_path="cost_records",
+        )
+    job_by_id = {job.job_id: job for job in execution.jobs}
+    result_by_id = {result.result_id: result for result in execution.results}
+    seen_job_ids: set[str] = set()
+    for index, record in enumerate(cost_records):
+        if record.job_id in seen_job_ids:
+            raise IntegrationValidationError(
+                "projeção de custo possui job duplicado",
+                code="duplicated_integration_cost_record_job",
+                field_path=f"cost_records[{index}].job_id",
+            )
+        seen_job_ids.add(record.job_id)
+        job = job_by_id.get(record.job_id)
+        if job is None:
+            raise IntegrationValidationError(
+                "projeção de custo referencia job ausente",
+                code="orphan_integration_cost_record_job",
+                field_path=f"cost_records[{index}].job_id",
+            )
+        if record.execution_id != execution.execution_id:
+            raise IntegrationValidationError(
+                "projeção de custo referencia outra execução",
+                code="cross_execution_cost_record",
+                field_path=f"cost_records[{index}].execution_id",
+            )
+        if record.tenant_id != execution.tenant_id or record.tenant_id != job.tenant_id:
+            raise IntegrationValidationError(
+                "projeção de custo referencia outro tenant",
+                code="cross_tenant_cost_record",
+                field_path=f"cost_records[{index}].tenant_id",
+            )
+        if record.product_type != execution.product_type or record.product_type != job.product_type:
+            raise IntegrationValidationError(
+                "projeção de custo referencia outro produto",
+                code="cross_product_cost_record",
+                field_path=f"cost_records[{index}].product_type",
+            )
+        if record.integration_class != job.integration_class or record.adapter_id != job.adapter_id:
+            raise IntegrationValidationError(
+                "projeção de custo referencia outra classe ou adapter",
+                code="cross_adapter_cost_record",
+                field_path=f"cost_records[{index}].adapter_id",
+            )
+        if record.provider_id != job.provider_id:
+            raise IntegrationValidationError(
+                "projeção de custo referencia outro provider",
+                code="cross_provider_cost_record",
+                field_path=f"cost_records[{index}].provider_id",
+            )
+        if record.fallback_strategy != job.fallback_strategy:
+            raise IntegrationValidationError(
+                "projeção de custo referencia outro fallback",
+                code="cross_fallback_cost_record",
+                field_path=f"cost_records[{index}].fallback_strategy",
+            )
+        if record.estimated_cost_units != job.estimated_cost_units:
+            raise IntegrationValidationError(
+                "projeção de custo referencia custo estimado divergente",
+                code="cross_estimated_cost_record",
+                field_path=f"cost_records[{index}].estimated_cost_units",
+            )
+        if record.attempt_count != job.attempt_count:
+            raise IntegrationValidationError(
+                "projeção de custo referencia tentativas divergentes",
+                code="cross_attempt_count_cost_record",
+                field_path=f"cost_records[{index}].attempt_count",
+            )
+        if (
+            record.correlation_id != execution.correlation_id
+            or record.trace_id != execution.trace_id
+        ):
+            raise IntegrationValidationError(
+                "projeção de custo referencia rastreabilidade divergente",
+                code="cross_context_cost_record",
+                field_path=f"cost_records[{index}].trace_context",
+            )
+        if job.result_id is not None and result_by_id[job.result_id].status != record.result_status:
+            raise IntegrationValidationError(
+                "projeção de custo referencia status de resultado divergente",
+                code="cross_result_status_cost_record",
+                field_path=f"cost_records[{index}].result_status",
+            )
+    return cost_records
 
 
 def _execution_rejection_log_extra(
@@ -1230,8 +1393,10 @@ def _integration_plan_fingerprint(
                 "timeout_ms": item.timeout_ms,
                 "max_attempts": item.max_attempts,
                 "max_concurrency": item.max_concurrency,
+                "estimated_cost_units": item.estimated_cost_units,
                 "fallback_strategy": item.fallback_strategy,
                 "configuration_id": item.configuration_id,
+                "provider_id": item.provider_id,
             }
             for item in sorted(plan.items, key=_plan_item_fingerprint_key)
         ],
@@ -1329,13 +1494,18 @@ def _plan_item_from_job(job) -> IntegrationPlanItem:
         timeout_ms=job.timeout_ms,
         max_attempts=job.max_attempts,
         max_concurrency=job.max_concurrency,
-        estimated_cost_units=0,
+        estimated_cost_units=job.estimated_cost_units,
         fallback_strategy=job.fallback_strategy,
         configuration_id=job.configuration_id,
+        provider_id=job.provider_id,
     )
 
 
-def _integration_execution_event(execution: IntegrationExecution) -> IntegrationExecutionEvent:
+def _integration_execution_event(
+    execution: IntegrationExecution,
+    *,
+    cost_records: tuple[IntegrationExecutionCostRecord, ...] = (),
+) -> IntegrationExecutionEvent:
     event_id_seed = "|".join(
         (
             execution.execution_id,
@@ -1362,6 +1532,12 @@ def _integration_execution_event(execution: IntegrationExecution) -> Integration
                 "status": execution.status,
                 "job_count": len(execution.jobs),
                 "result_count": len(execution.results),
+                "cost_projection_type": "creditos.integration.execution.cost_recorded.v1",
+                "total_estimated_cost_units": sum(
+                    record.estimated_cost_units for record in cost_records
+                ),
+                "total_actual_cost_units": sum(record.actual_cost_units for record in cost_records),
+                "cost_records": tuple(record.to_log_safe_dict() for record in cost_records),
                 "schema_version": execution.schema_version,
             }
         ),

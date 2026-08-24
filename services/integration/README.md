@@ -45,6 +45,21 @@ integrações externas.
   `integration_execution.dlq_recorded` e `integration_execution.reprocess_requested`.
 - Conceitos compatíveis com evolução futura para NATS JetStream, sem acoplar domínio ou testes a NATS.
 
+## Escopo da Story 3.5
+
+- Registro canônico de custo por job de integração, usando unidades inteiras e sem `float`
+  monetário.
+- Projeção minimizada de custo e resultado no evento interno de execução, com totais por execução
+  e granularidade por tenant, produto, classe, adapter e status.
+- Custo estimado vindo do `IntegrationPlanItem.estimated_cost_units` e custo real mockado
+  determinístico por tentativas efetivamente executadas.
+- Idempotência preservada: replays retornam a execução existente sem republicar custo/projeção/log
+  de custo, e mudanças de custo no plano alteram o fingerprint.
+- Logs estruturados seguros para `integration_execution.cost_recorded`, sem payload bruto, summary,
+  headers, exceções proprietárias, documento, nome, e-mail, token ou segredo.
+- `provider_id` opcional e técnico, validado como log-safe, sem escolha de fornecedor real,
+  SDK, endpoint, credencial ou contrato comercial.
+
 ## Fora de Escopo Atual
 
 Esta fase não executa fornecedor real, NATS JetStream real, replay durável,

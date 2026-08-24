@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
@@ -18,7 +19,11 @@ from creditos_integration.adapters.persistence import (
 )
 from creditos_integration.application.ports.adapter_registry import InMemoryAdapterRegistry
 from creditos_integration.application.ports.audit_event_publisher import InMemoryAuditEventPublisher
-from creditos_integration.application.ports.integration_execution import IntegrationExecutionEvent
+from creditos_integration.application.ports.integration_execution import (
+    IntegrationExecutionDispatchResult,
+    IntegrationExecutionEvent,
+    IntegrationExecutionJobRequest,
+)
 from creditos_integration.application.service import (
     BuildIntegrationPlanCommand,
     ConfigureIntegrationClassCommand,
@@ -26,6 +31,7 @@ from creditos_integration.application.service import (
     StartIntegrationExecutionCommand,
 )
 from creditos_integration.domain.entities import (
+    IntegrationExecutionCostRecord,
     IntegrationPlan,
     IntegrationPlanItem,
     IntegrationResult,
@@ -237,6 +243,55 @@ def test_idempotency_key_conflict_rejects_different_plan_fingerprint() -> None:
             StartIntegrationExecutionCommand(
                 plan=second_plan,
                 idempotency_key="integration-key-0004",
+                scopes=("integration_execution:start",),
+            ),
+            context=_context(),
+        )
+
+    assert error.value.code == "integration_execution_idempotency_conflict"
+    assert dispatcher.dispatch_count == 1
+
+
+def test_idempotency_key_conflict_rejects_changed_plan_cost() -> None:
+    dispatcher = InMemoryIntegrationExecutionDispatcher()
+    service = _service(dispatcher=dispatcher)
+    plan = _ready_plan(service)
+    changed_cost_plan = IntegrationPlan(
+        tenant_id=plan.tenant_id,
+        product_type=plan.product_type,
+        status=plan.status,
+        items=tuple(
+            IntegrationPlanItem(
+                tenant_id=item.tenant_id,
+                product_type=item.product_type,
+                integration_class=item.integration_class,
+                adapter_id=item.adapter_id,
+                requirement=item.requirement,
+                timeout_ms=item.timeout_ms,
+                max_attempts=item.max_attempts,
+                max_concurrency=item.max_concurrency,
+                estimated_cost_units=item.estimated_cost_units + 1,
+                fallback_strategy=item.fallback_strategy,
+                configuration_id=item.configuration_id,
+            )
+            for item in plan.items
+        ),
+    )
+
+    service.start_integration_execution(
+        StartIntegrationExecutionCommand(
+            plan=plan,
+            idempotency_key="integration-key-cost-conflict",
+            scopes=("integration_execution:start",),
+        ),
+        context=_context(),
+    )
+
+    with pytest.raises(IntegrationValidationError) as error:
+        service.start_integration_execution(
+            StartIntegrationExecutionCommand(
+                plan=changed_cost_plan,
+                idempotency_key="integration-key-cost-conflict",
                 scopes=("integration_execution:start",),
             ),
             context=_context(),
@@ -511,6 +566,168 @@ def test_result_publisher_receives_internal_event_envelope() -> None:
     assert event.data["job_count"] == len(execution.jobs)
 
 
+def test_cost_projection_records_integer_units_and_minimized_event() -> None:
+    publisher = CapturingIntegrationExecutionResultPublisher()
+    service = _service(
+        dispatcher=InMemoryIntegrationExecutionDispatcher(),
+        result_publisher=publisher,
+    )
+    plan = _ready_plan(service)
+
+    execution = service.start_integration_execution(
+        StartIntegrationExecutionCommand(
+            plan=plan,
+            idempotency_key="integration-key-cost-event",
+            scopes=("integration_execution:start",),
+        ),
+        context=_context(),
+    )
+
+    assert {job.estimated_cost_units for job in execution.jobs} == {12}
+    assert len(publisher.events) == 1
+    event = publisher.events[0]
+    records = event.data["cost_records"]
+    assert event.data["cost_projection_type"] == "creditos.integration.execution.cost_recorded.v1"
+    assert event.data["total_estimated_cost_units"] == 48
+    assert event.data["total_actual_cost_units"] == 48
+    assert len(records) == 4
+    assert {
+        (
+            record["tenant_id"],
+            record["product_type"],
+            record["integration_class"],
+            record["adapter_id"],
+            record["provider_id"],
+            record["result_status"],
+            record["call_count"],
+            record["attempt_count"],
+            record["estimated_cost_units"],
+            record["actual_cost_units"],
+            record["correlation_id"],
+            record["trace_id"],
+        )
+        for record in records
+    } == {
+        (
+            "tenant-bridge-001",
+            "personal_credit",
+            item.integration_class,
+            item.adapter_id,
+            None,
+            "completed",
+            1,
+            1,
+            12,
+            12,
+            "corr-integration-001",
+            "22222222222222222222222222222222",
+        )
+        for item in plan.items
+    }
+    serialized = json.dumps(event.to_log_safe_dict(), ensure_ascii=False, sort_keys=True)
+    assert "summary" not in serialized
+    assert "synthetic_data_type" not in serialized
+
+
+def test_cost_projection_preserves_configured_provider_id() -> None:
+    publisher = CapturingIntegrationExecutionResultPublisher()
+    service = _service(
+        dispatcher=InMemoryIntegrationExecutionDispatcher(),
+        result_publisher=publisher,
+    )
+    service.configure_integration_class(
+        _configure_command(
+            integration_class="kyc_kyb",
+            adapter_id="mock-kyc-basic-v1",
+            provider_id="iprv_mock_provider_v1",
+        ),
+        context=_context(),
+    )
+    plan = service.build_integration_plan(
+        BuildIntegrationPlanCommand(product_type="personal_credit", required_classes=("kyc_kyb",)),
+        context=_context(),
+    )
+
+    execution = service.start_integration_execution(
+        StartIntegrationExecutionCommand(
+            plan=plan,
+            idempotency_key="integration-key-cost-provider",
+            scopes=("integration_execution:start",),
+        ),
+        context=_context(),
+    )
+
+    assert execution.jobs[0].provider_id == "iprv_mock_provider_v1"
+    assert publisher.events[0].data["cost_records"][0]["provider_id"] == "iprv_mock_provider_v1"
+
+
+def test_rejects_dispatch_result_without_one_cost_record_per_job() -> None:
+    dispatcher = MissingCostRecordDispatcher()
+    service = _service(dispatcher=dispatcher)
+    plan = _ready_plan(service)
+
+    with pytest.raises(IntegrationValidationError) as error:
+        service.start_integration_execution(
+            StartIntegrationExecutionCommand(
+                plan=plan,
+                idempotency_key="integration-key-missing-costs",
+                scopes=("integration_execution:start",),
+            ),
+            context=_context(),
+        )
+
+    assert error.value.code == "invalid_integration_cost_record_count"
+
+
+def test_cost_projection_is_not_duplicated_on_idempotency_hit() -> None:
+    publisher = CapturingIntegrationExecutionResultPublisher()
+    service = _service(
+        dispatcher=InMemoryIntegrationExecutionDispatcher(),
+        result_publisher=publisher,
+    )
+    plan = _ready_plan(service)
+    command = StartIntegrationExecutionCommand(
+        plan=plan,
+        idempotency_key="integration-key-cost-idempotency",
+        scopes=("integration_execution:start",),
+    )
+
+    first_execution = service.start_integration_execution(command, context=_context())
+    second_execution = service.start_integration_execution(command, context=_context())
+
+    assert second_execution == first_execution
+    assert len(publisher.events) == 1
+    cost_logs = [
+        log
+        for log in service.logged_events
+        if log["operation"] == "integration_execution.cost_recorded"
+    ]
+    assert len(cost_logs) == 1
+    assert cost_logs[0]["extra"]["total_actual_cost_units"] == 48
+
+
+def test_cost_record_rejects_sensitive_provider_identifier() -> None:
+    service = _service(dispatcher=InMemoryIntegrationExecutionDispatcher())
+    plan = _ready_plan(service)
+    execution = service.start_integration_execution(
+        StartIntegrationExecutionCommand(
+            plan=plan,
+            idempotency_key="integration-key-provider-sensitive",
+            scopes=("integration_execution:start",),
+        ),
+        context=_context(),
+    )
+
+    with pytest.raises(IntegrationValidationError) as error:
+        IntegrationExecutionCostRecord.from_job_result(
+            job=execution.jobs[0],
+            result=execution.results[0],
+            provider_id="provider-person@example.com",
+        )
+
+    assert error.value.code == "sensitive_integration_provider_id"
+
+
 def test_rejects_missing_execution_scope_before_dispatch() -> None:
     dispatcher = InMemoryIntegrationExecutionDispatcher()
     service = _service(dispatcher=dispatcher)
@@ -634,6 +851,7 @@ def _configure_command(
     timeout_ms: int = 1_500,
     max_concurrency: int = 3,
     fallback_strategy: str = "fail_closed",
+    provider_id: str | None = None,
 ) -> ConfigureIntegrationClassCommand:
     return ConfigureIntegrationClassCommand(
         product_type=product_type,
@@ -645,6 +863,7 @@ def _configure_command(
         max_concurrency=max_concurrency,
         estimated_cost_units=12,
         fallback_strategy=fallback_strategy,
+        provider_id=provider_id,
         scopes=("integration_catalog:write",),
     )
 
@@ -760,3 +979,30 @@ class CapturingIntegrationExecutionResultPublisher:
 
     def publish(self, event: IntegrationExecutionEvent) -> None:
         self.events.append(event)
+
+
+class MissingCostRecordDispatcher(InMemoryIntegrationExecutionDispatcher):
+    def dispatch(
+        self,
+        *,
+        execution_id: str,
+        job_requests: tuple[IntegrationExecutionJobRequest, ...],
+        synthetic_subject_reference: str,
+        context: ObservabilityContext,
+        clock: Callable[[], datetime],
+    ) -> IntegrationExecutionDispatchResult:
+        dispatch_result = super().dispatch(
+            execution_id=execution_id,
+            job_requests=job_requests,
+            synthetic_subject_reference=synthetic_subject_reference,
+            context=context,
+            clock=clock,
+        )
+        return IntegrationExecutionDispatchResult(
+            jobs=dispatch_result.jobs,
+            results=dispatch_result.results,
+            max_observed_concurrency=dispatch_result.max_observed_concurrency,
+            cost_records=(),
+            retry_schedules=dispatch_result.retry_schedules,
+            dlq_records=dispatch_result.dlq_records,
+        )
