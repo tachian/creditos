@@ -282,6 +282,148 @@ def test_reprocess_is_idempotent_and_does_not_duplicate_original_results() -> No
     )
 
 
+def test_reprocess_rejects_new_key_after_terminal_reprocess() -> None:
+    adapter = ControlledFailureThenSuccessMockIntegrationAdapter(failures_before_success=2)
+    service_bundle = _service_with_adapter(adapter)
+    execution = _start_single_class_execution(
+        service_bundle,
+        "resilience-key-reprocess-terminal",
+        max_attempts=2,
+    )
+    dlq_record = service_bundle.dlq_store.list_for_execution(
+        tenant_id="tenant-bridge-001",
+        execution_id=execution.execution_id,
+    )[0]
+
+    reprocessed = service_bundle.service.reprocess_integration_dlq(
+        ReprocessIntegrationDlqCommand(
+            dlq_id=dlq_record.dlq_id,
+            idempotency_key="idempotency-key-reprocess-terminal-first",
+            scopes=("integration_execution:reprocess",),
+        ),
+        context=_context(),
+    )
+    reprocess_execution = service_bundle.execution_store.get_by_execution_id(
+        tenant_id="tenant-bridge-001",
+        execution_id=reprocessed.reprocess_execution_ids[0],
+    )
+
+    assert reprocess_execution is not None
+    assert reprocess_execution.status == "completed"
+    assert adapter.execute_call_count == 3
+    with pytest.raises(IntegrationValidationError) as error:
+        service_bundle.service.reprocess_integration_dlq(
+            ReprocessIntegrationDlqCommand(
+                dlq_id=dlq_record.dlq_id,
+                idempotency_key="idempotency-key-reprocess-terminal-second",
+                scopes=("integration_execution:reprocess",),
+            ),
+            context=_context(),
+        )
+
+    assert error.value.code == "integration_dlq_already_reprocessed_terminal"
+    assert adapter.execute_call_count == 3
+
+
+def test_reprocess_preserves_original_controlled_failure_scenario() -> None:
+    service_bundle = _service_with_adapter(
+        InMemoryMockIntegrationAdapter(
+            integration_class="kyc_kyb",
+            adapter_id="mock-kyc-basic-v1",
+        )
+    )
+    service_bundle.service.configure_integration_class(
+        _configure_command(max_attempts=2),
+        context=_context(),
+    )
+    plan = service_bundle.service.build_integration_plan(
+        BuildIntegrationPlanCommand(product_type="personal_credit", required_classes=("kyc_kyb",)),
+        context=_context(),
+    )
+    execution = service_bundle.service.start_integration_execution(
+        StartIntegrationExecutionCommand(
+            plan=plan,
+            idempotency_key="resilience-key-reprocess-preserve-scenario",
+            scenario_by_class={"kyc_kyb": "synthetic_failure"},
+            synthetic_subject_reference="synthetic-reference-without-pii",
+            scopes=("integration_execution:start",),
+        ),
+        context=_context(),
+    )
+    dlq_record = service_bundle.dlq_store.list_for_execution(
+        tenant_id="tenant-bridge-001",
+        execution_id=execution.execution_id,
+    )[0]
+
+    reprocessed = service_bundle.service.reprocess_integration_dlq(
+        ReprocessIntegrationDlqCommand(
+            dlq_id=dlq_record.dlq_id,
+            idempotency_key="idempotency-key-reprocess-preserve-scenario",
+            scopes=("integration_execution:reprocess",),
+        ),
+        context=_context(),
+    )
+    reprocess_execution = service_bundle.execution_store.get_by_execution_id(
+        tenant_id="tenant-bridge-001",
+        execution_id=reprocessed.reprocess_execution_ids[0],
+    )
+
+    assert reprocess_execution is not None
+    assert reprocess_execution.status == "failed"
+    assert reprocess_execution.results[0].scenario == "synthetic_failure"
+
+
+def test_reprocess_rejects_same_key_with_different_reason_code() -> None:
+    service_bundle = _service_with_adapter(RaisingMockIntegrationAdapter())
+    execution = _start_single_class_execution(service_bundle, "resilience-key-reprocess-reason")
+    dlq_record = service_bundle.dlq_store.list_for_execution(
+        tenant_id="tenant-bridge-001",
+        execution_id=execution.execution_id,
+    )[0]
+    first_command = ReprocessIntegrationDlqCommand(
+        dlq_id=dlq_record.dlq_id,
+        idempotency_key="idempotency-key-reprocess-reason",
+        reason_code="operator_requested",
+        scopes=("integration_execution:reprocess",),
+    )
+    second_command = ReprocessIntegrationDlqCommand(
+        dlq_id=dlq_record.dlq_id,
+        idempotency_key="idempotency-key-reprocess-reason",
+        reason_code="operator_override",
+        scopes=("integration_execution:reprocess",),
+    )
+
+    service_bundle.service.reprocess_integration_dlq(first_command, context=_context())
+    with pytest.raises(IntegrationValidationError) as error:
+        service_bundle.service.reprocess_integration_dlq(second_command, context=_context())
+
+    assert error.value.code == "integration_execution_idempotency_conflict"
+
+
+def test_reprocess_rejection_audit_never_persists_raw_invalid_dlq_id() -> None:
+    service_bundle = _service_with_adapter(RaisingMockIntegrationAdapter())
+
+    with pytest.raises(IntegrationValidationError) as error:
+        service_bundle.service.reprocess_integration_dlq(
+            ReprocessIntegrationDlqCommand(
+                dlq_id="person@example.com",
+                idempotency_key="idempotency-key-invalid-dlq",
+                scopes=("integration_execution:reprocess",),
+            ),
+            context=_context(),
+        )
+
+    assert error.value.code == "invalid_integration_execution_dlq_id"
+    assert service_bundle.audit_publisher.events[-1].result == "rejected"
+    assert service_bundle.audit_publisher.events[-1].dlq_id == "invalid_dlq_id"
+    serialized_audit = json.dumps(
+        [event.to_log_safe_dict() for event in service_bundle.audit_publisher.events],
+        sort_keys=True,
+        default=str,
+    )
+    assert "person@example.com" not in serialized_audit
+
+
 def test_reprocess_idempotency_key_cannot_be_reused_for_another_dlq() -> None:
     service_bundle = _service_with_adapters(
         (
@@ -594,6 +736,69 @@ class RaisingMockIntegrationAdapter(InMemoryMockIntegrationAdapter):
         duration_ms: float,
     ) -> IntegrationResult:
         raise RuntimeError("synthetic recoverable outage")
+
+
+class ControlledFailureThenSuccessMockIntegrationAdapter(InMemoryMockIntegrationAdapter):
+    def __init__(self, *, failures_before_success: int) -> None:
+        super().__init__(integration_class="kyc_kyb", adapter_id="mock-kyc-basic-v1")
+        self._remaining_failures = failures_before_success
+        self.execute_call_count = 0
+
+    def execute(
+        self,
+        item: IntegrationPlanItem,
+        *,
+        scenario: str,
+        synthetic_subject_reference: str,
+        context: ObservabilityContext,
+        started_at: datetime,
+        completed_at: datetime,
+        duration_ms: float,
+    ) -> IntegrationResult:
+        self.execute_call_count += 1
+        result = super().execute(
+            item,
+            scenario=scenario,
+            synthetic_subject_reference=synthetic_subject_reference,
+            context=context,
+            started_at=started_at,
+            completed_at=completed_at,
+            duration_ms=duration_ms,
+        )
+        if self._remaining_failures > 0:
+            self._remaining_failures -= 1
+            return IntegrationResult.create(
+                result_id=result.result_id,
+                tenant_id=result.tenant_id,
+                product_type=result.product_type,
+                integration_class=result.integration_class,
+                adapter_id=result.adapter_id,
+                status="failed",
+                scenario=result.scenario,
+                reason_codes=("synthetic_controlled_failure",),
+                summary=result.summary,
+                correlation_id=result.correlation_id,
+                trace_id=result.trace_id,
+                started_at=result.started_at,
+                completed_at=result.completed_at,
+                duration_ms=result.duration_ms,
+            )
+        return IntegrationResult.create(
+            result_id=result.result_id,
+            tenant_id=result.tenant_id,
+            product_type=result.product_type,
+            integration_class=result.integration_class,
+            adapter_id=result.adapter_id,
+            status="completed",
+            scenario=result.scenario,
+            reason_codes=("synthetic_match",),
+            summary=result.summary,
+            correlation_id=result.correlation_id,
+            trace_id=result.trace_id,
+            started_at=result.started_at,
+            completed_at=result.completed_at,
+            duration_ms=result.duration_ms,
+        )
 
 
 class NonRecoverableMockIntegrationAdapter(InMemoryMockIntegrationAdapter):

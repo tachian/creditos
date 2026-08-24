@@ -47,6 +47,7 @@ from creditos_integration.domain.value_objects.catalog import (
     parse_product_type,
 )
 from creditos_integration.domain.value_objects.execution import (
+    IntegrationExecutionStatus,
     validate_dlq_id,
     validate_failure_code,
     validate_idempotency_key,
@@ -737,35 +738,12 @@ class IntegrationCatalogApplicationService:
                     code="integration_dlq_record_not_retryable",
                     field_path="dlq_id",
                 )
-            execution = self._integration_execution_store.get_by_execution_id(
-                tenant_id=tenant_id,
-                execution_id=record.execution_id,
-            )
-            if execution is None:
-                raise IntegrationValidationError(
-                    "execução original da DLQ não encontrada",
-                    code="integration_execution_not_found",
-                    field_path="dlq_id",
-                )
-            job = next((job for job in execution.jobs if job.job_id == record.job_id), None)
-            if job is None:
-                raise IntegrationValidationError(
-                    "job original da DLQ não encontrado",
-                    code="integration_dlq_job_not_found",
-                    field_path="dlq_id",
-                )
-            adapter = self._mock_adapter_registry.get_adapter(job.integration_class, job.adapter_id)
-            if adapter is None:
-                raise IntegrationValidationError(
-                    "adapter mock/sandbox não registrado para reprocessamento",
-                    code="mock_adapter_not_registered",
-                    field_path="adapter_id",
-                )
             plan_fingerprint = _reprocess_plan_fingerprint(
                 tenant_id=tenant_id,
                 dlq_id=record.dlq_id,
                 execution_id=record.execution_id,
                 job_id=record.job_id,
+                reason_code=reason_code,
             )
             existing_execution = self._integration_execution_store.reserve_or_get(
                 tenant_id=tenant_id,
@@ -774,6 +752,38 @@ class IntegrationCatalogApplicationService:
             )
             if existing_execution is None:
                 reservation_acquired = True
+                _ensure_dlq_has_no_accepted_terminal_reprocess(
+                    record=record,
+                    execution_store=self._integration_execution_store,
+                    tenant_id=tenant_id,
+                )
+                execution = self._integration_execution_store.get_by_execution_id(
+                    tenant_id=tenant_id,
+                    execution_id=record.execution_id,
+                )
+                if execution is None:
+                    raise IntegrationValidationError(
+                        "execução original da DLQ não encontrada",
+                        code="integration_execution_not_found",
+                        field_path="dlq_id",
+                    )
+                job = next((job for job in execution.jobs if job.job_id == record.job_id), None)
+                if job is None:
+                    raise IntegrationValidationError(
+                        "job original da DLQ não encontrado",
+                        code="integration_dlq_job_not_found",
+                        field_path="dlq_id",
+                    )
+                adapter = self._mock_adapter_registry.get_adapter(
+                    job.integration_class,
+                    job.adapter_id,
+                )
+                if adapter is None:
+                    raise IntegrationValidationError(
+                        "adapter mock/sandbox não registrado para reprocessamento",
+                        code="mock_adapter_not_registered",
+                        field_path="adapter_id",
+                    )
                 reprocess_execution_id = self._execution_id_factory(
                     "|".join((tenant_id, dlq_id, idempotency_key, plan_fingerprint))
                 )
@@ -783,7 +793,10 @@ class IntegrationCatalogApplicationService:
                         "|".join((reprocess_execution_id, record.job_id, idempotency_key))
                     ),
                     item=_plan_item_from_job(job),
-                    scenario=MockIntegrationScenario.SYNTHETIC_SUCCESS.value,
+                    scenario=_reprocess_scenario_from_original_execution(
+                        execution=execution,
+                        job=job,
+                    ),
                     adapter=adapter,
                     event_type="creditos.integration.job.reprocess_requested.v1",
                 )
@@ -887,7 +900,7 @@ class IntegrationCatalogApplicationService:
                 error_type=type(error).__name__,
                 extra={
                     "tenant_id_present": _tenant_id_present(tenant_id),
-                    "dlq_id": dlq_id or getattr(command, "dlq_id", ""),
+                    "dlq_id": _audit_safe_dlq_id(dlq_id),
                     "denial_reason": getattr(error, "code", type(error).__name__),
                 },
             )
@@ -904,7 +917,7 @@ class IntegrationCatalogApplicationService:
                         trace_id=context.trace_id,
                         schema_version=record.schema_version if record is not None else "1.0",
                         occurred_at=self._clock(),
-                        dlq_id=dlq_id or getattr(command, "dlq_id", ""),
+                        dlq_id=_audit_safe_dlq_id(dlq_id),
                         reprocess_execution_id=reprocess_execution_id,
                     )
                 )
@@ -1233,6 +1246,7 @@ def _reprocess_plan_fingerprint(
     dlq_id: str,
     execution_id: str,
     job_id: str,
+    reason_code: str,
 ) -> str:
     safe_plan = {
         "operation": "integration_dlq_reprocess",
@@ -1240,10 +1254,60 @@ def _reprocess_plan_fingerprint(
         "dlq_id": dlq_id,
         "execution_id": execution_id,
         "job_id": job_id,
+        "reason_code": reason_code,
         "schema_version": "1.0",
     }
     encoded = dumps(safe_plan, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return f"iplan_{sha256(encoded).hexdigest()}"
+
+
+def _ensure_dlq_has_no_accepted_terminal_reprocess(
+    *,
+    record: IntegrationExecutionDlqRecord,
+    execution_store: IntegrationExecutionStore,
+    tenant_id: str,
+) -> None:
+    terminal_reprocess_statuses = {
+        IntegrationExecutionStatus.COMPLETED.value,
+        IntegrationExecutionStatus.PARTIAL.value,
+        IntegrationExecutionStatus.MISSING.value,
+    }
+    for reprocess_execution_id in record.reprocess_execution_ids:
+        reprocess_execution = execution_store.get_by_execution_id(
+            tenant_id=tenant_id,
+            execution_id=reprocess_execution_id,
+        )
+        if reprocess_execution is None:
+            raise IntegrationValidationError(
+                "histórico de reprocessamento da DLQ não encontrado",
+                code="integration_dlq_reprocess_history_not_found",
+                field_path="dlq_id",
+            )
+        if reprocess_execution.status in terminal_reprocess_statuses:
+            raise IntegrationValidationError(
+                "DLQ já possui reprocessamento terminal aceito",
+                code="integration_dlq_already_reprocessed_terminal",
+                field_path="dlq_id",
+            )
+
+
+def _reprocess_scenario_from_original_execution(
+    *,
+    execution: IntegrationExecution,
+    job,
+) -> str:
+    if job.result_id is None:
+        return MockIntegrationScenario.SYNTHETIC_FAILURE.value
+    result = next(
+        (result for result in execution.results if result.result_id == job.result_id), None
+    )
+    if result is None:
+        return MockIntegrationScenario.SYNTHETIC_FAILURE.value
+    return parse_mock_scenario(result.scenario)
+
+
+def _audit_safe_dlq_id(dlq_id: str) -> str:
+    return dlq_id or "invalid_dlq_id"
 
 
 def _plan_item_fingerprint_key(item: IntegrationPlanItem) -> tuple[str, str, str, str]:
