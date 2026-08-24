@@ -1260,6 +1260,18 @@ def _validate_cost_records(
                 code="cross_attempt_count_cost_record",
                 field_path=f"cost_records[{index}].attempt_count",
             )
+        if record.call_count != job.attempt_count:
+            raise IntegrationValidationError(
+                "projeção de custo referencia chamadas divergentes",
+                code="cross_call_count_cost_record",
+                field_path=f"cost_records[{index}].call_count",
+            )
+        if record.actual_cost_units != record.estimated_cost_units * record.call_count:
+            raise IntegrationValidationError(
+                "projeção de custo referencia custo real divergente",
+                code="cross_actual_cost_record",
+                field_path=f"cost_records[{index}].actual_cost_units",
+            )
         if (
             record.correlation_id != execution.correlation_id
             or record.trace_id != execution.trace_id

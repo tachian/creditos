@@ -679,6 +679,24 @@ def test_rejects_dispatch_result_without_one_cost_record_per_job() -> None:
     assert error.value.code == "invalid_integration_cost_record_count"
 
 
+def test_rejects_dispatch_result_with_inconsistent_call_count_or_actual_cost() -> None:
+    dispatcher = InconsistentCostRecordDispatcher()
+    service = _service(dispatcher=dispatcher)
+    plan = _ready_plan(service)
+
+    with pytest.raises(IntegrationValidationError) as error:
+        service.start_integration_execution(
+            StartIntegrationExecutionCommand(
+                plan=plan,
+                idempotency_key="integration-key-inconsistent-costs",
+                scopes=("integration_execution:start",),
+            ),
+            context=_context(),
+        )
+
+    assert error.value.code == "cross_call_count_cost_record"
+
+
 def test_cost_projection_is_not_duplicated_on_idempotency_hit() -> None:
     publisher = CapturingIntegrationExecutionResultPublisher()
     service = _service(
@@ -1003,6 +1021,52 @@ class MissingCostRecordDispatcher(InMemoryIntegrationExecutionDispatcher):
             results=dispatch_result.results,
             max_observed_concurrency=dispatch_result.max_observed_concurrency,
             cost_records=(),
+            retry_schedules=dispatch_result.retry_schedules,
+            dlq_records=dispatch_result.dlq_records,
+        )
+
+
+class InconsistentCostRecordDispatcher(InMemoryIntegrationExecutionDispatcher):
+    def dispatch(
+        self,
+        *,
+        execution_id: str,
+        job_requests: tuple[IntegrationExecutionJobRequest, ...],
+        synthetic_subject_reference: str,
+        context: ObservabilityContext,
+        clock: Callable[[], datetime],
+    ) -> IntegrationExecutionDispatchResult:
+        dispatch_result = super().dispatch(
+            execution_id=execution_id,
+            job_requests=job_requests,
+            synthetic_subject_reference=synthetic_subject_reference,
+            context=context,
+            clock=clock,
+        )
+        first_record = dispatch_result.cost_records[0]
+        forged_record = IntegrationExecutionCostRecord.create(
+            execution_id=first_record.execution_id,
+            job_id=first_record.job_id,
+            tenant_id=first_record.tenant_id,
+            product_type=first_record.product_type,
+            integration_class=first_record.integration_class,
+            adapter_id=first_record.adapter_id,
+            provider_id=first_record.provider_id,
+            result_status=first_record.result_status,
+            call_count=0,
+            attempt_count=first_record.attempt_count,
+            fallback_strategy=first_record.fallback_strategy,
+            estimated_cost_units=first_record.estimated_cost_units,
+            actual_cost_units=999,
+            schema_version=first_record.schema_version,
+            correlation_id=first_record.correlation_id,
+            trace_id=first_record.trace_id,
+        )
+        return IntegrationExecutionDispatchResult(
+            jobs=dispatch_result.jobs,
+            results=dispatch_result.results,
+            max_observed_concurrency=dispatch_result.max_observed_concurrency,
+            cost_records=(forged_record, *dispatch_result.cost_records[1:]),
             retry_schedules=dispatch_result.retry_schedules,
             dlq_records=dispatch_result.dlq_records,
         )

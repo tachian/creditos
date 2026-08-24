@@ -246,6 +246,7 @@ Codex CLI.
 - 2026-08-24 — Testes vermelhos criados para custo/projeção/idempotência/DLQ; `CTOS-207` implementada e movida para `Concluído`; `CTOS-208` movida para `Em andamento`.
 - 2026-08-24 — Gates finais executados: `ruff format --check .`, `ruff check .`, `pyright`, `pytest services/integration/tests/unit -q` e `pytest -q`.
 - 2026-08-24 — `bmad-code-review` executado com Blind Hunter, Edge Case Hunter e Acceptance Auditor; três findings de patch corrigidos e revalidados.
+- 2026-08-24 — Review do Codex no GitHub para o PR #36 corrigido: `_validate_cost_records` agora valida `call_count` e `actual_cost_units` contra tentativas e custo estimado.
 
 ### Completion Notes List
 
@@ -257,6 +258,7 @@ Codex CLI.
 - Idempotência preservada: replay não duplica custo/projeção/log/evento e mudança de `estimated_cost_units` passa a alterar o fingerprint.
 - Testes adicionados para evento minimizado, não duplicidade idempotente, rejeição de `provider_id` sensível, conflito por custo alterado e custo real com retry/DLQ.
 - Review findings resolvidos: `cost_records` agora são obrigatórios/validados contra a execução, `provider_id` é configurável e propagado até o custo, e DLQ é marcada antes de publicar evento/projeção de reprocessamento.
+- Feedback do Codex no GitHub resolvido com teste negativo para dispatcher alternativo que reporta chamadas/custo real inconsistentes.
 
 ### File List
 
