@@ -220,8 +220,7 @@ class IntegrationExecutionDlqRecord:
             reprocess_count=reprocess_count,
             last_reprocess_at=last_reprocess_at,
             reprocess_execution_ids=tuple(
-                validate_execution_id(execution_id)
-                for execution_id in reprocess_execution_ids
+                validate_execution_id(execution_id) for execution_id in reprocess_execution_ids
             ),
         )
 
