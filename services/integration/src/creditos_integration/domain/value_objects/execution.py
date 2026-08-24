@@ -41,6 +41,7 @@ class IntegrationRetryDecision(StrEnum):
 _EXECUTION_ID_PATTERN = re.compile(r"^iexec_[a-z0-9_.:-]{3,160}$")
 _JOB_ID_PATTERN = re.compile(r"^ijob_[a-z0-9_.:-]{3,160}$")
 _DLQ_ID_PATTERN = re.compile(r"^idlq_[a-z0-9_.:-]{3,160}$")
+_PROVIDER_ID_PATTERN = re.compile(r"^iprv_[a-z0-9_.:-]{3,160}$")
 _PLAN_FINGERPRINT_PATTERN = re.compile(r"^iplan_[a-f0-9]{32,64}$")
 _IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{7,119}$")
 _FAILURE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{2,80}$")
@@ -81,6 +82,24 @@ def validate_dlq_id(value: str) -> str:
     return value
 
 
+def validate_provider_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if _has_sensitive_identifier(value):
+        raise IntegrationValidationError(
+            "identificador de provider não pode conter dado sensível",
+            code="sensitive_integration_provider_id",
+            field_path="provider_id",
+        )
+    if not _PROVIDER_ID_PATTERN.fullmatch(value):
+        raise IntegrationValidationError(
+            "identificador de provider inválido",
+            code="invalid_integration_provider_id",
+            field_path="provider_id",
+        )
+    return value
+
+
 def validate_plan_fingerprint(value: str) -> str:
     if not _PLAN_FINGERPRINT_PATTERN.fullmatch(value):
         raise IntegrationValidationError(
@@ -98,14 +117,7 @@ def validate_idempotency_key(value: str) -> str:
             code="invalid_integration_execution_idempotency_key",
             field_path="idempotency_key",
         )
-    if _SENSITIVE_IDENTIFIER_PATTERN.search(value):
-        raise IntegrationValidationError(
-            "chave de idempotência não pode conter identificador sensível",
-            code="sensitive_integration_execution_idempotency_key",
-            field_path="idempotency_key",
-        )
-    digits_only = re.sub(r"\D", "", value)
-    if len(digits_only) in {11, 14}:
+    if _has_sensitive_identifier(value):
         raise IntegrationValidationError(
             "chave de idempotência não pode conter identificador sensível",
             code="sensitive_integration_execution_idempotency_key",
@@ -170,6 +182,26 @@ def validate_attempt_count(value: int) -> int:
     return value
 
 
+def validate_call_count(value: int) -> int:
+    if type(value) is not int or value < 0 or value > 1_000_000:
+        raise IntegrationValidationError(
+            "contador de chamadas inválido",
+            code="invalid_integration_call_count",
+            field_path="call_count",
+        )
+    return value
+
+
+def validate_integration_cost_units(value: int, *, field_path: str = "cost_units") -> int:
+    if type(value) is not int or value < 0 or value > 1_000_000_000:
+        raise IntegrationValidationError(
+            "custo de integração inválido",
+            code="invalid_integration_cost_units",
+            field_path=field_path,
+        )
+    return value
+
+
 def validate_backoff_ms(value: int) -> int:
     if type(value) is not int or value < 0 or value > 120_000:
         raise IntegrationValidationError(
@@ -198,20 +230,20 @@ def validate_failure_code(value: str) -> str:
             code="invalid_integration_failure_code",
             field_path="failure_code",
         )
-    if _SENSITIVE_IDENTIFIER_PATTERN.search(value):
-        raise IntegrationValidationError(
-            "código de falha não pode conter dado sensível",
-            code="sensitive_integration_failure_code",
-            field_path="failure_code",
-        )
-    digits_only = re.sub(r"\D", "", value)
-    if len(digits_only) in {11, 14}:
+    if _has_sensitive_identifier(value):
         raise IntegrationValidationError(
             "código de falha não pode conter dado sensível",
             code="sensitive_integration_failure_code",
             field_path="failure_code",
         )
     return value
+
+
+def _has_sensitive_identifier(value: str) -> bool:
+    if _SENSITIVE_IDENTIFIER_PATTERN.search(value):
+        return True
+    digits_only = re.sub(r"\D", "", value)
+    return len(digits_only) in {11, 14}
 
 
 def _parse_enum(

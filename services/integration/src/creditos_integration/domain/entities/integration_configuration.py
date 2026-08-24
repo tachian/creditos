@@ -15,6 +15,7 @@ from creditos_integration.domain.value_objects.catalog import (
     validate_max_concurrency,
     validate_timeout_ms,
 )
+from creditos_integration.domain.value_objects.execution import validate_provider_id
 
 SCHEMA_VERSION = "1.0"
 
@@ -36,6 +37,7 @@ class IntegrationConfiguration:
     schema_version: str
     created_at: datetime
     updated_at: datetime
+    provider_id: str | None = None
 
     @classmethod
     def create(
@@ -55,6 +57,7 @@ class IntegrationConfiguration:
         enabled: bool,
         now: datetime,
         created_at: datetime | None = None,
+        provider_id: str | None = None,
     ) -> IntegrationConfiguration:
         return cls(
             configuration_id=validate_configuration_id(configuration_id),
@@ -72,6 +75,7 @@ class IntegrationConfiguration:
             schema_version=SCHEMA_VERSION,
             created_at=created_at or now,
             updated_at=now,
+            provider_id=validate_provider_id(provider_id),
         )
 
     def to_plan_metadata(self) -> dict[str, object]:
@@ -87,5 +91,6 @@ class IntegrationConfiguration:
             "max_concurrency": self.max_concurrency,
             "estimated_cost_units": self.estimated_cost_units,
             "fallback_strategy": self.fallback_strategy,
+            "provider_id": self.provider_id,
             "schema_version": self.schema_version,
         }

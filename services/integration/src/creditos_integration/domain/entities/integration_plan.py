@@ -18,6 +18,7 @@ class IntegrationPlanItem:
     estimated_cost_units: int
     fallback_strategy: str
     configuration_id: str
+    provider_id: str | None = None
 
     @classmethod
     def from_configuration(cls, configuration: IntegrationConfiguration) -> IntegrationPlanItem:
@@ -33,6 +34,7 @@ class IntegrationPlanItem:
             estimated_cost_units=configuration.estimated_cost_units,
             fallback_strategy=configuration.fallback_strategy,
             configuration_id=configuration.configuration_id,
+            provider_id=configuration.provider_id,
         )
 
 

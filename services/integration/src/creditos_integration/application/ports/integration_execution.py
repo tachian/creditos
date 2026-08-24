@@ -11,6 +11,7 @@ from creditos_observability.context import ObservabilityContext
 from creditos_integration.application.ports.mock_integration_adapter import MockIntegrationAdapter
 from creditos_integration.domain.entities import (
     IntegrationExecution,
+    IntegrationExecutionCostRecord,
     IntegrationExecutionDlqRecord,
     IntegrationExecutionJob,
     IntegrationPlanItem,
@@ -53,6 +54,7 @@ class IntegrationExecutionDispatchResult:
     jobs: tuple[IntegrationExecutionJob, ...]
     results: tuple[IntegrationResult, ...]
     max_observed_concurrency: int
+    cost_records: tuple[IntegrationExecutionCostRecord, ...]
     retry_schedules: tuple[IntegrationExecutionRetrySchedule, ...] = ()
     dlq_records: tuple[IntegrationExecutionDlqRecord, ...] = ()
 

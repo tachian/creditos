@@ -158,6 +158,8 @@ def test_missing_trusted_tenant_does_not_persist_or_audit() -> None:
         ("estimated_cost_units", True, "invalid_cost_limit"),
         ("estimated_cost_units", "12", "invalid_cost_limit"),
         ("estimated_cost_units", 12.5, "invalid_cost_limit"),
+        ("provider_id", "provider-person@example.com", "sensitive_integration_provider_id"),
+        ("provider_id", "provider_without_prefix", "invalid_integration_provider_id"),
         ("fallback_strategy", "raw_payload_fallback", "unsupported_fallback_strategy"),
     ],
 )
@@ -372,6 +374,7 @@ def _configure_command(
     max_concurrency: int = 3,
     estimated_cost_units: int = 12,
     fallback_strategy: str = "fail_closed",
+    provider_id: str | None = None,
     scopes: tuple[str, ...] = ("integration_catalog:write",),
 ) -> ConfigureIntegrationClassCommand:
     return ConfigureIntegrationClassCommand(
@@ -384,6 +387,7 @@ def _configure_command(
         max_concurrency=max_concurrency,
         estimated_cost_units=estimated_cost_units,
         fallback_strategy=fallback_strategy,
+        provider_id=provider_id,
         scopes=scopes,
     )
 

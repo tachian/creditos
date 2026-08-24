@@ -19,6 +19,7 @@ from creditos_integration.application.ports.integration_execution import (
     IntegrationRetryPolicy,
 )
 from creditos_integration.domain.entities import (
+    IntegrationExecutionCostRecord,
     IntegrationExecutionDlqRecord,
     IntegrationExecutionJob,
     IntegrationResult,
@@ -76,6 +77,7 @@ class InMemoryIntegrationExecutionDispatcher:
         )
         jobs_by_index: dict[int, IntegrationExecutionJob] = {}
         results_by_index: dict[int, IntegrationResult] = {}
+        cost_records_by_index: dict[int, IntegrationExecutionCostRecord] = {}
         retry_schedules_by_index: dict[int, tuple[IntegrationExecutionRetrySchedule, ...]] = {}
         dlq_records_by_index: dict[int, tuple[IntegrationExecutionDlqRecord, ...]] = {}
         with self._lock:
@@ -101,9 +103,10 @@ class InMemoryIntegrationExecutionDispatcher:
                     for index, request in enumerate(job_requests)
                 }
                 for future, index in futures.items():
-                    job, result, retry_schedules, dlq_records = future.result()
+                    job, result, cost_record, retry_schedules, dlq_records = future.result()
                     jobs_by_index[index] = job
                     results_by_index[index] = result
+                    cost_records_by_index[index] = cost_record
                     retry_schedules_by_index[index] = retry_schedules
                     dlq_records_by_index[index] = dlq_records
 
@@ -111,6 +114,9 @@ class InMemoryIntegrationExecutionDispatcher:
                 jobs=tuple(jobs_by_index[index] for index in range(len(job_requests))),
                 results=tuple(results_by_index[index] for index in range(len(job_requests))),
                 max_observed_concurrency=self.max_observed_concurrency,
+                cost_records=tuple(
+                    cost_records_by_index[index] for index in range(len(job_requests))
+                ),
                 retry_schedules=tuple(
                     schedule
                     for index in range(len(job_requests))
@@ -134,6 +140,7 @@ class InMemoryIntegrationExecutionDispatcher:
     ) -> tuple[
         IntegrationExecutionJob,
         IntegrationResult,
+        IntegrationExecutionCostRecord,
         tuple[IntegrationExecutionRetrySchedule, ...],
         tuple[IntegrationExecutionDlqRecord, ...],
     ]:
@@ -177,7 +184,17 @@ class InMemoryIntegrationExecutionDispatcher:
                                 context=context,
                                 attempt_count=attempt_count,
                             ).with_result(result)
-                            return completed_job, result, tuple(retry_schedules), tuple(dlq_records)
+                            cost_record = IntegrationExecutionCostRecord.from_job_result(
+                                job=completed_job,
+                                result=result,
+                            )
+                            return (
+                                completed_job,
+                                result,
+                                cost_record,
+                                tuple(retry_schedules),
+                                tuple(dlq_records),
+                            )
                 except IntegrationValidationError as error:
                     duration_ms = _duration_ms(started_perf)
                     failure_class = IntegrationFailureClass.INVALID_RESULT.value
@@ -247,7 +264,17 @@ class InMemoryIntegrationExecutionDispatcher:
                         created_at=clock(),
                     )
                     dlq_records.append(self._dlq_store.save(record))
-                return terminal_job, result, tuple(retry_schedules), tuple(dlq_records)
+                cost_record = IntegrationExecutionCostRecord.from_job_result(
+                    job=terminal_job,
+                    result=result,
+                )
+                return (
+                    terminal_job,
+                    result,
+                    cost_record,
+                    tuple(retry_schedules),
+                    tuple(dlq_records),
+                )
             raise IntegrationValidationError(
                 "política de retry não produziu estado terminal",
                 code="integration_retry_policy_non_terminal",
