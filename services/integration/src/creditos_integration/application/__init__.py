@@ -4,6 +4,7 @@ from creditos_integration.application.service import (
     ExecuteMockIntegrationCommand,
     IntegrationCatalogApplicationService,
     ListIntegrationConfigurationsQuery,
+    ReprocessIntegrationDlqCommand,
     StartIntegrationExecutionCommand,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "ExecuteMockIntegrationCommand",
     "IntegrationCatalogApplicationService",
     "ListIntegrationConfigurationsQuery",
+    "ReprocessIntegrationDlqCommand",
     "StartIntegrationExecutionCommand",
 ]
