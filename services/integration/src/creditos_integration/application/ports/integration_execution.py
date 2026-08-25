@@ -155,6 +155,29 @@ class IntegrationExecutionStore(Protocol):
         plan_fingerprint: str,
     ) -> None: ...
 
+    def stage_execution_events(
+        self,
+        *,
+        tenant_id: str,
+        idempotency_key: str,
+        events: tuple[IntegrationExecutionEvent, ...],
+    ) -> None: ...
+
+    def list_unpublished_execution_events(
+        self,
+        *,
+        tenant_id: str,
+        idempotency_key: str,
+    ) -> tuple[IntegrationExecutionEvent, ...]: ...
+
+    def mark_execution_event_published(
+        self,
+        *,
+        tenant_id: str,
+        idempotency_key: str,
+        event_id: str,
+    ) -> None: ...
+
 
 class IntegrationRetryPolicy(Protocol):
     def evaluate(

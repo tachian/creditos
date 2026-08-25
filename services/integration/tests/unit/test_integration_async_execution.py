@@ -846,6 +846,31 @@ def test_cost_projection_is_not_duplicated_on_idempotency_hit() -> None:
     assert cost_logs[0]["extra"]["total_actual_cost_units"] == 48
 
 
+def test_pending_events_are_resumed_after_partial_publication_failure() -> None:
+    publisher = FailingOnNthIntegrationExecutionResultPublisher(fail_on_call=2)
+    service = _service(
+        dispatcher=InMemoryIntegrationExecutionDispatcher(),
+        result_publisher=publisher,
+    )
+    plan = _ready_plan(service)
+    command = StartIntegrationExecutionCommand(
+        plan=plan,
+        idempotency_key="integration-key-partial-publish-retry",
+        scopes=("integration_execution:start",),
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic publisher outage"):
+        service.start_integration_execution(command, context=_context())
+
+    replayed_execution = service.start_integration_execution(command, context=_context())
+
+    assert replayed_execution.status == "completed"
+    assert [event.type for event in publisher.events] == [
+        "creditos.integration.execution.completed.v1",
+        "creditos.integration.execution.cost_recorded.v1",
+    ]
+
+
 def test_cost_record_rejects_sensitive_provider_identifier() -> None:
     service = _service(dispatcher=InMemoryIntegrationExecutionDispatcher())
     plan = _ready_plan(service)
@@ -935,7 +960,7 @@ def _service(
     mock_adapter_registry: InMemoryMockIntegrationAdapterRegistry | None = None,
     execution_store: InMemoryIntegrationExecutionStore | None = None,
     dispatcher: InMemoryIntegrationExecutionDispatcher,
-    result_publisher: CapturingIntegrationExecutionResultPublisher | None = None,
+    result_publisher: Any | None = None,
     environment: str = "test",
 ) -> IntegrationCatalogApplicationService:
     dlq_store = InMemoryIntegrationDlqStore()
@@ -1235,6 +1260,19 @@ class CapturingIntegrationExecutionResultPublisher:
 
     def publish(self, event: IntegrationExecutionEvent) -> None:
         self.events.append(event)
+
+
+class FailingOnNthIntegrationExecutionResultPublisher(CapturingIntegrationExecutionResultPublisher):
+    def __init__(self, *, fail_on_call: int) -> None:
+        super().__init__()
+        self._fail_on_call = fail_on_call
+        self._call_count = 0
+
+    def publish(self, event: IntegrationExecutionEvent) -> None:
+        self._call_count += 1
+        if self._call_count == self._fail_on_call:
+            raise RuntimeError("synthetic publisher outage")
+        super().publish(event)
 
 
 class MissingCostRecordDispatcher(InMemoryIntegrationExecutionDispatcher):

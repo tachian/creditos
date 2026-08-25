@@ -104,7 +104,78 @@ INTEGRATION_ID_PATTERNS = {
     "result_id": r"^ires_[a-f0-9]{32}$",
     "dlq_id": r"^idlq_[a-f0-9]{32}$",
     "adapter_id": r"^[a-z0-9][a-z0-9_.-]{2,80}$",
+    "provider_id": r"^iprv_[a-z0-9_.:-]{3,160}$",
     "trace_id": r"^[0-9a-f]{32}$",
+}
+INTEGRATION_RESULT_ROOT_REQUIRED = {
+    "execution_id",
+    "product_type",
+    "status",
+    "schema_version",
+    "job_count",
+    "result_count",
+    "results",
+}
+INTEGRATION_RESULT_ITEM_REQUIRED = {
+    "result_id",
+    "job_id",
+    "integration_class",
+    "adapter_id",
+    "result_status",
+    "reason_codes",
+    "synthetic_scenario",
+    "duration_ms",
+}
+INTEGRATION_COST_ROOT_REQUIRED = {
+    "execution_id",
+    "product_type",
+    "status",
+    "schema_version",
+    "job_count",
+    "result_count",
+    "cost_projection_type",
+    "total_estimated_cost_units",
+    "total_actual_cost_units",
+    "cost_records",
+}
+INTEGRATION_COST_RECORD_REQUIRED = {
+    "execution_id",
+    "job_id",
+    "tenant_id",
+    "product_type",
+    "integration_class",
+    "adapter_id",
+    "result_status",
+    "call_count",
+    "attempt_count",
+    "fallback_strategy",
+    "estimated_cost_units",
+    "actual_cost_units",
+    "schema_version",
+    "correlation_id",
+    "trace_id",
+}
+INTEGRATION_DLQ_REQUIRED = {
+    "execution_id",
+    "job_id",
+    "dlq_id",
+    "integration_class",
+    "adapter_id",
+    "failure_class",
+    "failure_code",
+    "attempt_count",
+    "schema_version",
+}
+INTEGRATION_RETRY_REQUIRED = {
+    "execution_id",
+    "job_id",
+    "integration_class",
+    "adapter_id",
+    "failure_class",
+    "failure_code",
+    "attempt_count",
+    "retry_delay_ms",
+    "schema_version",
 }
 INTEGRATION_FORBIDDEN_FIELDS = {
     "address",
@@ -725,9 +796,19 @@ def validate_integration_canonical_field_definitions(
         )
 
     if path.name == "integration-result.schema.json":
+        require_required_fields(
+            contract,
+            INTEGRATION_RESULT_ROOT_REQUIRED,
+            f"required raiz divergente no schema de resultado: {path}",
+        )
         result_schema = require_dict(
             require_dict(defs, f"Schema de resultado deve declarar $defs: {path}").get("result"),
             f"Schema de resultado deve declarar $defs.result: {path}",
+        )
+        require_required_fields(
+            result_schema,
+            INTEGRATION_RESULT_ITEM_REQUIRED,
+            f"required de $defs.result divergente no schema de resultado: {path}",
         )
         result_properties = require_dict(
             result_schema.get("properties"),
@@ -739,6 +820,9 @@ def validate_integration_canonical_field_definitions(
         require_schema_pattern(result_properties, "job_id", INTEGRATION_ID_PATTERNS["job_id"], path)
         require_schema_pattern(
             result_properties, "adapter_id", INTEGRATION_ID_PATTERNS["adapter_id"], path
+        )
+        require_schema_pattern(
+            result_properties, "provider_id", INTEGRATION_ID_PATTERNS["provider_id"], path
         )
         require_enum(
             result_properties,
@@ -760,6 +844,11 @@ def validate_integration_canonical_field_definitions(
         )
 
     if path.name == "integration-cost.schema.json":
+        require_required_fields(
+            contract,
+            INTEGRATION_COST_ROOT_REQUIRED,
+            f"required raiz divergente no schema de custo: {path}",
+        )
         cost_records = require_dict(
             properties.get("cost_records"),
             f"Schema de custo deve declarar cost_records: {path}",
@@ -768,6 +857,11 @@ def validate_integration_canonical_field_definitions(
         cost_record_schema = require_dict(
             require_dict(defs, f"Schema de custo deve declarar $defs: {path}").get("cost_record"),
             f"Schema de custo deve declarar $defs.cost_record: {path}",
+        )
+        require_required_fields(
+            cost_record_schema,
+            INTEGRATION_COST_RECORD_REQUIRED,
+            f"required de $defs.cost_record divergente no schema de custo: {path}",
         )
         cost_properties = require_dict(
             cost_record_schema.get("properties"),
@@ -800,6 +894,18 @@ def validate_integration_canonical_field_definitions(
         )
 
     if path.name in {"integration-dlq.schema.json", "integration-retry.schema.json"}:
+        if path.name == "integration-dlq.schema.json":
+            require_required_fields(
+                contract,
+                INTEGRATION_DLQ_REQUIRED,
+                f"required raiz divergente no schema de DLQ: {path}",
+            )
+        else:
+            require_required_fields(
+                contract,
+                INTEGRATION_RETRY_REQUIRED,
+                f"required raiz divergente no schema de retry: {path}",
+            )
         require_schema_pattern(properties, "job_id", INTEGRATION_ID_PATTERNS["job_id"], path)
         require_schema_pattern(
             properties, "adapter_id", INTEGRATION_ID_PATTERNS["adapter_id"], path
@@ -818,6 +924,15 @@ def validate_integration_canonical_field_definitions(
         )
     if path.name == "integration-dlq.schema.json":
         require_schema_pattern(properties, "dlq_id", INTEGRATION_ID_PATTERNS["dlq_id"], path)
+
+
+def require_required_fields(
+    schema: dict[str, Any],
+    expected_values: set[str],
+    message: str,
+) -> None:
+    required = schema.get("required", [])
+    require(isinstance(required, list) and set(required) == expected_values, message)
 
 
 def require_enum(

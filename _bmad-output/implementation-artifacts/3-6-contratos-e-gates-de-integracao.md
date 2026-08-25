@@ -274,7 +274,7 @@ Codex CLI.
 - Checker de contratos endurecido para eventos de integração, extensões CloudEvents, campos sensíveis, schemas fechados, `$ref` seguro, exemplos inválidos e invariantes semânticas de custo.
 - Runtime passou a expor serialização CloudEvents contratual em `IntegrationExecutionEvent.to_cloudevent_dict()`, com `dataschema` explícito por evento e dicionário log-safe minimizado.
 - Expectativas de consumidores documentadas para `Decision`, `Audit & Evidence` e `Reporting & Insights`.
-- Validações executadas após review: `scripts/check_contracts.py`, testes focados de contratos/integração/resiliência com 90 testes passando, `ruff check .`, `ruff format --check .`, `pyright` e suíte completa com 406 testes passando. A suíte completa foi validada com shim temporário de `uv` em `/tmp/creditos-uv-shim` porque o binário `uv` não está instalado neste shell local; o CI já instala `uv`.
+- Validações executadas após review: `scripts/check_contracts.py`, testes focados de contratos/integração/resiliência com 90 testes passando, `ruff check .`, `ruff format --check .`, `pyright` e suíte completa com 411 testes passando. A suíte completa foi validada com shim temporário de `uv` em `/tmp/creditos-uv-shim` porque o binário `uv` não está instalado neste shell local; o CI já instala `uv`.
 
 ### File List
 
@@ -302,3 +302,4 @@ Codex CLI.
 - 2026-08-24 — Implementados contratos/gates de integração v1, alinhamento runtime-vs-contrato e documentação de consumidores.
 - 2026-08-25 — Achados do code review aplicados: schemas por tipo de evento, IDs de 32 hex, adapter com hífen, `$ref` seguro, validação recursiva de exemplos, invariantes de custo, CloudEvents estritos e cobertura de retry/DLQ/reprocessamento.
 - 2026-08-25 — Story marcada como `done` após patches de review e validações completas verdes.
+- 2026-08-25 — Correções pós-review do PR #37 aplicadas: publicação recuperável de eventos pendentes, IDs únicos por ocorrência de retry/reprocessamento, `provider_id` alinhado ao domínio e validação explícita dos conjuntos `required` dos schemas.

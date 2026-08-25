@@ -519,6 +519,12 @@ class IntegrationCatalogApplicationService:
                 plan_fingerprint=plan_fingerprint,
             )
             if existing_execution is not None:
+                _publish_pending_integration_execution_events(
+                    store=self._integration_execution_store,
+                    publisher=self._integration_execution_result_publisher,
+                    tenant_id=tenant_id,
+                    idempotency_key=idempotency_key,
+                )
                 self._log_operation(
                     context=context,
                     operation="integration_execution.idempotency_hit",
@@ -661,14 +667,19 @@ class IntegrationCatalogApplicationService:
                 ),
             )
             if self._integration_execution_result_publisher is not None:
-                for event in _integration_execution_events(
-                    execution,
-                    context=context,
-                    cost_records=cost_records,
-                    retry_schedules=dispatch_result.retry_schedules,
-                    dlq_records=dispatch_result.dlq_records,
-                ):
-                    self._integration_execution_result_publisher.publish(event)
+                _publish_integration_execution_events(
+                    store=self._integration_execution_store,
+                    publisher=self._integration_execution_result_publisher,
+                    tenant_id=tenant_id,
+                    idempotency_key=idempotency_key,
+                    events=_integration_execution_events(
+                        execution,
+                        context=context,
+                        cost_records=cost_records,
+                        retry_schedules=dispatch_result.retry_schedules,
+                        dlq_records=dispatch_result.dlq_records,
+                    ),
+                )
             self._log_operation(
                 context=context,
                 operation="integration_execution.fan_in",
@@ -887,16 +898,21 @@ class IntegrationCatalogApplicationService:
                     ),
                 )
                 if self._integration_execution_result_publisher is not None:
-                    for event in _integration_execution_events(
-                        reprocess_execution,
-                        context=context,
-                        cost_records=cost_records,
-                        retry_schedules=dispatch_result.retry_schedules,
-                        dlq_records=dispatch_result.dlq_records,
-                        reprocess_record=updated_record,
+                    _publish_integration_execution_events(
+                        store=self._integration_execution_store,
+                        publisher=self._integration_execution_result_publisher,
+                        tenant_id=tenant_id,
                         idempotency_key=idempotency_key,
-                    ):
-                        self._integration_execution_result_publisher.publish(event)
+                        events=_integration_execution_events(
+                            reprocess_execution,
+                            context=context,
+                            cost_records=cost_records,
+                            retry_schedules=dispatch_result.retry_schedules,
+                            dlq_records=dispatch_result.dlq_records,
+                            reprocess_record=updated_record,
+                            idempotency_key=idempotency_key,
+                        ),
+                    )
             else:
                 reprocess_execution_id = existing_execution.execution_id
                 updated_record = self._integration_dlq_store.mark_reprocessed(
@@ -905,6 +921,12 @@ class IntegrationCatalogApplicationService:
                     idempotency_key=idempotency_key,
                     reprocessed_at=self._clock(),
                     reprocess_execution_id=reprocess_execution_id,
+                )
+                _publish_pending_integration_execution_events(
+                    store=self._integration_execution_store,
+                    publisher=self._integration_execution_result_publisher,
+                    tenant_id=tenant_id,
+                    idempotency_key=idempotency_key,
                 )
             assert reprocess_execution_id is not None
             self._audit_publisher.publish(
@@ -1598,6 +1620,48 @@ def _integration_execution_events(
     return tuple(events)
 
 
+def _publish_integration_execution_events(
+    *,
+    store: IntegrationExecutionStore,
+    publisher: IntegrationExecutionResultPublisher,
+    tenant_id: str,
+    idempotency_key: str,
+    events: tuple[IntegrationExecutionEvent, ...],
+) -> None:
+    store.stage_execution_events(
+        tenant_id=tenant_id,
+        idempotency_key=idempotency_key,
+        events=events,
+    )
+    _publish_pending_integration_execution_events(
+        store=store,
+        publisher=publisher,
+        tenant_id=tenant_id,
+        idempotency_key=idempotency_key,
+    )
+
+
+def _publish_pending_integration_execution_events(
+    *,
+    store: IntegrationExecutionStore,
+    publisher: IntegrationExecutionResultPublisher | None,
+    tenant_id: str,
+    idempotency_key: str,
+) -> None:
+    if publisher is None:
+        return
+    for event in store.list_unpublished_execution_events(
+        tenant_id=tenant_id,
+        idempotency_key=idempotency_key,
+    ):
+        publisher.publish(event)
+        store.mark_execution_event_published(
+            tenant_id=tenant_id,
+            idempotency_key=idempotency_key,
+            event_id=event.id,
+        )
+
+
 def _integration_cost_event(
     execution: IntegrationExecution,
     *,
@@ -1657,6 +1721,7 @@ def _integration_retry_event(
     return _integration_job_event(
         event_type=event_type,
         subject=f"integration-execution/{schedule.execution_id}/job/{schedule.job_id}",
+        occurrence_key=f"attempt:{schedule.attempt_count}",
         occurred_at=schedule.scheduled_at,
         tenant_id=schedule.tenant_id,
         correlation_id=schedule.correlation_id,
@@ -1688,6 +1753,7 @@ def _integration_dlq_event(
     return _integration_job_event(
         event_type="creditos.integration.job.dlq_recorded.v1",
         subject=f"integration-execution/{record.execution_id}/job/{record.job_id}",
+        occurrence_key=f"dlq:{record.dlq_id}",
         occurred_at=record.created_at.isoformat(),
         tenant_id=record.tenant_id,
         correlation_id=record.correlation_id,
@@ -1714,6 +1780,7 @@ def _integration_reprocess_event(
     return _integration_job_event(
         event_type="creditos.integration.job.reprocess_requested.v1",
         subject=f"integration-execution/{record.execution_id}/job/{record.job_id}",
+        occurrence_key=f"reprocess:{record.reprocess_count}:{idempotency_key}",
         occurred_at=occurred_at,
         tenant_id=record.tenant_id,
         correlation_id=record.correlation_id,
@@ -1730,6 +1797,7 @@ def _integration_job_event(
     *,
     event_type: str,
     subject: str,
+    occurrence_key: str,
     occurred_at: str,
     tenant_id: str,
     correlation_id: str,
@@ -1740,7 +1808,7 @@ def _integration_job_event(
     dataschema: str,
     data: dict[str, object],
 ) -> IntegrationExecutionEvent:
-    event_id_seed = "|".join((subject, event_type, schema_version))
+    event_id_seed = "|".join((subject, event_type, occurrence_key, schema_version))
     return IntegrationExecutionEvent(
         specversion="1.0",
         id=f"evt_{sha256(event_id_seed.encode('utf-8')).hexdigest()[:32]}",

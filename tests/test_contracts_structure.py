@@ -838,6 +838,40 @@ def test_contract_governance_check_rejects_integration_schema_pattern_drift(
     assert "pattern divergente para adapter_id" in result.stderr
 
 
+def test_contract_governance_check_rejects_integration_provider_id_pattern_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = (
+        contracts_root / "schemas" / "integration" / "v1" / "integration-result.schema.json"
+    )
+    schema = load_json(schema_path)
+    schema["$defs"]["result"]["properties"]["provider_id"]["pattern"] = "^iprv_[a-z0-9_]{3,80}$"
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "pattern divergente para provider_id" in result.stderr
+
+
+def test_contract_governance_check_rejects_integration_nested_required_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = (
+        contracts_root / "schemas" / "integration" / "v1" / "integration-result.schema.json"
+    )
+    schema = load_json(schema_path)
+    schema["$defs"]["result"]["required"].remove("result_id")
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "required de $defs.result divergente" in result.stderr
+
+
 def test_contract_governance_check_rejects_integration_asyncapi_schema_traversal(
     tmp_path: Path,
 ) -> None:

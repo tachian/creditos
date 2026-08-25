@@ -112,6 +112,28 @@ def test_recoverable_failure_exceeding_max_attempts_creates_canonical_dlq() -> N
     assert dlq_event.data["dlq_id"] == dlq_records[0].dlq_id
 
 
+def test_retry_events_have_distinct_ids_for_each_attempt() -> None:
+    publisher = CapturingIntegrationExecutionResultPublisher()
+    service_bundle = _service_with_adapter(
+        RaisingMockIntegrationAdapter(),
+        result_publisher=publisher,
+    )
+
+    _start_single_class_execution(
+        service_bundle,
+        "resilience-key-dlq-three-attempts",
+        max_attempts=3,
+    )
+
+    retry_events = [
+        event
+        for event in publisher.events
+        if event.type == "creditos.integration.job.retry_scheduled.v1"
+    ]
+    assert [event.data["attempt_count"] for event in retry_events] == [1, 2]
+    assert len({event.id for event in retry_events}) == 2
+
+
 def test_non_recoverable_failure_goes_to_dlq_without_retry_extra() -> None:
     service_bundle = _service_with_adapter(NonRecoverableMockIntegrationAdapter())
 
@@ -341,6 +363,37 @@ def test_reprocess_marks_dlq_before_publishing_cost_projection() -> None:
         ).data["dlq_id"]
         == dlq_record.dlq_id
     )
+
+
+def test_reprocess_events_have_distinct_ids_for_each_reprocess_count() -> None:
+    publisher = CapturingIntegrationExecutionResultPublisher()
+    service_bundle = _service_with_adapter(
+        RaisingMockIntegrationAdapter(),
+        result_publisher=publisher,
+    )
+    execution = _start_single_class_execution(service_bundle, "resilience-key-reprocess-ids")
+    dlq_record = service_bundle.dlq_store.list_for_execution(
+        tenant_id="tenant-bridge-001",
+        execution_id=execution.execution_id,
+    )[0]
+
+    for suffix in ("first", "second"):
+        service_bundle.service.reprocess_integration_dlq(
+            ReprocessIntegrationDlqCommand(
+                dlq_id=dlq_record.dlq_id,
+                idempotency_key=f"idempotency-key-reprocess-ids-{suffix}",
+                scopes=("integration_execution:reprocess",),
+            ),
+            context=_context(),
+        )
+
+    reprocess_events = [
+        event
+        for event in publisher.events
+        if event.type == "creditos.integration.job.reprocess_requested.v1"
+    ]
+    assert [event.data["reprocess_count"] for event in reprocess_events] == [1, 2]
+    assert len({event.id for event in reprocess_events}) == 2
 
 
 def test_reprocess_rejects_new_key_after_terminal_reprocess() -> None:
