@@ -5,6 +5,8 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from creditos_integration.adapters.events import InMemoryIntegrationExecutionDispatcher
@@ -40,6 +42,61 @@ from creditos_integration.domain.errors import IntegrationValidationError
 from creditos_observability.context import ObservabilityContext
 
 _FIXED_TIME = datetime(2026, 8, 20, 10, 0, tzinfo=UTC)
+_ROOT = Path(__file__).resolve().parents[4]
+_INTEGRATION_ASYNCAPI = (
+    _ROOT
+    / "packages"
+    / "contracts"
+    / "asyncapi"
+    / "events"
+    / "integration"
+    / "v1"
+    / "asyncapi.json"
+)
+_INTEGRATION_RESULT_SCHEMA = (
+    _ROOT
+    / "packages"
+    / "contracts"
+    / "schemas"
+    / "integration"
+    / "v1"
+    / "integration-result.schema.json"
+)
+_INTEGRATION_COST_SCHEMA = (
+    _ROOT
+    / "packages"
+    / "contracts"
+    / "schemas"
+    / "integration"
+    / "v1"
+    / "integration-cost.schema.json"
+)
+_INTEGRATION_FORBIDDEN_FIELDS = {
+    "address",
+    "attributes",
+    "authorization",
+    "cnpj",
+    "cpf",
+    "custom",
+    "document",
+    "email",
+    "exception",
+    "headers",
+    "legal_name",
+    "metadata",
+    "name",
+    "payload",
+    "phone",
+    "provider_payload",
+    "provider_response",
+    "raw_payload",
+    "request_body",
+    "response_body",
+    "secret",
+    "stack_trace",
+    "street",
+    "token",
+}
 _MVP_CLASSES = ("kyc_kyb", "credit_bureau", "anti_fraud", "receivables")
 _ADAPTER_BY_CLASS = {
     "kyc_kyb": "mock-kyc-basic-v1",
@@ -551,12 +608,15 @@ def test_result_publisher_receives_internal_event_envelope() -> None:
         context=_context(),
     )
 
-    assert len(publisher.events) == 1
-    event = publisher.events[0]
+    assert {event.type for event in publisher.events} == {
+        "creditos.integration.execution.completed.v1",
+        "creditos.integration.execution.cost_recorded.v1",
+    }
+    event = _event_by_type(publisher, "creditos.integration.execution.completed.v1")
     assert event.specversion == "1.0"
     assert event.id.startswith("evt_")
     assert event.type == "creditos.integration.execution.completed.v1"
-    assert event.source == "integration"
+    assert event.source == "creditos://integration"
     assert event.subject == f"integration-execution/{execution.execution_id}"
     assert event.datacontenttype == "application/json"
     assert event.tenant_id == execution.tenant_id
@@ -564,6 +624,62 @@ def test_result_publisher_receives_internal_event_envelope() -> None:
     assert event.trace_id == execution.trace_id
     assert event.data["execution_id"] == execution.execution_id
     assert event.data["job_count"] == len(execution.jobs)
+
+
+def test_published_execution_event_matches_integration_contract() -> None:
+    publisher = CapturingIntegrationExecutionResultPublisher()
+    service = _service(
+        dispatcher=InMemoryIntegrationExecutionDispatcher(),
+        result_publisher=publisher,
+    )
+    plan = _ready_plan(service)
+
+    execution = service.start_integration_execution(
+        StartIntegrationExecutionCommand(
+            plan=plan,
+            idempotency_key="integration-key-contract",
+            scopes=("integration_execution:start",),
+        ),
+        context=_context(),
+    )
+
+    assert {event.type for event in publisher.events} == {
+        "creditos.integration.execution.completed.v1",
+        "creditos.integration.execution.cost_recorded.v1",
+    }
+    asyncapi = _load_json(_INTEGRATION_ASYNCAPI)
+    result_schema = _load_json(_INTEGRATION_RESULT_SCHEMA)
+    cost_schema = _load_json(_INTEGRATION_COST_SCHEMA)
+    result_event = _event_by_type(publisher, "creditos.integration.execution.completed.v1")
+    cost_event = _event_by_type(publisher, "creditos.integration.execution.cost_recorded.v1")
+
+    result_cloudevent = result_event.to_cloudevent_dict()
+    cost_cloudevent = cost_event.to_cloudevent_dict()
+    _assert_cloudevent_matches_message(
+        result_cloudevent,
+        asyncapi["components"]["messages"]["IntegrationExecutionCompleted"]["payload"],
+    )
+    _assert_cloudevent_matches_message(
+        cost_cloudevent,
+        asyncapi["components"]["messages"]["IntegrationCostRecorded"]["payload"],
+    )
+    _assert_payload_matches_schema(result_cloudevent["data"], result_schema)
+    _assert_payload_matches_schema(cost_cloudevent["data"], cost_schema)
+
+    assert cast(str, result_cloudevent["dataschema"]).endswith("integration-result.schema.json")
+    assert cast(str, cost_cloudevent["dataschema"]).endswith("integration-cost.schema.json")
+    assert result_cloudevent["tenantid"] == execution.tenant_id
+    assert result_cloudevent["tenanttier"] == "bridge"
+    assert result_cloudevent["correlationid"] == execution.correlation_id
+    assert result_cloudevent["requestid"] == "req-integration-001"
+    assert result_cloudevent["idempotencykey"] == "integration-key-contract"
+    assert result_cloudevent["schemaversion"] == "v1"
+    assert result_cloudevent["traceparent"] == (
+        "00-22222222222222222222222222222222-0000000000000001-01"
+    )
+    assert cast(dict[str, object], cost_cloudevent["data"])["total_actual_cost_units"] == 48
+    assert not (set(_iter_payload_keys(result_cloudevent)) & _INTEGRATION_FORBIDDEN_FIELDS)
+    assert not (set(_iter_payload_keys(cost_cloudevent)) & _INTEGRATION_FORBIDDEN_FIELDS)
 
 
 def test_cost_projection_records_integer_units_and_minimized_event() -> None:
@@ -584,8 +700,11 @@ def test_cost_projection_records_integer_units_and_minimized_event() -> None:
     )
 
     assert {job.estimated_cost_units for job in execution.jobs} == {12}
-    assert len(publisher.events) == 1
-    event = publisher.events[0]
+    assert {event.type for event in publisher.events} == {
+        "creditos.integration.execution.completed.v1",
+        "creditos.integration.execution.cost_recorded.v1",
+    }
+    event = _event_by_type(publisher, "creditos.integration.execution.cost_recorded.v1")
     records = event.data["cost_records"]
     assert event.data["cost_projection_type"] == "creditos.integration.execution.cost_recorded.v1"
     assert event.data["total_estimated_cost_units"] == 48
@@ -658,7 +777,8 @@ def test_cost_projection_preserves_configured_provider_id() -> None:
     )
 
     assert execution.jobs[0].provider_id == "iprv_mock_provider_v1"
-    assert publisher.events[0].data["cost_records"][0]["provider_id"] == "iprv_mock_provider_v1"
+    cost_event = _event_by_type(publisher, "creditos.integration.execution.cost_recorded.v1")
+    assert cost_event.data["cost_records"][0]["provider_id"] == "iprv_mock_provider_v1"
 
 
 def test_rejects_dispatch_result_without_one_cost_record_per_job() -> None:
@@ -714,7 +834,9 @@ def test_cost_projection_is_not_duplicated_on_idempotency_hit() -> None:
     second_execution = service.start_integration_execution(command, context=_context())
 
     assert second_execution == first_execution
-    assert len(publisher.events) == 1
+    assert [event.type for event in publisher.events].count(
+        "creditos.integration.execution.cost_recorded.v1"
+    ) == 1
     cost_logs = [
         log
         for log in service.logged_events
@@ -722,6 +844,31 @@ def test_cost_projection_is_not_duplicated_on_idempotency_hit() -> None:
     ]
     assert len(cost_logs) == 1
     assert cost_logs[0]["extra"]["total_actual_cost_units"] == 48
+
+
+def test_pending_events_are_resumed_after_partial_publication_failure() -> None:
+    publisher = FailingOnNthIntegrationExecutionResultPublisher(fail_on_call=2)
+    service = _service(
+        dispatcher=InMemoryIntegrationExecutionDispatcher(),
+        result_publisher=publisher,
+    )
+    plan = _ready_plan(service)
+    command = StartIntegrationExecutionCommand(
+        plan=plan,
+        idempotency_key="integration-key-partial-publish-retry",
+        scopes=("integration_execution:start",),
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic publisher outage"):
+        service.start_integration_execution(command, context=_context())
+
+    replayed_execution = service.start_integration_execution(command, context=_context())
+
+    assert replayed_execution.status == "completed"
+    assert [event.type for event in publisher.events] == [
+        "creditos.integration.execution.completed.v1",
+        "creditos.integration.execution.cost_recorded.v1",
+    ]
 
 
 def test_cost_record_rejects_sensitive_provider_identifier() -> None:
@@ -813,7 +960,7 @@ def _service(
     mock_adapter_registry: InMemoryMockIntegrationAdapterRegistry | None = None,
     execution_store: InMemoryIntegrationExecutionStore | None = None,
     dispatcher: InMemoryIntegrationExecutionDispatcher,
-    result_publisher: CapturingIntegrationExecutionResultPublisher | None = None,
+    result_publisher: Any | None = None,
     environment: str = "test",
 ) -> IntegrationCatalogApplicationService:
     dlq_store = InMemoryIntegrationDlqStore()
@@ -858,6 +1005,122 @@ def _ready_plan(
     )
     assert plan.status == "ready"
     return plan
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _event_by_type(
+    publisher: CapturingIntegrationExecutionResultPublisher,
+    event_type: str,
+) -> IntegrationExecutionEvent:
+    return next(event for event in publisher.events if event.type == event_type)
+
+
+def _assert_cloudevent_matches_message(
+    cloudevent: dict[str, object],
+    payload: dict[str, Any],
+) -> None:
+    assert set(cloudevent) == set(payload["required"])
+    assert set(cloudevent) <= set(payload["properties"])
+    for field_name, schema in payload["properties"].items():
+        if field_name == "data" or field_name not in cloudevent:
+            continue
+        _assert_value_matches_schema(cloudevent[field_name], schema)
+
+
+def _assert_payload_matches_schema(value: object, schema: dict[str, Any]) -> None:
+    _assert_value_matches_schema(value, schema, root_schema=schema)
+
+
+def _assert_value_matches_schema(
+    value: object,
+    schema: dict[str, Any],
+    *,
+    root_schema: dict[str, Any] | None = None,
+) -> None:
+    root_schema = schema if root_schema is None else root_schema
+    ref = schema.get("$ref")
+    if isinstance(ref, str):
+        _assert_value_matches_schema(
+            value,
+            _resolve_internal_ref(root_schema, ref),
+            root_schema=root_schema,
+        )
+        return
+
+    expected_type = schema.get("type")
+    if expected_type == "object":
+        assert isinstance(value, dict)
+        required = set(schema.get("required", []))
+        properties = schema.get("properties", {})
+        assert isinstance(properties, dict)
+        assert required <= set(value)
+        if schema.get("additionalProperties") is False:
+            assert set(value) <= set(properties)
+        for key, nested_value in value.items():
+            if key in properties:
+                _assert_value_matches_schema(
+                    nested_value,
+                    properties[key],
+                    root_schema=root_schema,
+                )
+    elif expected_type == "array":
+        assert isinstance(value, (list, tuple))
+        if "minItems" in schema:
+            assert len(value) >= schema["minItems"]
+        if "maxItems" in schema:
+            assert len(value) <= schema["maxItems"]
+        items = schema.get("items")
+        if isinstance(items, dict):
+            for item in value:
+                _assert_value_matches_schema(item, items, root_schema=root_schema)
+    elif expected_type == "string":
+        assert isinstance(value, str)
+        if "minLength" in schema:
+            assert len(value) >= schema["minLength"]
+        if "pattern" in schema:
+            import re
+
+            assert re.fullmatch(schema["pattern"], value)
+    elif expected_type == "integer":
+        assert type(value) is int
+        if "minimum" in schema:
+            assert value >= schema["minimum"]
+        if "maximum" in schema:
+            assert value <= schema["maximum"]
+    elif isinstance(expected_type, list):
+        assert any(
+            (allowed_type == "string" and isinstance(value, str))
+            or (allowed_type == "null" and value is None)
+            for allowed_type in expected_type
+        )
+
+    if "const" in schema:
+        assert value == schema["const"]
+    if "enum" in schema:
+        assert value in schema["enum"]
+
+
+def _resolve_internal_ref(root_schema: dict[str, Any], ref: str) -> dict[str, Any]:
+    current: Any = root_schema
+    for part in ref.removeprefix("#/").split("/"):
+        current = current[part]
+    assert isinstance(current, dict)
+    return current
+
+
+def _iter_payload_keys(value: object) -> tuple[str, ...]:
+    keys: list[str] = []
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            keys.append(str(key))
+            keys.extend(_iter_payload_keys(nested_value))
+    elif isinstance(value, (list, tuple)):
+        for nested_value in value:
+            keys.extend(_iter_payload_keys(nested_value))
+    return tuple(keys)
 
 
 def _configure_command(
@@ -997,6 +1260,19 @@ class CapturingIntegrationExecutionResultPublisher:
 
     def publish(self, event: IntegrationExecutionEvent) -> None:
         self.events.append(event)
+
+
+class FailingOnNthIntegrationExecutionResultPublisher(CapturingIntegrationExecutionResultPublisher):
+    def __init__(self, *, fail_on_call: int) -> None:
+        super().__init__()
+        self._fail_on_call = fail_on_call
+        self._call_count = 0
+
+    def publish(self, event: IntegrationExecutionEvent) -> None:
+        self._call_count += 1
+        if self._call_count == self._fail_on_call:
+            raise RuntimeError("synthetic publisher outage")
+        super().publish(event)
 
 
 class MissingCostRecordDispatcher(InMemoryIntegrationExecutionDispatcher):

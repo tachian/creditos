@@ -37,3 +37,22 @@ governado por tenant via `callback.callback_profile_ref`.
 
 Blocos governados devem ser fechados por schema para evitar extensão acidental
 fora de versão aprovada.
+
+## Integração canônica v1
+
+O contrato `asyncapi/events/integration/v1/asyncapi.json` governa eventos e
+comandos assíncronos do `Integration Service` usando AsyncAPI 3.1.0 e
+CloudEvents `specversion: "1.0"`.
+
+Os schemas `schemas/integration/v1/integration-result.schema.json`,
+`schemas/integration/v1/integration-cost.schema.json` e
+`schemas/integration/v1/integration-retry.schema.json` e
+`schemas/integration/v1/integration-dlq.schema.json` mantêm dados fechados,
+minimizados e sem payload proprietário. O runtime atual publica resultado,
+custo, retries agendados, DLQ e reprocessamento em eventos separados, e o
+contrato deixa essa decisão explícita para evitar divergência entre documentação
+e código.
+
+As expectativas de consumidores ficam em
+`consumer-expectations/integration-events/v1/README.md` e cobrem `Decision`,
+`Audit & Evidence` e `Reporting & Insights`.

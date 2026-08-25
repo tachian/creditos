@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "creditos://contracts/schemas/integration/v1/integration-retry.schema.json",
+  "title": "Integration Retry Scheduled v1",
+  "type": "object",
+  "required": [
+    "execution_id",
+    "job_id",
+    "integration_class",
+    "adapter_id",
+    "failure_class",
+    "failure_code",
+    "attempt_count",
+    "retry_delay_ms",
+    "schema_version"
+  ],
+  "properties": {
+    "execution_id": {
+      "type": "string",
+      "pattern": "^iexec_[a-f0-9]{32}$"
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^ijob_[a-f0-9]{32}$"
+    },
+    "integration_class": {
+      "type": "string",
+      "enum": [
+        "kyc_kyb",
+        "credit_bureau",
+        "anti_fraud",
+        "receivables"
+      ]
+    },
+    "adapter_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]{2,80}$"
+    },
+    "failure_class": {
+      "type": "string",
+      "enum": [
+        "recoverable",
+        "non_recoverable",
+        "timeout",
+        "invalid_result"
+      ]
+    },
+    "failure_code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,80}$"
+    },
+    "attempt_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "retry_delay_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 120000
+    },
+    "schema_version": {
+      "const": "1.0"
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "execution_id": "iexec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "job_id": "ijob_cccccccccccccccccccccccccccccccc",
+      "integration_class": "credit_bureau",
+      "adapter_id": "mock-credit-bureau-v1",
+      "failure_class": "recoverable",
+      "failure_code": "adapter_error",
+      "attempt_count": 1,
+      "retry_delay_ms": 350,
+      "schema_version": "1.0"
+    }
+  ],
+  "x-creditos": {
+    "owner": "Integration",
+    "version": "v1",
+    "purpose": "Evento minimizado de retry agendado para job de integração antes de DLQ.",
+    "forbiddenFields": [
+      "address",
+      "attributes",
+      "authorization",
+      "cnpj",
+      "cpf",
+      "custom",
+      "document",
+      "email",
+      "exception",
+      "headers",
+      "legal_name",
+      "metadata",
+      "name",
+      "payload",
+      "phone",
+      "provider_payload",
+      "provider_response",
+      "raw_payload",
+      "request_body",
+      "response_body",
+      "secret",
+      "stack_trace",
+      "street",
+      "token"
+    ],
+    "invalidExamples": [
+      {
+        "execution_id": "iexec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "job_id": "ijob_cccccccccccccccccccccccccccccccc",
+        "integration_class": "credit_bureau",
+        "adapter_id": "mock-credit-bureau-v1",
+        "failure_class": "recoverable",
+        "failure_code": "adapter_error",
+        "attempt_count": 1,
+        "retry_delay_ms": 350,
+        "schema_version": "1.0",
+        "raw_payload": {
+          "document": "00000000191"
+        }
+      },
+      {
+        "execution_id": "iexec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "job_id": "ijob_cccccccccccccccccccccccccccccccc",
+        "integration_class": "credit_bureau",
+        "adapter_id": "Mock Credit Bureau",
+        "failure_class": "recoverable",
+        "failure_code": "adapter_error",
+        "attempt_count": 1,
+        "retry_delay_ms": 350,
+        "schema_version": "1.0"
+      }
+    ]
+  }
+}

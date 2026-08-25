@@ -43,6 +43,23 @@ Use:
 O check usa apenas Python stdlib nesta etapa. Ferramentas como Buf, Spectral,
 OpenAPI Generator ou AsyncAPI CLI dependem de ADR ou aprovação futura.
 
+## Eventos de Integração v1
+
+O `Integration Service` possui contratos assíncronos versionados para execução
+solicitada, conclusão completa, resultado parcial, falha, retry, DLQ,
+reprocessamento e projeção de custo.
+
+Esses contratos usam AsyncAPI 3.1.0, CloudEvents `specversion: "1.0"` e schemas
+JSON fechados em `packages/contracts/schemas/integration/v1`. O envelope exige
+tenant confiável, tier de isolamento, correlação, request, idempotência, versão
+de schema e `traceparent`. Dados sensíveis, payload bruto, headers, exceções e
+respostas proprietárias são bloqueados por testes e pelo checker.
+
+O runtime in-memory do `Integration Service` possui teste focado que compara a
+serialização CloudEvents da execução com o contrato de integração, incluindo
+resultado, projeção minimizada de custo, retry, DLQ, reprocessamento e prevenção
+de duplicidade em replay idempotente.
+
 ## Limitação Atual
 
 A Story 0.3 adota estratégia `metadata-only`: o check valida estrutura,

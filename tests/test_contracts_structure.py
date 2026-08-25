@@ -13,6 +13,22 @@ CONTRACTS = ROOT / "packages" / "contracts"
 CONTRACT_CHECK = ROOT / "scripts" / "check_contracts.py"
 PROPOSAL_SCHEMA = CONTRACTS / "schemas" / "proposal" / "v1" / "proposal.schema.json"
 PROPOSAL_OPENAPI = CONTRACTS / "openapi" / "public" / "proposal-intake" / "v1" / "openapi.json"
+INTEGRATION_ASYNCAPI = CONTRACTS / "asyncapi" / "events" / "integration" / "v1" / "asyncapi.json"
+INTEGRATION_RESULT_SCHEMA = (
+    CONTRACTS / "schemas" / "integration" / "v1" / "integration-result.schema.json"
+)
+INTEGRATION_COST_SCHEMA = (
+    CONTRACTS / "schemas" / "integration" / "v1" / "integration-cost.schema.json"
+)
+INTEGRATION_DLQ_SCHEMA = (
+    CONTRACTS / "schemas" / "integration" / "v1" / "integration-dlq.schema.json"
+)
+INTEGRATION_RETRY_SCHEMA = (
+    CONTRACTS / "schemas" / "integration" / "v1" / "integration-retry.schema.json"
+)
+INTEGRATION_CONSUMER_EXPECTATIONS = (
+    CONTRACTS / "consumer-expectations" / "integration-events" / "v1" / "README.md"
+)
 CORE_PROPOSAL_FIELDS = {
     "schema_version",
     "external_proposal_id",
@@ -35,6 +51,42 @@ FORBIDDEN_PROPOSAL_FIELDS = {
     "custom",
     "metadata",
     "attributes",
+}
+INTEGRATION_EVENT_TYPES = {
+    "creditos.integration.execution.requested.v1",
+    "creditos.integration.execution.completed.v1",
+    "creditos.integration.execution.partial.v1",
+    "creditos.integration.execution.failed.v1",
+    "creditos.integration.job.retry_scheduled.v1",
+    "creditos.integration.job.dlq_recorded.v1",
+    "creditos.integration.job.reprocess_requested.v1",
+    "creditos.integration.execution.cost_recorded.v1",
+}
+INTEGRATION_FORBIDDEN_FIELDS = {
+    "address",
+    "attributes",
+    "authorization",
+    "cnpj",
+    "cpf",
+    "custom",
+    "document",
+    "email",
+    "exception",
+    "headers",
+    "legal_name",
+    "metadata",
+    "name",
+    "payload",
+    "phone",
+    "provider_payload",
+    "provider_response",
+    "raw_payload",
+    "request_body",
+    "response_body",
+    "secret",
+    "stack_trace",
+    "street",
+    "token",
 }
 
 REQUIRED_CONTRACT_DIRECTORIES = [
@@ -582,10 +634,293 @@ def test_contract_governance_check_rejects_non_object_proposal_submitted_payload
     assert "ProposalSubmitted payload deve ser object" in result.stderr
 
 
+def test_integration_contracts_are_registered_and_versioned() -> None:
+    catalog = tomllib.loads((CONTRACTS / "catalog" / "contracts.toml").read_text(encoding="utf-8"))
+    contract_entries = {
+        (entry["id"], entry["version"], entry["path"]) for entry in catalog["contracts"]
+    }
+
+    assert (
+        "integration-events",
+        "v1",
+        "asyncapi/events/integration/v1/asyncapi.json",
+    ) in contract_entries
+    assert (
+        "integration-result-schema",
+        "v1",
+        "schemas/integration/v1/integration-result.schema.json",
+    ) in contract_entries
+    assert (
+        "integration-cost-schema",
+        "v1",
+        "schemas/integration/v1/integration-cost.schema.json",
+    ) in contract_entries
+    assert (
+        "integration-dlq-schema",
+        "v1",
+        "schemas/integration/v1/integration-dlq.schema.json",
+    ) in contract_entries
+    assert (
+        "integration-retry-schema",
+        "v1",
+        "schemas/integration/v1/integration-retry.schema.json",
+    ) in contract_entries
+
+
+def test_integration_asyncapi_defines_minimized_cloudevents() -> None:
+    asyncapi = load_json(INTEGRATION_ASYNCAPI)
+    messages = asyncapi["components"]["messages"]
+    event_types = {
+        message["payload"]["properties"]["type"]["const"] for message in messages.values()
+    }
+
+    assert asyncapi["asyncapi"] == "3.1.0"
+    assert asyncapi["info"]["version"] == "v1"
+    assert event_types == INTEGRATION_EVENT_TYPES
+
+    for message_name, message in messages.items():
+        payload = message["payload"]
+        data = resolve_contract_ref(payload["properties"]["data"])
+        data_keys = set(data["properties"])
+
+        assert payload["type"] == "object", message_name
+        assert payload["additionalProperties"] is False, message_name
+        assert payload["properties"]["specversion"]["const"] == "1.0", message_name
+        assert payload["properties"]["source"]["const"] == "creditos://integration", message_name
+        assert payload["properties"]["dataschema"]["const"].startswith("creditos://contracts/"), (
+            message_name
+        )
+        assert data["type"] == "object", message_name
+        assert data["additionalProperties"] is False, message_name
+        assert "execution_id" in data_keys, message_name
+        assert data_keys.isdisjoint(INTEGRATION_FORBIDDEN_FIELDS), message_name
+
+
+def test_integration_json_schemas_are_closed_and_minimized() -> None:
+    for schema_path in (
+        INTEGRATION_RESULT_SCHEMA,
+        INTEGRATION_COST_SCHEMA,
+        INTEGRATION_DLQ_SCHEMA,
+        INTEGRATION_RETRY_SCHEMA,
+    ):
+        schema = load_json(schema_path)
+        metadata = schema["x-creditos"]
+        property_names = set(iter_property_names(schema))
+
+        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        assert metadata["owner"] == "Integration"
+        assert metadata["version"] == "v1"
+        assert set(metadata["forbiddenFields"]) >= INTEGRATION_FORBIDDEN_FIELDS
+        assert property_names.isdisjoint(INTEGRATION_FORBIDDEN_FIELDS)
+
+        for path, object_schema in iter_object_schemas(schema):
+            assert (
+                object_schema.get("additionalProperties") is False
+                or object_schema.get("unevaluatedProperties") is False
+            ), f"Objeto governado sem fechamento: {path}"
+
+
+def test_integration_schema_examples_are_governed_and_minimized() -> None:
+    for schema_path in (
+        INTEGRATION_RESULT_SCHEMA,
+        INTEGRATION_COST_SCHEMA,
+        INTEGRATION_DLQ_SCHEMA,
+        INTEGRATION_RETRY_SCHEMA,
+    ):
+        schema = load_json(schema_path)
+        examples = schema["examples"]
+        invalid_examples = schema["x-creditos"]["invalidExamples"]
+
+        assert examples, schema_path
+        assert invalid_examples, schema_path
+        assert all(
+            not (set(iter_payload_keys(example)) & INTEGRATION_FORBIDDEN_FIELDS)
+            for example in examples
+        )
+        assert any(
+            set(iter_payload_keys(example)) & INTEGRATION_FORBIDDEN_FIELDS
+            for example in invalid_examples
+        )
+
+
+def test_integration_consumer_expectations_cover_downstream_services() -> None:
+    content = INTEGRATION_CONSUMER_EXPECTATIONS.read_text(encoding="utf-8")
+
+    assert "Decision" in content
+    assert "Audit & Evidence" in content
+    assert "Reporting & Insights" in content
+    assert "payload bruto" in content
+    assert "fornecedor real" in content
+
+
+def test_contract_governance_check_rejects_open_integration_event_data(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    asyncapi_path = contracts_root / "asyncapi" / "events" / "integration" / "v1" / "asyncapi.json"
+    asyncapi = load_json(asyncapi_path)
+    message = asyncapi["components"]["messages"]["IntegrationExecutionRequested"]
+    message["payload"]["properties"]["data"]["additionalProperties"] = True
+    asyncapi_path.write_text(dumped(asyncapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Integration data deve ser fechado" in result.stderr
+
+
+def test_contract_governance_check_rejects_sensitive_integration_schema_field(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = (
+        contracts_root / "schemas" / "integration" / "v1" / "integration-result.schema.json"
+    )
+    schema = load_json(schema_path)
+    schema["properties"]["provider_response"] = {"type": "object"}
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert (
+        "Campo proibido no schema de integração" in result.stderr
+        or "Integration data não pode expor campos sensíveis" in result.stderr
+    )
+
+
+def test_contract_governance_check_rejects_integration_schema_without_invalid_examples(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = contracts_root / "schemas" / "integration" / "v1" / "integration-cost.schema.json"
+    schema = load_json(schema_path)
+    schema["x-creditos"]["invalidExamples"] = []
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "exemplos inválidos governados" in result.stderr
+
+
+def test_contract_governance_check_rejects_integration_result_schema_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = (
+        contracts_root / "schemas" / "integration" / "v1" / "integration-result.schema.json"
+    )
+    schema = load_json(schema_path)
+    schema["properties"]["status"]["enum"].append("unknown_status")
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "status divergente no schema de integração" in result.stderr
+
+
+def test_contract_governance_check_rejects_integration_schema_pattern_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = (
+        contracts_root / "schemas" / "integration" / "v1" / "integration-result.schema.json"
+    )
+    schema = load_json(schema_path)
+    schema["$defs"]["result"]["properties"]["adapter_id"]["pattern"] = "^[a-z0-9_]{2,80}$"
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "pattern divergente para adapter_id" in result.stderr
+
+
+def test_contract_governance_check_rejects_integration_provider_id_pattern_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = (
+        contracts_root / "schemas" / "integration" / "v1" / "integration-result.schema.json"
+    )
+    schema = load_json(schema_path)
+    schema["$defs"]["result"]["properties"]["provider_id"]["pattern"] = "^iprv_[a-z0-9_]{3,80}$"
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "pattern divergente para provider_id" in result.stderr
+
+
+def test_contract_governance_check_rejects_integration_nested_required_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = (
+        contracts_root / "schemas" / "integration" / "v1" / "integration-result.schema.json"
+    )
+    schema = load_json(schema_path)
+    schema["$defs"]["result"]["required"].remove("result_id")
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "required de $defs.result divergente" in result.stderr
+
+
+def test_contract_governance_check_rejects_integration_asyncapi_schema_traversal(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    outside_schema = tmp_path / "integration-result.schema.json"
+    outside_schema.write_text(
+        dumped({"type": "object", "properties": {}, "additionalProperties": False}),
+        encoding="utf-8",
+    )
+    asyncapi_path = contracts_root / "asyncapi" / "events" / "integration" / "v1" / "asyncapi.json"
+    asyncapi = load_json(asyncapi_path)
+    message = asyncapi["components"]["messages"]["IntegrationExecutionCompleted"]
+    message["payload"]["properties"]["data"] = {"$ref": str(outside_schema)}
+    asyncapi_path.write_text(dumped(asyncapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "fora de packages/contracts" in result.stderr
+
+
+def test_contract_governance_check_rejects_integration_cost_cardinality_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    schema_path = contracts_root / "schemas" / "integration" / "v1" / "integration-cost.schema.json"
+    schema = load_json(schema_path)
+    schema["properties"]["cost_records"].pop("minItems")
+    schema_path.write_text(dumped(schema), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "cost_records deve exigir minItems 1" in result.stderr
+
+
 def load_json(path: Path) -> dict[str, Any]:
     import json
 
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def resolve_contract_ref(schema: Mapping[str, Any]) -> Mapping[str, Any]:
+    ref = schema.get("$ref")
+    if not isinstance(ref, str):
+        return schema
+
+    ref_path = (INTEGRATION_ASYNCAPI.parent / ref).resolve()
+    return load_json(ref_path)
 
 
 def dumped(value: object) -> str:

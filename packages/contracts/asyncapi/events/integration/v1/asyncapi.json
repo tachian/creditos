@@ -1,0 +1,1142 @@
+{
+  "asyncapi": "3.1.0",
+  "channels": {
+    "integrationCostRecorded": {
+      "address": "creditos.integration.execution.cost_recorded.v1",
+      "messages": {
+        "IntegrationCostRecorded": {
+          "$ref": "#/components/messages/IntegrationCostRecorded"
+        }
+      }
+    },
+    "integrationExecutionCompleted": {
+      "address": "creditos.integration.execution.completed.v1",
+      "messages": {
+        "IntegrationExecutionCompleted": {
+          "$ref": "#/components/messages/IntegrationExecutionCompleted"
+        }
+      }
+    },
+    "integrationExecutionFailed": {
+      "address": "creditos.integration.execution.failed.v1",
+      "messages": {
+        "IntegrationExecutionFailed": {
+          "$ref": "#/components/messages/IntegrationExecutionFailed"
+        }
+      }
+    },
+    "integrationExecutionPartial": {
+      "address": "creditos.integration.execution.partial.v1",
+      "messages": {
+        "IntegrationExecutionPartial": {
+          "$ref": "#/components/messages/IntegrationExecutionPartial"
+        }
+      }
+    },
+    "integrationExecutionRequested": {
+      "address": "creditos.integration.execution.requested.v1",
+      "messages": {
+        "IntegrationExecutionRequested": {
+          "$ref": "#/components/messages/IntegrationExecutionRequested"
+        }
+      }
+    },
+    "integrationJobDlqRecorded": {
+      "address": "creditos.integration.job.dlq_recorded.v1",
+      "messages": {
+        "IntegrationJobDlqRecorded": {
+          "$ref": "#/components/messages/IntegrationJobDlqRecorded"
+        }
+      }
+    },
+    "integrationJobReprocessRequested": {
+      "address": "creditos.integration.job.reprocess_requested.v1",
+      "messages": {
+        "IntegrationJobReprocessRequested": {
+          "$ref": "#/components/messages/IntegrationJobReprocessRequested"
+        }
+      }
+    },
+    "integrationJobRetryScheduled": {
+      "address": "creditos.integration.job.retry_scheduled.v1",
+      "messages": {
+        "IntegrationJobRetryScheduled": {
+          "$ref": "#/components/messages/IntegrationJobRetryScheduled"
+        }
+      }
+    }
+  },
+  "components": {
+    "messages": {
+      "IntegrationCostRecorded": {
+        "name": "IntegrationCostRecorded",
+        "payload": {
+          "additionalProperties": false,
+          "properties": {
+            "clientid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "correlationid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "data": {
+              "$ref": "../../../../schemas/integration/v1/integration-cost.schema.json"
+            },
+            "datacontenttype": {
+              "const": "application/json"
+            },
+            "dataschema": {
+              "const": "creditos://contracts/schemas/integration/v1/integration-cost.schema.json"
+            },
+            "id": {
+              "pattern": "^evt_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "idempotencykey": {
+              "minLength": 8,
+              "type": "string"
+            },
+            "principaltype": {
+              "enum": [
+                "m2m",
+                "human",
+                "platform"
+              ],
+              "type": "string"
+            },
+            "requestid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "roles": {
+              "type": "string"
+            },
+            "schemaversion": {
+              "const": "v1"
+            },
+            "scopes": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "source": {
+              "const": "creditos://integration"
+            },
+            "specversion": {
+              "const": "1.0"
+            },
+            "subject": {
+              "pattern": "^integration-execution/iexec_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "subjectid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenantid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenanttier": {
+              "enum": [
+                "bridge",
+                "silo"
+              ],
+              "type": "string"
+            },
+            "time": {
+              "format": "date-time",
+              "minLength": 20,
+              "type": "string"
+            },
+            "traceparent": {
+              "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+              "type": "string"
+            },
+            "type": {
+              "const": "creditos.integration.execution.cost_recorded.v1"
+            }
+          },
+          "required": [
+            "specversion",
+            "id",
+            "source",
+            "type",
+            "subject",
+            "time",
+            "datacontenttype",
+            "dataschema",
+            "tenantid",
+            "tenanttier",
+            "subjectid",
+            "clientid",
+            "principaltype",
+            "scopes",
+            "correlationid",
+            "requestid",
+            "idempotencykey",
+            "schemaversion",
+            "traceparent",
+            "data"
+          ],
+          "type": "object"
+        },
+        "title": "Custo de integração registrado"
+      },
+      "IntegrationExecutionCompleted": {
+        "name": "IntegrationExecutionCompleted",
+        "payload": {
+          "additionalProperties": false,
+          "properties": {
+            "clientid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "correlationid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "data": {
+              "$ref": "../../../../schemas/integration/v1/integration-result.schema.json"
+            },
+            "datacontenttype": {
+              "const": "application/json"
+            },
+            "dataschema": {
+              "const": "creditos://contracts/schemas/integration/v1/integration-result.schema.json"
+            },
+            "id": {
+              "pattern": "^evt_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "idempotencykey": {
+              "minLength": 8,
+              "type": "string"
+            },
+            "principaltype": {
+              "enum": [
+                "m2m",
+                "human",
+                "platform"
+              ],
+              "type": "string"
+            },
+            "requestid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "roles": {
+              "type": "string"
+            },
+            "schemaversion": {
+              "const": "v1"
+            },
+            "scopes": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "source": {
+              "const": "creditos://integration"
+            },
+            "specversion": {
+              "const": "1.0"
+            },
+            "subject": {
+              "pattern": "^integration-execution/iexec_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "subjectid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenantid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenanttier": {
+              "enum": [
+                "bridge",
+                "silo"
+              ],
+              "type": "string"
+            },
+            "time": {
+              "format": "date-time",
+              "minLength": 20,
+              "type": "string"
+            },
+            "traceparent": {
+              "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+              "type": "string"
+            },
+            "type": {
+              "const": "creditos.integration.execution.completed.v1"
+            }
+          },
+          "required": [
+            "specversion",
+            "id",
+            "source",
+            "type",
+            "subject",
+            "time",
+            "datacontenttype",
+            "dataschema",
+            "tenantid",
+            "tenanttier",
+            "subjectid",
+            "clientid",
+            "principaltype",
+            "scopes",
+            "correlationid",
+            "requestid",
+            "idempotencykey",
+            "schemaversion",
+            "traceparent",
+            "data"
+          ],
+          "type": "object"
+        },
+        "title": "Execução de integração concluída"
+      },
+      "IntegrationExecutionFailed": {
+        "name": "IntegrationExecutionFailed",
+        "payload": {
+          "additionalProperties": false,
+          "properties": {
+            "clientid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "correlationid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "data": {
+              "$ref": "../../../../schemas/integration/v1/integration-result.schema.json"
+            },
+            "datacontenttype": {
+              "const": "application/json"
+            },
+            "dataschema": {
+              "const": "creditos://contracts/schemas/integration/v1/integration-result.schema.json"
+            },
+            "id": {
+              "pattern": "^evt_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "idempotencykey": {
+              "minLength": 8,
+              "type": "string"
+            },
+            "principaltype": {
+              "enum": [
+                "m2m",
+                "human",
+                "platform"
+              ],
+              "type": "string"
+            },
+            "requestid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "roles": {
+              "type": "string"
+            },
+            "schemaversion": {
+              "const": "v1"
+            },
+            "scopes": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "source": {
+              "const": "creditos://integration"
+            },
+            "specversion": {
+              "const": "1.0"
+            },
+            "subject": {
+              "pattern": "^integration-execution/iexec_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "subjectid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenantid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenanttier": {
+              "enum": [
+                "bridge",
+                "silo"
+              ],
+              "type": "string"
+            },
+            "time": {
+              "format": "date-time",
+              "minLength": 20,
+              "type": "string"
+            },
+            "traceparent": {
+              "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+              "type": "string"
+            },
+            "type": {
+              "const": "creditos.integration.execution.failed.v1"
+            }
+          },
+          "required": [
+            "specversion",
+            "id",
+            "source",
+            "type",
+            "subject",
+            "time",
+            "datacontenttype",
+            "dataschema",
+            "tenantid",
+            "tenanttier",
+            "subjectid",
+            "clientid",
+            "principaltype",
+            "scopes",
+            "correlationid",
+            "requestid",
+            "idempotencykey",
+            "schemaversion",
+            "traceparent",
+            "data"
+          ],
+          "type": "object"
+        },
+        "title": "Execução de integração falha"
+      },
+      "IntegrationExecutionPartial": {
+        "name": "IntegrationExecutionPartial",
+        "payload": {
+          "additionalProperties": false,
+          "properties": {
+            "clientid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "correlationid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "data": {
+              "$ref": "../../../../schemas/integration/v1/integration-result.schema.json"
+            },
+            "datacontenttype": {
+              "const": "application/json"
+            },
+            "dataschema": {
+              "const": "creditos://contracts/schemas/integration/v1/integration-result.schema.json"
+            },
+            "id": {
+              "pattern": "^evt_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "idempotencykey": {
+              "minLength": 8,
+              "type": "string"
+            },
+            "principaltype": {
+              "enum": [
+                "m2m",
+                "human",
+                "platform"
+              ],
+              "type": "string"
+            },
+            "requestid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "roles": {
+              "type": "string"
+            },
+            "schemaversion": {
+              "const": "v1"
+            },
+            "scopes": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "source": {
+              "const": "creditos://integration"
+            },
+            "specversion": {
+              "const": "1.0"
+            },
+            "subject": {
+              "pattern": "^integration-execution/iexec_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "subjectid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenantid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenanttier": {
+              "enum": [
+                "bridge",
+                "silo"
+              ],
+              "type": "string"
+            },
+            "time": {
+              "format": "date-time",
+              "minLength": 20,
+              "type": "string"
+            },
+            "traceparent": {
+              "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+              "type": "string"
+            },
+            "type": {
+              "const": "creditos.integration.execution.partial.v1"
+            }
+          },
+          "required": [
+            "specversion",
+            "id",
+            "source",
+            "type",
+            "subject",
+            "time",
+            "datacontenttype",
+            "dataschema",
+            "tenantid",
+            "tenanttier",
+            "subjectid",
+            "clientid",
+            "principaltype",
+            "scopes",
+            "correlationid",
+            "requestid",
+            "idempotencykey",
+            "schemaversion",
+            "traceparent",
+            "data"
+          ],
+          "type": "object"
+        },
+        "title": "Execução de integração parcial"
+      },
+      "IntegrationExecutionRequested": {
+        "name": "IntegrationExecutionRequested",
+        "payload": {
+          "additionalProperties": false,
+          "properties": {
+            "clientid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "correlationid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "data": {
+              "additionalProperties": false,
+              "properties": {
+                "execution_id": {
+                  "pattern": "^iexec_[a-f0-9]{32}$",
+                  "type": "string"
+                },
+                "job_count": {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "product_type": {
+                  "enum": [
+                    "personal_credit",
+                    "bnpl",
+                    "business_credit",
+                    "receivables"
+                  ],
+                  "type": "string"
+                },
+                "schema_version": {
+                  "const": "1.0"
+                },
+                "status": {
+                  "const": "requested"
+                }
+              },
+              "required": [
+                "execution_id",
+                "product_type",
+                "status",
+                "schema_version",
+                "job_count"
+              ],
+              "type": "object"
+            },
+            "datacontenttype": {
+              "const": "application/json"
+            },
+            "dataschema": {
+              "const": "creditos://contracts/asyncapi/events/integration/v1"
+            },
+            "id": {
+              "pattern": "^evt_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "idempotencykey": {
+              "minLength": 8,
+              "type": "string"
+            },
+            "principaltype": {
+              "enum": [
+                "m2m",
+                "human",
+                "platform"
+              ],
+              "type": "string"
+            },
+            "requestid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "roles": {
+              "type": "string"
+            },
+            "schemaversion": {
+              "const": "v1"
+            },
+            "scopes": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "source": {
+              "const": "creditos://integration"
+            },
+            "specversion": {
+              "const": "1.0"
+            },
+            "subject": {
+              "pattern": "^integration-execution/iexec_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "subjectid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenantid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenanttier": {
+              "enum": [
+                "bridge",
+                "silo"
+              ],
+              "type": "string"
+            },
+            "time": {
+              "format": "date-time",
+              "minLength": 20,
+              "type": "string"
+            },
+            "traceparent": {
+              "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+              "type": "string"
+            },
+            "type": {
+              "const": "creditos.integration.execution.requested.v1"
+            }
+          },
+          "required": [
+            "specversion",
+            "id",
+            "source",
+            "type",
+            "subject",
+            "time",
+            "datacontenttype",
+            "dataschema",
+            "tenantid",
+            "tenanttier",
+            "subjectid",
+            "clientid",
+            "principaltype",
+            "scopes",
+            "correlationid",
+            "requestid",
+            "idempotencykey",
+            "schemaversion",
+            "traceparent",
+            "data"
+          ],
+          "type": "object"
+        },
+        "title": "Execução de integração solicitada"
+      },
+      "IntegrationJobDlqRecorded": {
+        "name": "IntegrationJobDlqRecorded",
+        "payload": {
+          "additionalProperties": false,
+          "properties": {
+            "clientid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "correlationid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "data": {
+              "$ref": "../../../../schemas/integration/v1/integration-dlq.schema.json"
+            },
+            "datacontenttype": {
+              "const": "application/json"
+            },
+            "dataschema": {
+              "const": "creditos://contracts/schemas/integration/v1/integration-dlq.schema.json"
+            },
+            "id": {
+              "pattern": "^evt_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "idempotencykey": {
+              "minLength": 8,
+              "type": "string"
+            },
+            "principaltype": {
+              "enum": [
+                "m2m",
+                "human",
+                "platform"
+              ],
+              "type": "string"
+            },
+            "requestid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "roles": {
+              "type": "string"
+            },
+            "schemaversion": {
+              "const": "v1"
+            },
+            "scopes": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "source": {
+              "const": "creditos://integration"
+            },
+            "specversion": {
+              "const": "1.0"
+            },
+            "subject": {
+              "pattern": "^integration-execution/iexec_[a-f0-9]{32}/job/ijob_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "subjectid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenantid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenanttier": {
+              "enum": [
+                "bridge",
+                "silo"
+              ],
+              "type": "string"
+            },
+            "time": {
+              "format": "date-time",
+              "minLength": 20,
+              "type": "string"
+            },
+            "traceparent": {
+              "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+              "type": "string"
+            },
+            "type": {
+              "const": "creditos.integration.job.dlq_recorded.v1"
+            }
+          },
+          "required": [
+            "specversion",
+            "id",
+            "source",
+            "type",
+            "subject",
+            "time",
+            "datacontenttype",
+            "dataschema",
+            "tenantid",
+            "tenanttier",
+            "subjectid",
+            "clientid",
+            "principaltype",
+            "scopes",
+            "correlationid",
+            "requestid",
+            "idempotencykey",
+            "schemaversion",
+            "traceparent",
+            "data"
+          ],
+          "type": "object"
+        },
+        "title": "DLQ de job de integração registrada"
+      },
+      "IntegrationJobReprocessRequested": {
+        "name": "IntegrationJobReprocessRequested",
+        "payload": {
+          "additionalProperties": false,
+          "properties": {
+            "clientid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "correlationid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "data": {
+              "$ref": "../../../../schemas/integration/v1/integration-dlq.schema.json"
+            },
+            "datacontenttype": {
+              "const": "application/json"
+            },
+            "dataschema": {
+              "const": "creditos://contracts/schemas/integration/v1/integration-dlq.schema.json"
+            },
+            "id": {
+              "pattern": "^evt_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "idempotencykey": {
+              "minLength": 8,
+              "type": "string"
+            },
+            "principaltype": {
+              "enum": [
+                "m2m",
+                "human",
+                "platform"
+              ],
+              "type": "string"
+            },
+            "requestid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "roles": {
+              "type": "string"
+            },
+            "schemaversion": {
+              "const": "v1"
+            },
+            "scopes": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "source": {
+              "const": "creditos://integration"
+            },
+            "specversion": {
+              "const": "1.0"
+            },
+            "subject": {
+              "pattern": "^integration-execution/iexec_[a-f0-9]{32}/job/ijob_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "subjectid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenantid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenanttier": {
+              "enum": [
+                "bridge",
+                "silo"
+              ],
+              "type": "string"
+            },
+            "time": {
+              "format": "date-time",
+              "minLength": 20,
+              "type": "string"
+            },
+            "traceparent": {
+              "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+              "type": "string"
+            },
+            "type": {
+              "const": "creditos.integration.job.reprocess_requested.v1"
+            }
+          },
+          "required": [
+            "specversion",
+            "id",
+            "source",
+            "type",
+            "subject",
+            "time",
+            "datacontenttype",
+            "dataschema",
+            "tenantid",
+            "tenanttier",
+            "subjectid",
+            "clientid",
+            "principaltype",
+            "scopes",
+            "correlationid",
+            "requestid",
+            "idempotencykey",
+            "schemaversion",
+            "traceparent",
+            "data"
+          ],
+          "type": "object"
+        },
+        "title": "Reprocessamento de job de integração solicitado"
+      },
+      "IntegrationJobRetryScheduled": {
+        "name": "IntegrationJobRetryScheduled",
+        "payload": {
+          "additionalProperties": false,
+          "properties": {
+            "clientid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "correlationid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "data": {
+              "$ref": "../../../../schemas/integration/v1/integration-retry.schema.json"
+            },
+            "datacontenttype": {
+              "const": "application/json"
+            },
+            "dataschema": {
+              "const": "creditos://contracts/schemas/integration/v1/integration-retry.schema.json"
+            },
+            "id": {
+              "pattern": "^evt_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "idempotencykey": {
+              "minLength": 8,
+              "type": "string"
+            },
+            "principaltype": {
+              "enum": [
+                "m2m",
+                "human",
+                "platform"
+              ],
+              "type": "string"
+            },
+            "requestid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "roles": {
+              "type": "string"
+            },
+            "schemaversion": {
+              "const": "v1"
+            },
+            "scopes": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "source": {
+              "const": "creditos://integration"
+            },
+            "specversion": {
+              "const": "1.0"
+            },
+            "subject": {
+              "pattern": "^integration-execution/iexec_[a-f0-9]{32}/job/ijob_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "subjectid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenantid": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tenanttier": {
+              "enum": [
+                "bridge",
+                "silo"
+              ],
+              "type": "string"
+            },
+            "time": {
+              "format": "date-time",
+              "minLength": 20,
+              "type": "string"
+            },
+            "traceparent": {
+              "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+              "type": "string"
+            },
+            "type": {
+              "const": "creditos.integration.job.retry_scheduled.v1"
+            }
+          },
+          "required": [
+            "specversion",
+            "id",
+            "source",
+            "type",
+            "subject",
+            "time",
+            "datacontenttype",
+            "dataschema",
+            "tenantid",
+            "tenanttier",
+            "subjectid",
+            "clientid",
+            "principaltype",
+            "scopes",
+            "correlationid",
+            "requestid",
+            "idempotencykey",
+            "schemaversion",
+            "traceparent",
+            "data"
+          ],
+          "type": "object"
+        },
+        "title": "Retry de job de integração agendado"
+      }
+    }
+  },
+  "info": {
+    "description": "Contrato assíncrono v1 para comandos, resultados, resiliência e custo do Integration Service.",
+    "title": "CreditOS Integration Events Contract",
+    "version": "v1"
+  },
+  "operations": {
+    "publishIntegrationCostRecorded": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/integrationCostRecorded"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/integrationCostRecorded/messages/IntegrationCostRecorded"
+        }
+      ]
+    },
+    "publishIntegrationExecutionCompleted": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/integrationExecutionCompleted"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/integrationExecutionCompleted/messages/IntegrationExecutionCompleted"
+        }
+      ]
+    },
+    "publishIntegrationExecutionFailed": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/integrationExecutionFailed"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/integrationExecutionFailed/messages/IntegrationExecutionFailed"
+        }
+      ]
+    },
+    "publishIntegrationExecutionPartial": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/integrationExecutionPartial"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/integrationExecutionPartial/messages/IntegrationExecutionPartial"
+        }
+      ]
+    },
+    "publishIntegrationExecutionRequested": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/integrationExecutionRequested"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/integrationExecutionRequested/messages/IntegrationExecutionRequested"
+        }
+      ]
+    },
+    "publishIntegrationJobDlqRecorded": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/integrationJobDlqRecorded"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/integrationJobDlqRecorded/messages/IntegrationJobDlqRecorded"
+        }
+      ]
+    },
+    "publishIntegrationJobReprocessRequested": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/integrationJobReprocessRequested"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/integrationJobReprocessRequested/messages/IntegrationJobReprocessRequested"
+        }
+      ]
+    },
+    "publishIntegrationJobRetryScheduled": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/integrationJobRetryScheduled"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/integrationJobRetryScheduled/messages/IntegrationJobRetryScheduled"
+        }
+      ]
+    }
+  },
+  "servers": {
+    "natsJetStream": {
+      "description": "Servidor estrutural de referência para NATS JetStream em ambientes locais/mockados",
+      "host": "nats://creditos-nats:4222",
+      "protocol": "nats"
+    }
+  },
+  "x-creditos": {
+    "breakingChangePolicy": "new-major-version-required",
+    "compatibility": "backward-compatible",
+    "owner": "Integration"
+  }
+}

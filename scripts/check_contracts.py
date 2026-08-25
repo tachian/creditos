@@ -77,7 +77,134 @@ PROPOSAL_SUBMITTED_FORBIDDEN_DATA_FIELDS = {
     "secret",
     "token",
 }
+INTEGRATION_EVENT_TYPES = {
+    "creditos.integration.execution.requested.v1",
+    "creditos.integration.execution.completed.v1",
+    "creditos.integration.execution.partial.v1",
+    "creditos.integration.execution.failed.v1",
+    "creditos.integration.job.retry_scheduled.v1",
+    "creditos.integration.job.dlq_recorded.v1",
+    "creditos.integration.job.reprocess_requested.v1",
+    "creditos.integration.execution.cost_recorded.v1",
+}
+INTEGRATION_EXECUTION_STATUSES = {"completed", "partial", "failed"}
+INTEGRATION_RESULT_STATUSES = {"completed", "partial", "not_found", "failed"}
+INTEGRATION_CLASSES = {"kyc_kyb", "credit_bureau", "anti_fraud", "receivables"}
+INTEGRATION_SYNTHETIC_SCENARIOS = {
+    "synthetic_success",
+    "synthetic_partial",
+    "synthetic_not_found",
+    "synthetic_failure",
+}
+INTEGRATION_FAILURE_CLASSES = {"recoverable", "non_recoverable", "timeout", "invalid_result"}
+INTEGRATION_FALLBACK_STRATEGIES = {"fail_closed", "allow_partial", "skip_optional"}
+INTEGRATION_ID_PATTERNS = {
+    "execution_id": r"^iexec_[a-f0-9]{32}$",
+    "job_id": r"^ijob_[a-f0-9]{32}$",
+    "result_id": r"^ires_[a-f0-9]{32}$",
+    "dlq_id": r"^idlq_[a-f0-9]{32}$",
+    "adapter_id": r"^[a-z0-9][a-z0-9_.-]{2,80}$",
+    "provider_id": r"^iprv_[a-z0-9_.:-]{3,160}$",
+    "trace_id": r"^[0-9a-f]{32}$",
+}
+INTEGRATION_RESULT_ROOT_REQUIRED = {
+    "execution_id",
+    "product_type",
+    "status",
+    "schema_version",
+    "job_count",
+    "result_count",
+    "results",
+}
+INTEGRATION_RESULT_ITEM_REQUIRED = {
+    "result_id",
+    "job_id",
+    "integration_class",
+    "adapter_id",
+    "result_status",
+    "reason_codes",
+    "synthetic_scenario",
+    "duration_ms",
+}
+INTEGRATION_COST_ROOT_REQUIRED = {
+    "execution_id",
+    "product_type",
+    "status",
+    "schema_version",
+    "job_count",
+    "result_count",
+    "cost_projection_type",
+    "total_estimated_cost_units",
+    "total_actual_cost_units",
+    "cost_records",
+}
+INTEGRATION_COST_RECORD_REQUIRED = {
+    "execution_id",
+    "job_id",
+    "tenant_id",
+    "product_type",
+    "integration_class",
+    "adapter_id",
+    "result_status",
+    "call_count",
+    "attempt_count",
+    "fallback_strategy",
+    "estimated_cost_units",
+    "actual_cost_units",
+    "schema_version",
+    "correlation_id",
+    "trace_id",
+}
+INTEGRATION_DLQ_REQUIRED = {
+    "execution_id",
+    "job_id",
+    "dlq_id",
+    "integration_class",
+    "adapter_id",
+    "failure_class",
+    "failure_code",
+    "attempt_count",
+    "schema_version",
+}
+INTEGRATION_RETRY_REQUIRED = {
+    "execution_id",
+    "job_id",
+    "integration_class",
+    "adapter_id",
+    "failure_class",
+    "failure_code",
+    "attempt_count",
+    "retry_delay_ms",
+    "schema_version",
+}
+INTEGRATION_FORBIDDEN_FIELDS = {
+    "address",
+    "attributes",
+    "authorization",
+    "cnpj",
+    "cpf",
+    "custom",
+    "document",
+    "email",
+    "exception",
+    "headers",
+    "legal_name",
+    "metadata",
+    "name",
+    "payload",
+    "phone",
+    "provider_payload",
+    "provider_response",
+    "raw_payload",
+    "request_body",
+    "response_body",
+    "secret",
+    "stack_trace",
+    "street",
+    "token",
+}
 PROPOSAL_SCHEMA_PATH = "schemas/proposal/v1/proposal.schema.json"
+INTEGRATION_SCHEMA_PREFIX = "schemas/integration/v1/"
 PROPOSAL_REQUIRED_FIELDS = {
     "schema_version",
     "external_proposal_id",
@@ -364,33 +491,25 @@ def validate_asyncapi_contract(path: Path, version: str) -> None:
     require(bool(operations), f"AsyncAPI deve declarar operations: {path}")
     require(bool(messages), f"AsyncAPI deve declarar mensagens: {path}")
 
+    if "proposal" in path.parts:
+        validate_proposal_asyncapi_contract(path, messages)
+        return
+
+    if "integration" in path.parts:
+        validate_integration_asyncapi_contract(path, messages)
+        return
+
+    raise ContractCheckError(f"AsyncAPI sem validação específica governada: {path}")
+
+
+def validate_proposal_asyncapi_contract(path: Path, messages: dict[str, Any]) -> None:
     for message_name, message in messages.items():
         if message_name != "ProposalSubmitted":
             continue
-        message_object = require_dict(message, f"AsyncAPI message deve ser objeto: {path}")
-        payload = require_dict(
-            message_object.get("payload"), f"AsyncAPI message.payload deve existir: {path}"
-        )
-        required = payload.get("required", [])
-        properties = require_dict(
-            payload.get("properties"), f"AsyncAPI payload.properties deve existir: {path}"
-        )
-        require(isinstance(required, list), f"AsyncAPI payload.required deve ser lista: {path}")
-        require(
-            payload.get("type") == "object",
-            f"AsyncAPI ProposalSubmitted payload deve ser object: {path}",
-        )
-        require(
-            set(required) == CLOUDEVENT_REQUIRED_FIELDS,
-            f"AsyncAPI CloudEvent deve exigir extensões CreditOS: {path}",
-        )
-        require(
-            set(properties) == CLOUDEVENT_REQUIRED_FIELDS | CLOUDEVENT_OPTIONAL_FIELDS,
-            f"AsyncAPI CloudEvent deve declarar propriedades CreditOS: {path}",
-        )
-        require(
-            properties.get("specversion", {}).get("const") == "1.0",
-            f"AsyncAPI CloudEvent specversion deve ser 1.0: {path}",
+        _, properties = validate_cloudevent_payload(
+            message,
+            path,
+            message_name="ProposalSubmitted",
         )
         data = require_dict(
             properties.get("data"),
@@ -418,16 +537,188 @@ def validate_asyncapi_contract(path: Path, version: str) -> None:
             f"AsyncAPI ProposalSubmitted data não pode expor dados sensíveis: {path}",
         )
         require(
-            payload.get("additionalProperties") is False,
-            f"AsyncAPI ProposalSubmitted payload deve ser fechado: {path}",
-        )
-        require(
             data.get("additionalProperties") is False,
             f"AsyncAPI ProposalSubmitted data deve ser fechado: {path}",
         )
         return
 
     require(False, f"AsyncAPI deve declarar mensagem ProposalSubmitted: {path}")
+
+
+def validate_integration_asyncapi_contract(path: Path, messages: dict[str, Any]) -> None:
+    observed_event_types: set[str] = set()
+    for message_name, message in messages.items():
+        payload, properties = validate_cloudevent_payload(
+            message,
+            path,
+            message_name=message_name,
+        )
+        require(
+            properties.get("source", {}).get("const") == "creditos://integration",
+            f"AsyncAPI Integration source deve ser creditos://integration: {path}",
+        )
+        event_type = str(properties.get("type", {}).get("const", ""))
+        observed_event_types.add(event_type)
+        require(
+            str(properties.get("dataschema", {}).get("const", "")).startswith(
+                "creditos://contracts/"
+            ),
+            f"AsyncAPI Integration dataschema deve referenciar contratos CreditOS: {path}",
+        )
+        validate_integration_event_schema_binding(
+            event_type=event_type,
+            dataschema=str(properties.get("dataschema", {}).get("const", "")),
+            data_schema=properties.get("data"),
+            path=path,
+            message_name=message_name,
+        )
+        data = resolve_schema_ref(path, properties.get("data"))
+        data_properties = require_dict(
+            data.get("properties"),
+            f"AsyncAPI Integration data.properties deve existir em {message_name}: {path}",
+        )
+        require(
+            data.get("type") == "object",
+            f"AsyncAPI Integration data deve ser object em {message_name}: {path}",
+        )
+        require(
+            data.get("additionalProperties") is False,
+            f"AsyncAPI Integration data deve ser fechado em {message_name}: {path}",
+        )
+        require(
+            "execution_id" in data_properties,
+            f"AsyncAPI Integration data deve expor execution_id em {message_name}: {path}",
+        )
+        forbidden_fields = set(iter_property_names(data)) & INTEGRATION_FORBIDDEN_FIELDS
+        require(
+            not forbidden_fields,
+            "AsyncAPI Integration data não pode expor campos sensíveis: "
+            f"{sorted(forbidden_fields)} em {path}",
+        )
+        require(
+            payload.get("additionalProperties") is False,
+            f"AsyncAPI Integration payload deve ser fechado em {message_name}: {path}",
+        )
+
+    require(
+        observed_event_types == INTEGRATION_EVENT_TYPES,
+        "AsyncAPI Integration deve cobrir eventos esperados: "
+        f"{sorted(INTEGRATION_EVENT_TYPES - observed_event_types)}",
+    )
+
+
+def validate_integration_event_schema_binding(
+    *,
+    event_type: str,
+    dataschema: str,
+    data_schema: Any,
+    path: Path,
+    message_name: str,
+) -> None:
+    if event_type in {
+        "creditos.integration.execution.completed.v1",
+        "creditos.integration.execution.partial.v1",
+        "creditos.integration.execution.failed.v1",
+    }:
+        expected = "integration-result.schema.json"
+    elif event_type == "creditos.integration.execution.cost_recorded.v1":
+        expected = "integration-cost.schema.json"
+    elif event_type == "creditos.integration.job.retry_scheduled.v1":
+        expected = "integration-retry.schema.json"
+    elif event_type in {
+        "creditos.integration.job.dlq_recorded.v1",
+        "creditos.integration.job.reprocess_requested.v1",
+    }:
+        expected = "integration-dlq.schema.json"
+    else:
+        return
+
+    ref = require_dict(data_schema, f"AsyncAPI Integration data deve ser objeto: {path}").get(
+        "$ref"
+    )
+    require(
+        dataschema.endswith(expected) and isinstance(ref, str) and ref.endswith(expected),
+        "AsyncAPI Integration evento referencia schema incompatível: "
+        f"{message_name} -> {dataschema} / {ref}",
+    )
+
+
+def validate_cloudevent_payload(
+    message: Any,
+    path: Path,
+    *,
+    message_name: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    message_object = require_dict(message, f"AsyncAPI message deve ser objeto: {path}")
+    payload = require_dict(
+        message_object.get("payload"), f"AsyncAPI message.payload deve existir: {path}"
+    )
+    required = payload.get("required", [])
+    properties = require_dict(
+        payload.get("properties"), f"AsyncAPI payload.properties deve existir: {path}"
+    )
+    require(isinstance(required, list), f"AsyncAPI payload.required deve ser lista: {path}")
+    require(
+        payload.get("type") == "object",
+        f"AsyncAPI {message_name} payload deve ser object: {path}",
+    )
+    require(
+        set(required) == CLOUDEVENT_REQUIRED_FIELDS,
+        f"AsyncAPI CloudEvent deve exigir extensões CreditOS: {path}",
+    )
+    require(
+        set(properties) == CLOUDEVENT_REQUIRED_FIELDS | CLOUDEVENT_OPTIONAL_FIELDS,
+        f"AsyncAPI CloudEvent deve declarar propriedades CreditOS: {path}",
+    )
+    require(
+        properties.get("specversion", {}).get("const") == "1.0",
+        f"AsyncAPI CloudEvent specversion deve ser 1.0: {path}",
+    )
+    if "integration" in path.parts:
+        for field_name in CLOUDEVENT_REQUIRED_FIELDS - {"specversion", "data"}:
+            field_schema = require_dict(
+                properties.get(field_name),
+                f"AsyncAPI CloudEvent {field_name} deve declarar schema: {path}",
+            )
+            if field_schema.get("type") == "string":
+                require(
+                    field_schema.get("minLength", 0) > 0
+                    or "pattern" in field_schema
+                    or "enum" in field_schema
+                    or "const" in field_schema,
+                    f"AsyncAPI CloudEvent {field_name} deve impedir string vazia: {path}",
+                )
+    require(
+        payload.get("additionalProperties") is False,
+        f"AsyncAPI {message_name} payload deve ser fechado: {path}",
+    )
+    return payload, properties
+
+
+def resolve_schema_ref(base_path: Path, schema: Any) -> dict[str, Any]:
+    schema_object = require_dict(schema, f"Schema referenciado deve ser objeto: {base_path}")
+    ref = schema_object.get("$ref")
+    if not isinstance(ref, str):
+        return schema_object
+
+    ref_path = (base_path.parent / ref).resolve()
+    contracts_root = find_contracts_root(base_path)
+    require(
+        ref_path.is_relative_to(contracts_root.resolve()),
+        f"Referência de schema fora de packages/contracts: {display_path(ref_path)}",
+    )
+    require(
+        ref_path.is_file(),
+        f"Referência de schema ausente em AsyncAPI: {display_path(ref_path)}",
+    )
+    return load_json_object(ref_path)
+
+
+def find_contracts_root(path: Path) -> Path:
+    for candidate in (path.parent, *path.parents):
+        if (candidate / "catalog" / "contracts.toml").is_file():
+            return candidate
+    return DEFAULT_CONTRACTS
 
 
 def validate_json_schema_contract(path: Path, version: str, raw_path: str) -> None:
@@ -443,6 +734,450 @@ def validate_json_schema_contract(path: Path, version: str, raw_path: str) -> No
     require(creditos_metadata.get("version") == version, f"Versão JSON Schema divergente: {path}")
     if raw_path == PROPOSAL_SCHEMA_PATH:
         validate_proposal_schema_contract(contract, path)
+    if raw_path.startswith(INTEGRATION_SCHEMA_PREFIX):
+        validate_integration_schema_contract(contract, path)
+
+
+def validate_integration_schema_contract(contract: dict[str, Any], path: Path) -> None:
+    metadata = require_dict(
+        contract.get("x-creditos"), f"Schema de integração sem x-creditos: {path}"
+    )
+    properties = require_dict(
+        contract.get("properties"), f"Schema de integração sem properties: {path}"
+    )
+
+    require(contract.get("type") == "object", f"Schema de integração deve ter raiz object: {path}")
+    require(
+        contract.get("additionalProperties") is False,
+        f"Schema de integração deve fechar a raiz: {path}",
+    )
+    require(metadata.get("owner") == "Integration", f"Owner Integration obrigatório: {path}")
+    require(
+        set(metadata.get("forbiddenFields", [])) >= INTEGRATION_FORBIDDEN_FIELDS,
+        f"x-creditos.forbiddenFields incompletos no schema de integração: {path}",
+    )
+    require("execution_id" in properties, f"Schema de integração deve expor execution_id: {path}")
+    forbidden_schema_fields = set(iter_property_names(contract)) & INTEGRATION_FORBIDDEN_FIELDS
+    require(
+        not forbidden_schema_fields,
+        "Campo proibido no schema de integração: "
+        f"{sorted(forbidden_schema_fields)} em {display_path(path)}",
+    )
+    validate_integration_canonical_field_definitions(contract, path)
+    validate_governed_objects_are_closed(contract, path)
+    validate_integration_examples(contract, path)
+
+
+def validate_integration_canonical_field_definitions(
+    contract: dict[str, Any],
+    path: Path,
+) -> None:
+    properties = require_dict(
+        contract.get("properties"), f"Schema de integração sem properties: {path}"
+    )
+    defs = contract.get("$defs", {})
+
+    require_schema_pattern(
+        properties, "execution_id", INTEGRATION_ID_PATTERNS["execution_id"], path
+    )
+    if path.name in {"integration-result.schema.json", "integration-cost.schema.json"}:
+        require_enum(
+            properties,
+            "product_type",
+            PROPOSAL_MVP_PRODUCTS,
+            f"product_type divergente no schema de integração: {path}",
+        )
+    if "status" in properties:
+        require_enum(
+            properties,
+            "status",
+            INTEGRATION_EXECUTION_STATUSES,
+            f"status divergente no schema de integração: {path}",
+        )
+
+    if path.name == "integration-result.schema.json":
+        require_required_fields(
+            contract,
+            INTEGRATION_RESULT_ROOT_REQUIRED,
+            f"required raiz divergente no schema de resultado: {path}",
+        )
+        result_schema = require_dict(
+            require_dict(defs, f"Schema de resultado deve declarar $defs: {path}").get("result"),
+            f"Schema de resultado deve declarar $defs.result: {path}",
+        )
+        require_required_fields(
+            result_schema,
+            INTEGRATION_RESULT_ITEM_REQUIRED,
+            f"required de $defs.result divergente no schema de resultado: {path}",
+        )
+        result_properties = require_dict(
+            result_schema.get("properties"),
+            f"Schema de resultado deve declarar properties do result: {path}",
+        )
+        require_schema_pattern(
+            result_properties, "result_id", INTEGRATION_ID_PATTERNS["result_id"], path
+        )
+        require_schema_pattern(result_properties, "job_id", INTEGRATION_ID_PATTERNS["job_id"], path)
+        require_schema_pattern(
+            result_properties, "adapter_id", INTEGRATION_ID_PATTERNS["adapter_id"], path
+        )
+        require_schema_pattern(
+            result_properties, "provider_id", INTEGRATION_ID_PATTERNS["provider_id"], path
+        )
+        require_enum(
+            result_properties,
+            "integration_class",
+            INTEGRATION_CLASSES,
+            f"integration_class divergente no schema de resultado: {path}",
+        )
+        require_enum(
+            result_properties,
+            "result_status",
+            INTEGRATION_RESULT_STATUSES,
+            f"result_status divergente no schema de resultado: {path}",
+        )
+        require_enum(
+            result_properties,
+            "synthetic_scenario",
+            INTEGRATION_SYNTHETIC_SCENARIOS,
+            f"synthetic_scenario divergente no schema de resultado: {path}",
+        )
+
+    if path.name == "integration-cost.schema.json":
+        require_required_fields(
+            contract,
+            INTEGRATION_COST_ROOT_REQUIRED,
+            f"required raiz divergente no schema de custo: {path}",
+        )
+        cost_records = require_dict(
+            properties.get("cost_records"),
+            f"Schema de custo deve declarar cost_records: {path}",
+        )
+        require(cost_records.get("minItems") == 1, f"cost_records deve exigir minItems 1: {path}")
+        cost_record_schema = require_dict(
+            require_dict(defs, f"Schema de custo deve declarar $defs: {path}").get("cost_record"),
+            f"Schema de custo deve declarar $defs.cost_record: {path}",
+        )
+        require_required_fields(
+            cost_record_schema,
+            INTEGRATION_COST_RECORD_REQUIRED,
+            f"required de $defs.cost_record divergente no schema de custo: {path}",
+        )
+        cost_properties = require_dict(
+            cost_record_schema.get("properties"),
+            f"Schema de custo deve declarar properties do cost_record: {path}",
+        )
+        require_schema_pattern(cost_properties, "job_id", INTEGRATION_ID_PATTERNS["job_id"], path)
+        require_schema_pattern(
+            cost_properties, "adapter_id", INTEGRATION_ID_PATTERNS["adapter_id"], path
+        )
+        require_schema_pattern(
+            cost_properties, "trace_id", INTEGRATION_ID_PATTERNS["trace_id"], path
+        )
+        require_enum(
+            cost_properties,
+            "integration_class",
+            INTEGRATION_CLASSES,
+            f"integration_class divergente no schema de custo: {path}",
+        )
+        require_enum(
+            cost_properties,
+            "result_status",
+            INTEGRATION_RESULT_STATUSES,
+            f"result_status divergente no schema de custo: {path}",
+        )
+        require_enum(
+            cost_properties,
+            "fallback_strategy",
+            INTEGRATION_FALLBACK_STRATEGIES,
+            f"fallback_strategy divergente no schema de custo: {path}",
+        )
+
+    if path.name in {"integration-dlq.schema.json", "integration-retry.schema.json"}:
+        if path.name == "integration-dlq.schema.json":
+            require_required_fields(
+                contract,
+                INTEGRATION_DLQ_REQUIRED,
+                f"required raiz divergente no schema de DLQ: {path}",
+            )
+        else:
+            require_required_fields(
+                contract,
+                INTEGRATION_RETRY_REQUIRED,
+                f"required raiz divergente no schema de retry: {path}",
+            )
+        require_schema_pattern(properties, "job_id", INTEGRATION_ID_PATTERNS["job_id"], path)
+        require_schema_pattern(
+            properties, "adapter_id", INTEGRATION_ID_PATTERNS["adapter_id"], path
+        )
+        require_enum(
+            properties,
+            "integration_class",
+            INTEGRATION_CLASSES,
+            f"integration_class divergente no schema de DLQ: {path}",
+        )
+        require_enum(
+            properties,
+            "failure_class",
+            INTEGRATION_FAILURE_CLASSES,
+            f"failure_class divergente no schema de DLQ: {path}",
+        )
+    if path.name == "integration-dlq.schema.json":
+        require_schema_pattern(properties, "dlq_id", INTEGRATION_ID_PATTERNS["dlq_id"], path)
+
+
+def require_required_fields(
+    schema: dict[str, Any],
+    expected_values: set[str],
+    message: str,
+) -> None:
+    required = schema.get("required", [])
+    require(isinstance(required, list) and set(required) == expected_values, message)
+
+
+def require_enum(
+    properties: dict[str, Any],
+    field_name: str,
+    expected_values: set[str],
+    message: str,
+) -> None:
+    field_schema = require_dict(
+        properties.get(field_name),
+        f"Campo {field_name} deve declarar schema",
+    )
+    require(set(field_schema.get("enum", [])) == expected_values, message)
+
+
+def require_schema_pattern(
+    properties: dict[str, Any],
+    field_name: str,
+    expected_pattern: str,
+    path: Path,
+) -> None:
+    field_schema = require_dict(
+        properties.get(field_name),
+        f"Campo {field_name} deve declarar schema: {path}",
+    )
+    require(
+        field_schema.get("pattern") == expected_pattern,
+        f"pattern divergente para {field_name} no schema de integração: {path}",
+    )
+
+
+def validate_integration_examples(contract: dict[str, Any], path: Path) -> None:
+    metadata = require_dict(
+        contract.get("x-creditos"), f"Schema de integração sem x-creditos: {path}"
+    )
+    examples = contract.get("examples", [])
+    invalid_examples = metadata.get("invalidExamples", [])
+
+    require(
+        isinstance(examples, list) and len(examples) > 0,
+        f"Schema de integração deve ter exemplos: {path}",
+    )
+    require(
+        isinstance(invalid_examples, list) and len(invalid_examples) > 0,
+        f"Schema de integração deve ter exemplos inválidos governados: {path}",
+    )
+
+    for index, example in enumerate(examples):
+        example_errors = validate_integration_example_shape(contract, example)
+        require(
+            not example_errors,
+            f"Exemplo válido de integração #{index} falhou governança: {example_errors}",
+        )
+
+    invalid_outcomes = [
+        validate_integration_example_shape(contract, example) for example in invalid_examples
+    ]
+    require(
+        all(invalid_outcomes),
+        f"Exemplos inválidos de integração devem ser rejeitados: {path}",
+    )
+
+
+def validate_integration_example_shape(
+    contract: dict[str, Any],
+    value: object,
+) -> list[str]:
+    errors = validate_schema_value(contract, value)
+    if not isinstance(value, dict):
+        return errors or ["exemplo deve ser objeto"]
+
+    required = set(contract.get("required", []))
+    properties = set(
+        require_dict(contract.get("properties"), "Schema de integração sem properties")
+    )
+    missing = required - set(value)
+    extra = set(value) - properties
+    forbidden_fields = set(iter_payload_keys(value)) & INTEGRATION_FORBIDDEN_FIELDS
+
+    if missing:
+        errors.append(f"campos obrigatórios ausentes: {sorted(missing)}")
+    if extra:
+        errors.append(f"campos não governados presentes: {sorted(extra)}")
+    if forbidden_fields:
+        errors.append(f"campos sensíveis presentes: {sorted(forbidden_fields)}")
+    if value.get("schema_version") != "1.0":
+        errors.append("schema_version deve ser 1.0")
+
+    product_type = value.get("product_type")
+    if product_type is not None and product_type not in PROPOSAL_MVP_PRODUCTS:
+        errors.append(f"product_type fora do MVP: {product_type}")
+    errors.extend(validate_integration_example_semantics(value))
+
+    return errors
+
+
+def validate_integration_example_semantics(value: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    results = value.get("results")
+    if isinstance(results, list) and value.get("result_count") != len(results):
+        errors.append("result_count deve ser igual ao tamanho de results")
+
+    cost_records = value.get("cost_records")
+    if isinstance(cost_records, list):
+        if value.get("job_count") != len(cost_records):
+            errors.append("job_count deve ser igual ao tamanho de cost_records")
+        execution_id = value.get("execution_id")
+        record_execution_ids = {
+            record.get("execution_id") for record in cost_records if isinstance(record, dict)
+        }
+        if record_execution_ids and record_execution_ids != {execution_id}:
+            errors.append("cost_records não podem referenciar outra execução")
+        estimated_total = sum(
+            record.get("estimated_cost_units", 0)
+            for record in cost_records
+            if isinstance(record, dict) and type(record.get("estimated_cost_units")) is int
+        )
+        actual_total = sum(
+            record.get("actual_cost_units", 0)
+            for record in cost_records
+            if isinstance(record, dict) and type(record.get("actual_cost_units")) is int
+        )
+        if value.get("total_estimated_cost_units") != estimated_total:
+            errors.append("total_estimated_cost_units deve somar cost_records")
+        if value.get("total_actual_cost_units") != actual_total:
+            errors.append("total_actual_cost_units deve somar cost_records")
+    return errors
+
+
+def validate_schema_value(
+    schema: dict[str, Any],
+    value: object,
+    *,
+    root_schema: dict[str, Any] | None = None,
+    path: str = "$",
+) -> list[str]:
+    root_schema = schema if root_schema is None else root_schema
+    ref = schema.get("$ref")
+    if isinstance(ref, str):
+        return validate_schema_value(
+            resolve_internal_schema_ref(root_schema, ref),
+            value,
+            root_schema=root_schema,
+            path=path,
+        )
+
+    errors: list[str] = []
+    expected_type = schema.get("type")
+    allowed_types = tuple(expected_type) if isinstance(expected_type, list) else (expected_type,)
+    if expected_type is not None and not schema_type_matches(allowed_types, value):
+        errors.append(f"{path} deve ser {expected_type}")
+        return errors
+
+    if "const" in schema and value != schema["const"]:
+        errors.append(f"{path} deve ser constante {schema['const']}")
+    enum_values = schema.get("enum")
+    if isinstance(enum_values, list) and value not in enum_values:
+        errors.append(f"{path} deve estar em enum {enum_values}")
+
+    if isinstance(value, str):
+        min_length = schema.get("minLength")
+        if isinstance(min_length, int) and len(value) < min_length:
+            errors.append(f"{path} deve ter minLength >= {min_length}")
+        pattern = schema.get("pattern")
+        if isinstance(pattern, str) and re.fullmatch(pattern, value) is None:
+            errors.append(f"{path} não atende pattern {pattern}")
+
+    if type(value) is int:
+        minimum = schema.get("minimum")
+        maximum = schema.get("maximum")
+        if isinstance(minimum, (int, float)) and value < minimum:
+            errors.append(f"{path} deve ser >= {minimum}")
+        if isinstance(maximum, (int, float)) and value > maximum:
+            errors.append(f"{path} deve ser <= {maximum}")
+
+    if isinstance(value, list):
+        min_items = schema.get("minItems")
+        max_items = schema.get("maxItems")
+        if isinstance(min_items, int) and len(value) < min_items:
+            errors.append(f"{path} deve ter minItems >= {min_items}")
+        if isinstance(max_items, int) and len(value) > max_items:
+            errors.append(f"{path} deve ter maxItems <= {max_items}")
+        items_schema = schema.get("items")
+        if isinstance(items_schema, dict):
+            for index, item in enumerate(value):
+                errors.extend(
+                    validate_schema_value(
+                        items_schema,
+                        item,
+                        root_schema=root_schema,
+                        path=f"{path}[{index}]",
+                    )
+                )
+
+    if isinstance(value, dict):
+        required = schema.get("required", [])
+        properties = schema.get("properties", {})
+        if isinstance(required, list):
+            missing = set(required) - set(value)
+            if missing:
+                errors.append(f"{path} campos obrigatórios ausentes: {sorted(missing)}")
+        if isinstance(properties, dict):
+            extra = set(value) - set(properties)
+            if extra and schema.get("additionalProperties") is False:
+                errors.append(f"{path} campos não governados presentes: {sorted(extra)}")
+            for property_name, property_value in value.items():
+                property_schema = properties.get(property_name)
+                if isinstance(property_schema, dict):
+                    errors.extend(
+                        validate_schema_value(
+                            property_schema,
+                            property_value,
+                            root_schema=root_schema,
+                            path=f"{path}.{property_name}",
+                        )
+                    )
+    return errors
+
+
+def resolve_internal_schema_ref(root_schema: dict[str, Any], ref: str) -> dict[str, Any]:
+    if not ref.startswith("#/"):
+        raise ContractCheckError(f"$ref interno não suportado em exemplo de integração: {ref}")
+    current: Any = root_schema
+    for part in ref.removeprefix("#/").split("/"):
+        current = require_dict(current, f"$ref inválido em schema de integração: {ref}").get(part)
+    return require_dict(current, f"$ref inválido em schema de integração: {ref}")
+
+
+def schema_type_matches(allowed_types: tuple[object, ...], value: object) -> bool:
+    for expected_type in allowed_types:
+        if expected_type == "object" and isinstance(value, dict):
+            return True
+        if expected_type == "array" and isinstance(value, list):
+            return True
+        if expected_type == "string" and isinstance(value, str):
+            return True
+        if expected_type == "integer" and type(value) is int:
+            return True
+        if expected_type == "number" and type(value) in {int, float}:
+            return True
+        if expected_type == "boolean" and isinstance(value, bool):
+            return True
+        if expected_type == "null" and value is None:
+            return True
+    return False
 
 
 def validate_proposal_schema_contract(contract: dict[str, Any], path: Path) -> None:

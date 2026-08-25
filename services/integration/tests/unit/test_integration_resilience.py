@@ -66,7 +66,11 @@ def test_recoverable_failure_retries_with_deterministic_schedule_and_succeeds_wi
 
 
 def test_recoverable_failure_exceeding_max_attempts_creates_canonical_dlq() -> None:
-    service_bundle = _service_with_adapter(RaisingMockIntegrationAdapter())
+    publisher = CapturingIntegrationExecutionResultPublisher()
+    service_bundle = _service_with_adapter(
+        RaisingMockIntegrationAdapter(),
+        result_publisher=publisher,
+    )
 
     execution = _start_single_class_execution(service_bundle, "resilience-key-dlq-recoverable")
 
@@ -89,6 +93,45 @@ def test_recoverable_failure_exceeding_max_attempts_creates_canonical_dlq() -> N
     assert cost_log["extra"]["records"][0]["call_count"] == 2
     assert cost_log["extra"]["records"][0]["attempt_count"] == 2
     assert cost_log["extra"]["records"][0]["result_status"] == "failed"
+    assert {event.type for event in publisher.events} == {
+        "creditos.integration.execution.failed.v1",
+        "creditos.integration.execution.cost_recorded.v1",
+        "creditos.integration.job.retry_scheduled.v1",
+        "creditos.integration.job.dlq_recorded.v1",
+    }
+    retry_event = _event_by_type(publisher, "creditos.integration.job.retry_scheduled.v1")
+    dlq_event = _event_by_type(publisher, "creditos.integration.job.dlq_recorded.v1")
+    assert retry_event.subject == (
+        f"integration-execution/{execution.execution_id}/job/{execution.jobs[0].job_id}"
+    )
+    assert retry_event.dataschema.endswith("integration-retry.schema.json")
+    assert retry_event.data["execution_id"] == execution.execution_id
+    assert retry_event.data["job_id"] == execution.jobs[0].job_id
+    assert retry_event.data["retry_delay_ms"] > 0
+    assert dlq_event.dataschema.endswith("integration-dlq.schema.json")
+    assert dlq_event.data["dlq_id"] == dlq_records[0].dlq_id
+
+
+def test_retry_events_have_distinct_ids_for_each_attempt() -> None:
+    publisher = CapturingIntegrationExecutionResultPublisher()
+    service_bundle = _service_with_adapter(
+        RaisingMockIntegrationAdapter(),
+        result_publisher=publisher,
+    )
+
+    _start_single_class_execution(
+        service_bundle,
+        "resilience-key-dlq-three-attempts",
+        max_attempts=3,
+    )
+
+    retry_events = [
+        event
+        for event in publisher.events
+        if event.type == "creditos.integration.job.retry_scheduled.v1"
+    ]
+    assert [event.data["attempt_count"] for event in retry_events] == [1, 2]
+    assert len({event.id for event in retry_events}) == 2
 
 
 def test_non_recoverable_failure_goes_to_dlq_without_retry_extra() -> None:
@@ -313,6 +356,44 @@ def test_reprocess_marks_dlq_before_publishing_cost_projection() -> None:
     )
 
     assert publisher.checked_reprocess_publish is True
+    assert (
+        _event_by_type(
+            publisher,
+            "creditos.integration.job.reprocess_requested.v1",
+        ).data["dlq_id"]
+        == dlq_record.dlq_id
+    )
+
+
+def test_reprocess_events_have_distinct_ids_for_each_reprocess_count() -> None:
+    publisher = CapturingIntegrationExecutionResultPublisher()
+    service_bundle = _service_with_adapter(
+        RaisingMockIntegrationAdapter(),
+        result_publisher=publisher,
+    )
+    execution = _start_single_class_execution(service_bundle, "resilience-key-reprocess-ids")
+    dlq_record = service_bundle.dlq_store.list_for_execution(
+        tenant_id="tenant-bridge-001",
+        execution_id=execution.execution_id,
+    )[0]
+
+    for suffix in ("first", "second"):
+        service_bundle.service.reprocess_integration_dlq(
+            ReprocessIntegrationDlqCommand(
+                dlq_id=dlq_record.dlq_id,
+                idempotency_key=f"idempotency-key-reprocess-ids-{suffix}",
+                scopes=("integration_execution:reprocess",),
+            ),
+            context=_context(),
+        )
+
+    reprocess_events = [
+        event
+        for event in publisher.events
+        if event.type == "creditos.integration.job.reprocess_requested.v1"
+    ]
+    assert [event.data["reprocess_count"] for event in reprocess_events] == [1, 2]
+    assert len({event.id for event in reprocess_events}) == 2
 
 
 def test_reprocess_rejects_new_key_after_terminal_reprocess() -> None:
@@ -729,11 +810,13 @@ class ServiceBundle:
 
 class ReprocessMarkingAssertingPublisher:
     def __init__(self) -> None:
+        self.events: list[IntegrationExecutionEvent] = []
         self.dlq_store: InMemoryIntegrationDlqStore | None = None
         self.expected_dlq_id: str | None = None
         self.checked_reprocess_publish = False
 
     def publish(self, event: IntegrationExecutionEvent) -> None:
+        self.events.append(event)
         if self.dlq_store is None or self.expected_dlq_id is None:
             return
         record = self.dlq_store.get(
@@ -743,6 +826,23 @@ class ReprocessMarkingAssertingPublisher:
         if record is not None and event.data["execution_id"] in record.reprocess_execution_ids:
             assert record.reprocess_count > 0
             self.checked_reprocess_publish = True
+
+
+class CapturingIntegrationExecutionResultPublisher:
+    def __init__(self) -> None:
+        self.events: list[IntegrationExecutionEvent] = []
+
+    def publish(self, event: IntegrationExecutionEvent) -> None:
+        self.events.append(event)
+
+
+def _event_by_type(
+    publisher: CapturingIntegrationExecutionResultPublisher | ReprocessMarkingAssertingPublisher,
+    event_type: str,
+) -> IntegrationExecutionEvent:
+    matches = [event for event in publisher.events if event.type == event_type]
+    assert len(matches) == 1
+    return matches[0]
 
 
 class FlakyMockIntegrationAdapter(InMemoryMockIntegrationAdapter):
