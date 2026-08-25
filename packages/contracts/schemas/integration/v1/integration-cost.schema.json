@@ -1,0 +1,302 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.creditos.local/schemas/integration/v1/integration-cost.schema.json",
+  "title": "CreditOS Integration Cost Schema",
+  "description": "Contrato canônico v1 para projeção minimizada de custo de integração.",
+  "type": "object",
+  "required": [
+    "execution_id",
+    "product_type",
+    "status",
+    "schema_version",
+    "job_count",
+    "result_count",
+    "cost_projection_type",
+    "total_estimated_cost_units",
+    "total_actual_cost_units",
+    "cost_records"
+  ],
+  "properties": {
+    "execution_id": {
+      "type": "string",
+      "pattern": "^iexec_[a-f0-9]{32}$"
+    },
+    "product_type": {
+      "type": "string",
+      "enum": [
+        "personal_credit",
+        "bnpl",
+        "business_credit",
+        "receivables"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "partial",
+        "failed"
+      ]
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "job_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "result_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "cost_projection_type": {
+      "const": "creditos.integration.execution.cost_recorded.v1"
+    },
+    "total_estimated_cost_units": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "total_actual_cost_units": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "cost_records": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/cost_record"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "x-creditos": {
+    "owner": "Integration",
+    "version": "v1",
+    "compatibility": "backward-compatible",
+    "breakingChangePolicy": "new-major-version-required",
+    "forbiddenFields": [
+      "address",
+      "attributes",
+      "authorization",
+      "cnpj",
+      "cpf",
+      "custom",
+      "document",
+      "email",
+      "exception",
+      "headers",
+      "legal_name",
+      "metadata",
+      "name",
+      "payload",
+      "phone",
+      "provider_payload",
+      "provider_response",
+      "raw_payload",
+      "request_body",
+      "response_body",
+      "secret",
+      "stack_trace",
+      "street",
+      "token"
+    ],
+    "invalidExamples": [
+      {
+        "execution_id": "iexec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "product_type": "personal_credit",
+        "status": "completed",
+        "schema_version": "1.0",
+        "job_count": 1,
+        "result_count": 1,
+        "cost_projection_type": "creditos.integration.execution.cost_recorded.v1",
+        "total_estimated_cost_units": 12,
+        "total_actual_cost_units": 12,
+        "raw_payload": {
+          "amount": 12
+        },
+        "cost_records": []
+      },
+      {
+        "execution_id": "iexec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "product_type": "personal_credit",
+        "status": "completed",
+        "schema_version": "1.0",
+        "job_count": 2,
+        "result_count": 1,
+        "cost_projection_type": "creditos.integration.execution.cost_recorded.v1",
+        "total_estimated_cost_units": 12,
+        "total_actual_cost_units": 12,
+        "cost_records": [
+          {
+            "execution_id": "iexec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "job_id": "ijob_cccccccccccccccccccccccccccccccc",
+            "tenant_id": "tenant-bridge-001",
+            "product_type": "personal_credit",
+            "integration_class": "credit_bureau",
+            "adapter_id": "mock-credit-bureau-v1",
+            "provider_id": "iprv_mock_provider_v1",
+            "result_status": "completed",
+            "call_count": 1,
+            "attempt_count": 1,
+            "fallback_strategy": "fail_closed",
+            "estimated_cost_units": 12,
+            "actual_cost_units": 12,
+            "schema_version": "1.0",
+            "correlation_id": "corr-integration-001",
+            "trace_id": "22222222222222222222222222222222"
+          }
+        ]
+      }
+    ]
+  },
+  "$defs": {
+    "cost_record": {
+      "type": "object",
+      "required": [
+        "execution_id",
+        "job_id",
+        "tenant_id",
+        "product_type",
+        "integration_class",
+        "adapter_id",
+        "result_status",
+        "call_count",
+        "attempt_count",
+        "fallback_strategy",
+        "estimated_cost_units",
+        "actual_cost_units",
+        "schema_version",
+        "correlation_id",
+        "trace_id"
+      ],
+      "properties": {
+        "execution_id": {
+          "type": "string",
+          "pattern": "^iexec_[a-f0-9]{32}$"
+        },
+        "job_id": {
+          "type": "string",
+          "pattern": "^ijob_[a-f0-9]{32}$"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "product_type": {
+          "type": "string",
+          "enum": [
+            "personal_credit",
+            "bnpl",
+            "business_credit",
+            "receivables"
+          ]
+        },
+        "integration_class": {
+          "type": "string",
+          "enum": [
+            "kyc_kyb",
+            "credit_bureau",
+            "anti_fraud",
+            "receivables"
+          ]
+        },
+        "adapter_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_.-]{2,80}$"
+        },
+        "provider_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^iprv_[a-z0-9_.:-]{3,160}$"
+        },
+        "result_status": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "partial",
+            "not_found",
+            "failed"
+          ]
+        },
+        "call_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "attempt_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "fallback_strategy": {
+          "type": "string",
+          "enum": [
+            "fail_closed",
+            "allow_partial",
+            "skip_optional"
+          ]
+        },
+        "estimated_cost_units": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "actual_cost_units": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "schema_version": {
+          "const": "1.0"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "execution_id": "iexec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "product_type": "personal_credit",
+      "status": "completed",
+      "schema_version": "1.0",
+      "job_count": 1,
+      "result_count": 1,
+      "cost_projection_type": "creditos.integration.execution.cost_recorded.v1",
+      "total_estimated_cost_units": 12,
+      "total_actual_cost_units": 12,
+      "cost_records": [
+        {
+          "execution_id": "iexec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "job_id": "ijob_cccccccccccccccccccccccccccccccc",
+          "tenant_id": "tenant-bridge-001",
+          "product_type": "personal_credit",
+          "integration_class": "credit_bureau",
+          "adapter_id": "mock-credit-bureau-v1",
+          "provider_id": "iprv_mock_provider_v1",
+          "result_status": "completed",
+          "call_count": 1,
+          "attempt_count": 1,
+          "fallback_strategy": "fail_closed",
+          "estimated_cost_units": 12,
+          "actual_cost_units": 12,
+          "schema_version": "1.0",
+          "correlation_id": "corr-integration-001",
+          "trace_id": "22222222222222222222222222222222"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.creditos.local/schemas/integration/v1/integration-result.schema.json",
+  "title": "CreditOS Integration Result Schema",
+  "description": "Contrato canônico v1 para resultado consolidado de integração externa.",
+  "type": "object",
+  "required": [
+    "execution_id",
+    "product_type",
+    "status",
+    "schema_version",
+    "job_count",
+    "result_count",
+    "results"
+  ],
+  "properties": {
+    "execution_id": {
+      "type": "string",
+      "pattern": "^iexec_[a-f0-9]{32}$"
+    },
+    "product_type": {
+      "type": "string",
+      "enum": [
+        "personal_credit",
+        "bnpl",
+        "business_credit",
+        "receivables"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "partial",
+        "failed"
+      ]
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "job_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "result_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "results": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/result"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "x-creditos": {
+    "owner": "Integration",
+    "version": "v1",
+    "compatibility": "backward-compatible",
+    "breakingChangePolicy": "new-major-version-required",
+    "forbiddenFields": [
+      "address",
+      "attributes",
+      "authorization",
+      "cnpj",
+      "cpf",
+      "custom",
+      "document",
+      "email",
+      "exception",
+      "headers",
+      "legal_name",
+      "metadata",
+      "name",
+      "payload",
+      "phone",
+      "provider_payload",
+      "provider_response",
+      "raw_payload",
+      "request_body",
+      "response_body",
+      "secret",
+      "stack_trace",
+      "street",
+      "token"
+    ],
+    "invalidExamples": [
+      {
+        "execution_id": "iexec_aaaaaaaaaaaaaaaaaaaaaaaa",
+        "product_type": "personal_credit",
+        "status": "completed",
+        "schema_version": "1.0",
+        "job_count": 1,
+        "result_count": 1,
+        "provider_response": {
+          "raw": true
+        },
+        "results": []
+      }
+    ]
+  },
+  "$defs": {
+    "result": {
+      "type": "object",
+      "required": [
+        "result_id",
+        "job_id",
+        "integration_class",
+        "adapter_id",
+        "result_status",
+        "reason_codes",
+        "synthetic_scenario",
+        "duration_ms"
+      ],
+      "properties": {
+        "result_id": {
+          "type": "string",
+          "pattern": "^ires_[a-f0-9]{32}$"
+        },
+        "job_id": {
+          "type": "string",
+          "pattern": "^ijob_[a-f0-9]{32}$"
+        },
+        "integration_class": {
+          "type": "string",
+          "enum": [
+            "kyc_kyb",
+            "credit_bureau",
+            "anti_fraud",
+            "receivables"
+          ]
+        },
+        "adapter_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_.-]{2,80}$"
+        },
+        "provider_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^iprv_[a-z0-9_]{3,80}$"
+        },
+        "result_status": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "partial",
+            "not_found",
+            "failed"
+          ]
+        },
+        "reason_codes": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{2,80}$"
+          }
+        },
+        "synthetic_scenario": {
+          "type": "string",
+          "enum": [
+            "synthetic_success",
+            "synthetic_partial",
+            "synthetic_not_found",
+            "synthetic_failure"
+          ]
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 120000
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "execution_id": "iexec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "product_type": "personal_credit",
+      "status": "completed",
+      "schema_version": "1.0",
+      "job_count": 1,
+      "result_count": 1,
+      "results": [
+        {
+          "result_id": "ires_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "job_id": "ijob_cccccccccccccccccccccccccccccccc",
+          "integration_class": "credit_bureau",
+          "adapter_id": "mock-credit-bureau-v1",
+          "provider_id": "iprv_mock_provider_v1",
+          "result_status": "completed",
+          "reason_codes": [
+            "synthetic_clear"
+          ],
+          "synthetic_scenario": "synthetic_success",
+          "duration_ms": 42
+        }
+      ]
+    },
+    {
+      "execution_id": "iexec_dddddddddddddddddddddddddddddddd",
+      "product_type": "bnpl",
+      "status": "partial",
+      "schema_version": "1.0",
+      "job_count": 2,
+      "result_count": 1,
+      "results": [
+        {
+          "result_id": "ires_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "job_id": "ijob_ffffffffffffffffffffffffffffffff",
+          "integration_class": "anti_fraud",
+          "adapter_id": "mock-antifraud-v1",
+          "provider_id": null,
+          "result_status": "partial",
+          "reason_codes": [
+            "synthetic_partial"
+          ],
+          "synthetic_scenario": "synthetic_partial",
+          "duration_ms": 55
+        }
+      ]
+    },
+    {
+      "execution_id": "iexec_11111111111111111111111111111111",
+      "product_type": "receivables",
+      "status": "failed",
+      "schema_version": "1.0",
+      "job_count": 1,
+      "result_count": 1,
+      "results": [
+        {
+          "result_id": "ires_22222222222222222222222222222222",
+          "job_id": "ijob_33333333333333333333333333333333",
+          "integration_class": "receivables",
+          "adapter_id": "mock-receivables-v1",
+          "provider_id": null,
+          "result_status": "failed",
+          "reason_codes": [
+            "synthetic_failure"
+          ],
+          "synthetic_scenario": "synthetic_failure",
+          "duration_ms": 73
+        }
+      ]
+    }
+  ]
+}

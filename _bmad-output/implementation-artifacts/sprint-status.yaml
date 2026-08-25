@@ -1,5 +1,5 @@
 # generated: 2026-07-30
-# last_updated: 2026-08-24
+# last_updated: 2026-08-25
 # project: CreditOS
 # project_key: NOKEY
 # tracking_system: file-system
@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-30
-last_updated: 2026-08-24
+last_updated: 2026-08-25
 project: CreditOS
 project_key: NOKEY
 tracking_system: file-system
@@ -77,7 +77,7 @@ development_status:
   3-3-execucao-assincrona-com-fan-out-fan-in: done
   3-4-resiliencia-retry-dlq-e-reprocessamento-controlado: done
   3-5-registro-de-custo-e-resultado-de-integracao: done
-  3-6-contratos-e-gates-de-integracao: backlog
+  3-6-contratos-e-gates-de-integracao: done
   epic-3-retrospective: optional
   epic-4: backlog
   4-1-modelo-versionado-de-politica-de-credito: backlog

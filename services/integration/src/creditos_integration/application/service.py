@@ -26,6 +26,7 @@ from creditos_integration.application.ports.integration_execution import (
     IntegrationExecutionEvent,
     IntegrationExecutionJobRequest,
     IntegrationExecutionResultPublisher,
+    IntegrationExecutionRetrySchedule,
     IntegrationExecutionStore,
 )
 from creditos_integration.application.ports.mock_integration_adapter import (
@@ -660,12 +661,14 @@ class IntegrationCatalogApplicationService:
                 ),
             )
             if self._integration_execution_result_publisher is not None:
-                self._integration_execution_result_publisher.publish(
-                    _integration_execution_event(
-                        execution,
-                        cost_records=cost_records,
-                    )
-                )
+                for event in _integration_execution_events(
+                    execution,
+                    context=context,
+                    cost_records=cost_records,
+                    retry_schedules=dispatch_result.retry_schedules,
+                    dlq_records=dispatch_result.dlq_records,
+                ):
+                    self._integration_execution_result_publisher.publish(event)
             self._log_operation(
                 context=context,
                 operation="integration_execution.fan_in",
@@ -884,12 +887,16 @@ class IntegrationCatalogApplicationService:
                     ),
                 )
                 if self._integration_execution_result_publisher is not None:
-                    self._integration_execution_result_publisher.publish(
-                        _integration_execution_event(
-                            reprocess_execution,
-                            cost_records=cost_records,
-                        )
-                    )
+                    for event in _integration_execution_events(
+                        reprocess_execution,
+                        context=context,
+                        cost_records=cost_records,
+                        retry_schedules=dispatch_result.retry_schedules,
+                        dlq_records=dispatch_result.dlq_records,
+                        reprocess_record=updated_record,
+                        idempotency_key=idempotency_key,
+                    ):
+                        self._integration_execution_result_publisher.publish(event)
             else:
                 reprocess_execution_id = existing_execution.execution_id
                 updated_record = self._integration_dlq_store.mark_reprocessed(
@@ -1516,32 +1523,117 @@ def _plan_item_from_job(job) -> IntegrationPlanItem:
 def _integration_execution_event(
     execution: IntegrationExecution,
     *,
-    cost_records: tuple[IntegrationExecutionCostRecord, ...] = (),
+    context: ObservabilityContext,
 ) -> IntegrationExecutionEvent:
+    event_type = f"creditos.integration.execution.{execution.status}.v1"
     event_id_seed = "|".join(
         (
             execution.execution_id,
-            execution.status,
+            event_type,
             execution.schema_version,
         )
     )
     return IntegrationExecutionEvent(
         specversion="1.0",
         id=f"evt_{sha256(event_id_seed.encode('utf-8')).hexdigest()[:32]}",
-        type=f"creditos.integration.execution.{execution.status}.v1",
-        source=SERVICE_NAME,
+        type=event_type,
+        source="creditos://integration",
         subject=f"integration-execution/{execution.execution_id}",
         time=execution.completed_at.isoformat(),
         datacontenttype="application/json",
+        dataschema="creditos://contracts/schemas/integration/v1/integration-result.schema.json",
         tenant_id=execution.tenant_id,
         correlation_id=execution.correlation_id,
         trace_id=execution.trace_id,
         schema_version=execution.schema_version,
+        tenant_isolation_tier=context.tenant_isolation_tier or "bridge",
+        request_id=context.request_id,
+        idempotency_key=execution.idempotency_key,
         data=MappingProxyType(
             {
                 "execution_id": execution.execution_id,
                 "product_type": execution.product_type,
                 "status": execution.status,
+                "job_count": len(execution.jobs),
+                "result_count": len(execution.results),
+                "results": _integration_result_projection(execution),
+                "schema_version": execution.schema_version,
+            }
+        ),
+    )
+
+
+def _integration_execution_events(
+    execution: IntegrationExecution,
+    *,
+    context: ObservabilityContext,
+    cost_records: tuple[IntegrationExecutionCostRecord, ...],
+    retry_schedules: tuple[IntegrationExecutionRetrySchedule, ...] = (),
+    dlq_records: tuple[IntegrationExecutionDlqRecord, ...] = (),
+    reprocess_record: IntegrationExecutionDlqRecord | None = None,
+    idempotency_key: str | None = None,
+) -> tuple[IntegrationExecutionEvent, ...]:
+    events: list[IntegrationExecutionEvent] = [
+        _integration_execution_event(execution, context=context),
+        _integration_cost_event(execution, context=context, cost_records=cost_records),
+    ]
+    events.extend(
+        _integration_retry_event(
+            schedule, context=context, idempotency_key=execution.idempotency_key
+        )
+        for schedule in retry_schedules
+    )
+    events.extend(
+        _integration_dlq_event(record, context=context, idempotency_key=execution.idempotency_key)
+        for record in dlq_records
+    )
+    if reprocess_record is not None:
+        events.append(
+            _integration_reprocess_event(
+                reprocess_record,
+                context=context,
+                idempotency_key=idempotency_key or execution.idempotency_key,
+            )
+        )
+    return tuple(events)
+
+
+def _integration_cost_event(
+    execution: IntegrationExecution,
+    *,
+    context: ObservabilityContext,
+    cost_records: tuple[IntegrationExecutionCostRecord, ...],
+) -> IntegrationExecutionEvent:
+    event_type = "creditos.integration.execution.cost_recorded.v1"
+    event_id_seed = "|".join(
+        (
+            execution.execution_id,
+            event_type,
+            execution.schema_version,
+        )
+    )
+    return IntegrationExecutionEvent(
+        specversion="1.0",
+        id=f"evt_{sha256(event_id_seed.encode('utf-8')).hexdigest()[:32]}",
+        type=event_type,
+        source="creditos://integration",
+        subject=f"integration-execution/{execution.execution_id}",
+        time=execution.completed_at.isoformat(),
+        datacontenttype="application/json",
+        dataschema="creditos://contracts/schemas/integration/v1/integration-cost.schema.json",
+        tenant_id=execution.tenant_id,
+        correlation_id=execution.correlation_id,
+        trace_id=execution.trace_id,
+        schema_version=execution.schema_version,
+        tenant_isolation_tier=context.tenant_isolation_tier or "bridge",
+        request_id=context.request_id,
+        idempotency_key=execution.idempotency_key,
+        data=MappingProxyType(
+            {
+                "execution_id": execution.execution_id,
+                "product_type": execution.product_type,
+                "status": execution.status,
+                "schema_version": execution.schema_version,
                 "job_count": len(execution.jobs),
                 "result_count": len(execution.results),
                 "cost_projection_type": "creditos.integration.execution.cost_recorded.v1",
@@ -1550,9 +1642,159 @@ def _integration_execution_event(
                 ),
                 "total_actual_cost_units": sum(record.actual_cost_units for record in cost_records),
                 "cost_records": tuple(record.to_log_safe_dict() for record in cost_records),
-                "schema_version": execution.schema_version,
             }
         ),
+    )
+
+
+def _integration_retry_event(
+    schedule: IntegrationExecutionRetrySchedule,
+    *,
+    context: ObservabilityContext,
+    idempotency_key: str,
+) -> IntegrationExecutionEvent:
+    event_type = "creditos.integration.job.retry_scheduled.v1"
+    return _integration_job_event(
+        event_type=event_type,
+        subject=f"integration-execution/{schedule.execution_id}/job/{schedule.job_id}",
+        occurred_at=schedule.scheduled_at,
+        tenant_id=schedule.tenant_id,
+        correlation_id=schedule.correlation_id,
+        trace_id=schedule.trace_id,
+        schema_version=schedule.schema_version,
+        context=context,
+        idempotency_key=idempotency_key,
+        dataschema="creditos://contracts/schemas/integration/v1/integration-retry.schema.json",
+        data={
+            "execution_id": schedule.execution_id,
+            "job_id": schedule.job_id,
+            "integration_class": schedule.integration_class,
+            "adapter_id": schedule.adapter_id,
+            "failure_class": schedule.failure_class,
+            "failure_code": schedule.failure_code,
+            "attempt_count": schedule.attempt_count,
+            "retry_delay_ms": schedule.retry_delay_ms,
+            "schema_version": schedule.schema_version,
+        },
+    )
+
+
+def _integration_dlq_event(
+    record: IntegrationExecutionDlqRecord,
+    *,
+    context: ObservabilityContext,
+    idempotency_key: str,
+) -> IntegrationExecutionEvent:
+    return _integration_job_event(
+        event_type="creditos.integration.job.dlq_recorded.v1",
+        subject=f"integration-execution/{record.execution_id}/job/{record.job_id}",
+        occurred_at=record.created_at.isoformat(),
+        tenant_id=record.tenant_id,
+        correlation_id=record.correlation_id,
+        trace_id=record.trace_id,
+        schema_version=record.schema_version,
+        context=context,
+        idempotency_key=idempotency_key,
+        dataschema="creditos://contracts/schemas/integration/v1/integration-dlq.schema.json",
+        data=_integration_dlq_data(record),
+    )
+
+
+def _integration_reprocess_event(
+    record: IntegrationExecutionDlqRecord,
+    *,
+    context: ObservabilityContext,
+    idempotency_key: str,
+) -> IntegrationExecutionEvent:
+    occurred_at = (
+        record.last_reprocess_at.isoformat()
+        if record.last_reprocess_at is not None
+        else record.created_at.isoformat()
+    )
+    return _integration_job_event(
+        event_type="creditos.integration.job.reprocess_requested.v1",
+        subject=f"integration-execution/{record.execution_id}/job/{record.job_id}",
+        occurred_at=occurred_at,
+        tenant_id=record.tenant_id,
+        correlation_id=record.correlation_id,
+        trace_id=record.trace_id,
+        schema_version=record.schema_version,
+        context=context,
+        idempotency_key=idempotency_key,
+        dataschema="creditos://contracts/schemas/integration/v1/integration-dlq.schema.json",
+        data=_integration_dlq_data(record),
+    )
+
+
+def _integration_job_event(
+    *,
+    event_type: str,
+    subject: str,
+    occurred_at: str,
+    tenant_id: str,
+    correlation_id: str,
+    trace_id: str,
+    schema_version: str,
+    context: ObservabilityContext,
+    idempotency_key: str,
+    dataschema: str,
+    data: dict[str, object],
+) -> IntegrationExecutionEvent:
+    event_id_seed = "|".join((subject, event_type, schema_version))
+    return IntegrationExecutionEvent(
+        specversion="1.0",
+        id=f"evt_{sha256(event_id_seed.encode('utf-8')).hexdigest()[:32]}",
+        type=event_type,
+        source="creditos://integration",
+        subject=subject,
+        time=occurred_at,
+        datacontenttype="application/json",
+        dataschema=dataschema,
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
+        trace_id=trace_id,
+        schema_version=schema_version,
+        tenant_isolation_tier=context.tenant_isolation_tier or "bridge",
+        request_id=context.request_id,
+        idempotency_key=idempotency_key,
+        data=MappingProxyType(data),
+    )
+
+
+def _integration_dlq_data(record: IntegrationExecutionDlqRecord) -> dict[str, object]:
+    data: dict[str, object] = {
+        "execution_id": record.execution_id,
+        "job_id": record.job_id,
+        "dlq_id": record.dlq_id,
+        "integration_class": record.integration_class,
+        "adapter_id": record.adapter_id,
+        "failure_class": record.failure_class,
+        "failure_code": record.failure_code,
+        "attempt_count": record.attempt_count,
+        "reprocess_count": record.reprocess_count,
+        "schema_version": record.schema_version,
+    }
+    return data
+
+
+def _integration_result_projection(
+    execution: IntegrationExecution,
+) -> tuple[dict[str, object], ...]:
+    job_by_result_id = {job.result_id: job for job in execution.jobs if job.result_id is not None}
+    return tuple(
+        {
+            "result_id": result.result_id,
+            "job_id": job_by_result_id[result.result_id].job_id,
+            "integration_class": result.integration_class,
+            "adapter_id": result.adapter_id,
+            "provider_id": job_by_result_id[result.result_id].provider_id,
+            "result_status": result.status,
+            "reason_codes": result.reason_codes,
+            "synthetic_scenario": result.scenario,
+            "duration_ms": int(round(result.duration_ms)),
+        }
+        for result in execution.results
+        if result.result_id in job_by_result_id
     )
 
 

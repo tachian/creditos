@@ -41,3 +41,58 @@ compatibility = "backward-compatible"
 breaking_change_policy = "new-major-version-required"
 compatibility_window = "to-be-defined-before-production"
 contract_tests_required = true
+
+[[contracts]]
+id = "integration-events"
+kind = "asyncapi"
+version = "v1"
+owner = "Integration"
+path = "asyncapi/events/integration/v1/asyncapi.json"
+compatibility = "backward-compatible"
+breaking_change_policy = "new-major-version-required"
+compatibility_window = "to-be-defined-before-production"
+contract_tests_required = true
+
+[[contracts]]
+id = "integration-result-schema"
+kind = "json-schema"
+version = "v1"
+owner = "Integration"
+path = "schemas/integration/v1/integration-result.schema.json"
+compatibility = "backward-compatible"
+breaking_change_policy = "new-major-version-required"
+compatibility_window = "to-be-defined-before-production"
+contract_tests_required = true
+
+[[contracts]]
+id = "integration-cost-schema"
+kind = "json-schema"
+version = "v1"
+owner = "Integration"
+path = "schemas/integration/v1/integration-cost.schema.json"
+compatibility = "backward-compatible"
+breaking_change_policy = "new-major-version-required"
+compatibility_window = "to-be-defined-before-production"
+contract_tests_required = true
+
+[[contracts]]
+id = "integration-dlq-schema"
+kind = "json-schema"
+version = "v1"
+owner = "Integration"
+path = "schemas/integration/v1/integration-dlq.schema.json"
+compatibility = "backward-compatible"
+breaking_change_policy = "new-major-version-required"
+compatibility_window = "to-be-defined-before-production"
+contract_tests_required = true
+
+[[contracts]]
+id = "integration-retry-schema"
+kind = "json-schema"
+version = "v1"
+owner = "Integration"
+path = "schemas/integration/v1/integration-retry.schema.json"
+compatibility = "backward-compatible"
+breaking_change_policy = "new-major-version-required"
+compatibility_window = "to-be-defined-before-production"
+contract_tests_required = true

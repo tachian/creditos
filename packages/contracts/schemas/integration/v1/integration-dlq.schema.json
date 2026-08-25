@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.creditos.local/schemas/integration/v1/integration-dlq.schema.json",
+  "title": "CreditOS Integration DLQ Schema",
+  "description": "Contrato canônico v1 para retry, DLQ e reprocessamento controlado de integração.",
+  "type": "object",
+  "required": [
+    "execution_id",
+    "job_id",
+    "integration_class",
+    "adapter_id",
+    "failure_class",
+    "failure_code",
+    "attempt_count",
+    "schema_version"
+  ],
+  "properties": {
+    "execution_id": {
+      "type": "string",
+      "pattern": "^iexec_[a-f0-9]{32}$"
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^ijob_[a-f0-9]{32}$"
+    },
+    "dlq_id": {
+      "type": "string",
+      "pattern": "^idlq_[a-f0-9]{32}$"
+    },
+    "integration_class": {
+      "type": "string",
+      "enum": [
+        "kyc_kyb",
+        "credit_bureau",
+        "anti_fraud",
+        "receivables"
+      ]
+    },
+    "adapter_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]{2,80}$"
+    },
+    "failure_class": {
+      "type": "string",
+      "enum": [
+        "recoverable",
+        "non_recoverable",
+        "timeout",
+        "invalid_result"
+      ]
+    },
+    "failure_code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,80}$"
+    },
+    "attempt_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "retry_delay_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 120000
+    },
+    "reprocess_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10
+    },
+    "schema_version": {
+      "const": "1.0"
+    }
+  },
+  "additionalProperties": false,
+  "x-creditos": {
+    "owner": "Integration",
+    "version": "v1",
+    "compatibility": "backward-compatible",
+    "breakingChangePolicy": "new-major-version-required",
+    "forbiddenFields": [
+      "address",
+      "attributes",
+      "authorization",
+      "cnpj",
+      "cpf",
+      "custom",
+      "document",
+      "email",
+      "exception",
+      "headers",
+      "legal_name",
+      "metadata",
+      "name",
+      "payload",
+      "phone",
+      "provider_payload",
+      "provider_response",
+      "raw_payload",
+      "request_body",
+      "response_body",
+      "secret",
+      "stack_trace",
+      "street",
+      "token"
+    ],
+    "invalidExamples": [
+      {
+        "execution_id": "iexec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "job_id": "ijob_cccccccccccccccccccccccccccccccc",
+        "integration_class": "credit_bureau",
+        "adapter_id": "mock-credit-bureau-v1",
+        "failure_class": "timeout",
+        "failure_code": "synthetic_timeout",
+        "attempt_count": 3,
+        "schema_version": "1.0",
+        "exception": "timeout from provider"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "execution_id": "iexec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "job_id": "ijob_cccccccccccccccccccccccccccccccc",
+      "dlq_id": "idlq_dddddddddddddddddddddddddddddddd",
+      "integration_class": "credit_bureau",
+      "adapter_id": "mock-credit-bureau-v1",
+      "failure_class": "timeout",
+      "failure_code": "synthetic_timeout",
+      "attempt_count": 3,
+      "retry_delay_ms": 1000,
+      "reprocess_count": 0,
+      "schema_version": "1.0"
+    }
+  ]
+}

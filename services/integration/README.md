@@ -60,7 +60,18 @@ integrações externas.
 - `provider_id` opcional e técnico, validado como log-safe, sem escolha de fornecedor real,
   SDK, endpoint, credencial ou contrato comercial.
 
+## Escopo da Story 3.6
+
+- Contrato AsyncAPI v1 para eventos/comandos de integração com CloudEvents `specversion: "1.0"`.
+- Schemas JSON v1 fechados para resultado, custo, retry e DLQ/reprocessamento.
+- Gates em `scripts/check_contracts.py` para bloquear envelope aberto, campos sensíveis,
+  schema sem exemplos inválidos e cobertura incompleta de eventos esperados.
+- Serialização CloudEvents testável no runtime via `IntegrationExecutionEvent.to_cloudevent_dict()`,
+  alinhada ao contrato de projeção minimizada de custo.
+- Expectativas de consumidores para `Decision`, `Audit & Evidence` e `Reporting & Insights`.
+- Política `metadata-only` preservada para breaking changes, sem prometer diff semântico completo.
+
 ## Fora de Escopo Atual
 
 Esta fase não executa fornecedor real, NATS JetStream real, replay durável,
-banco real, migration, transactional outbox/inbox real, AsyncAPI final ou gRPC real.
+banco real, migration, transactional outbox/inbox real, broker produtivo ou gRPC real.

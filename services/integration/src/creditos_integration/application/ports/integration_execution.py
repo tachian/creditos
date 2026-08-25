@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,6 +18,9 @@ from creditos_integration.domain.entities import (
     IntegrationPlanItem,
     IntegrationResult,
 )
+
+_EVENT_ID_PATTERN = re.compile(r"^evt_[a-f0-9]{32}$")
+_TRACE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 INTEGRATION_RESILIENCE_EVENT_TYPES = MappingProxyType(
     {
@@ -200,11 +204,52 @@ class IntegrationExecutionEvent:
     subject: str
     time: str
     datacontenttype: str
+    dataschema: str
     tenant_id: str
     correlation_id: str
     trace_id: str
     schema_version: str
     data: MappingProxyType[str, Any]
+    tenant_isolation_tier: str = "bridge"
+    request_id: str = "missing-request-id"
+    idempotency_key: str = "missing-idempotency-key"
+    subject_id: str = "integration-service"
+    client_id: str = "integration-service"
+    principal_type: str = "platform"
+    scopes: tuple[str, ...] = ("integration_execution:publish",)
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "specversion",
+            "id",
+            "type",
+            "source",
+            "subject",
+            "time",
+            "datacontenttype",
+            "dataschema",
+            "tenant_id",
+            "correlation_id",
+            "trace_id",
+            "schema_version",
+            "tenant_isolation_tier",
+            "request_id",
+            "idempotency_key",
+            "subject_id",
+            "client_id",
+            "principal_type",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"IntegrationExecutionEvent.{field_name} é obrigatório")
+        if self.specversion != "1.0":
+            raise ValueError("IntegrationExecutionEvent.specversion deve ser 1.0")
+        if not _EVENT_ID_PATTERN.fullmatch(self.id):
+            raise ValueError("IntegrationExecutionEvent.id inválido")
+        if not _TRACE_ID_PATTERN.fullmatch(self.trace_id):
+            raise ValueError("IntegrationExecutionEvent.trace_id inválido")
+        if not self.scopes:
+            raise ValueError("IntegrationExecutionEvent.scopes é obrigatório")
 
     def to_log_safe_dict(self) -> dict[str, object]:
         return {
@@ -215,10 +260,38 @@ class IntegrationExecutionEvent:
             "subject": self.subject,
             "time": self.time,
             "datacontenttype": self.datacontenttype,
+            "dataschema": self.dataschema,
             "tenant_id": self.tenant_id,
             "correlation_id": self.correlation_id,
             "trace_id": self.trace_id,
             "schema_version": self.schema_version,
+            "tenant_isolation_tier": self.tenant_isolation_tier,
+            "request_id": self.request_id,
+            "idempotency_key": self.idempotency_key,
+            "data_keys": tuple(sorted(str(key) for key in self.data)),
+        }
+
+    def to_cloudevent_dict(self) -> dict[str, object]:
+        return {
+            "specversion": self.specversion,
+            "id": self.id,
+            "source": self.source,
+            "type": self.type,
+            "subject": self.subject,
+            "time": self.time,
+            "datacontenttype": self.datacontenttype,
+            "dataschema": self.dataschema,
+            "tenantid": self.tenant_id,
+            "tenanttier": self.tenant_isolation_tier,
+            "subjectid": self.subject_id,
+            "clientid": self.client_id,
+            "principaltype": self.principal_type,
+            "scopes": " ".join(self.scopes),
+            "correlationid": self.correlation_id,
+            "requestid": self.request_id,
+            "idempotencykey": self.idempotency_key,
+            "schemaversion": f"v{self.schema_version.split('.', maxsplit=1)[0]}",
+            "traceparent": f"00-{self.trace_id}-0000000000000001-01",
             "data": dict(self.data),
         }
 
