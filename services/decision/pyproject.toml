@@ -1,0 +1,17 @@
+[project]
+name = "creditos-decision"
+version = "0.1.0"
+description = "Microsserviço Decision do CreditOS"
+requires-python = ">=3.13"
+dependencies = [
+  "creditos-observability",
+  "creditos-security",
+]
+
+[tool.uv.sources]
+creditos-observability = { workspace = true }
+creditos-security = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -6,6 +6,7 @@ requires-python = ">=3.13"
 members = [
     "creditos",
     "creditos-contracts",
+    "creditos-decision",
     "creditos-identity-tenant",
     "creditos-integration",
     "creditos-observability",
@@ -58,6 +59,21 @@ dev = [
 name = "creditos-contracts"
 version = "0.1.0"
 source = { editable = "packages/contracts" }
+
+[[package]]
+name = "creditos-decision"
+version = "0.1.0"
+source = { editable = "services/decision" }
+dependencies = [
+    { name = "creditos-observability" },
+    { name = "creditos-security" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "creditos-observability", editable = "packages/observability" },
+    { name = "creditos-security", editable = "packages/security" },
+]
 
 [[package]]
 name = "creditos-identity-tenant"
