@@ -14,6 +14,10 @@ class CreditPolicyRepository(Protocol):
 
     def restore(self, policy: CreditPolicy) -> None: ...
 
+    def restore_if_current(self, policy: CreditPolicy, *, expected_revision: int) -> bool: ...
+
+    def next_version(self, *, tenant_id: str, policy_id: str) -> int: ...
+
     def get(
         self,
         *,

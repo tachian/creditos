@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -128,6 +129,20 @@ def test_published_policy_snapshot_is_immutable() -> None:
             correlation_id="corr_3234567890abcdef",
             change_summary="Tentativa de alteração em publicada",
         )
+    with pytest.raises(PolicyImmutableError, match="política não pode ser alterada"):
+        replace(
+            published,
+            rules=(
+                PolicyRule.create(
+                    rule_id="rule_requested_amount",
+                    name="Valor máximo solicitado",
+                    source_field="requested_amount_units",
+                    operator="lte",
+                    threshold_value=500_000,
+                    outcome="approve",
+                ),
+            ),
+        )
 
 
 def test_policy_model_rejects_unsupported_product_and_sensitive_or_arbitrary_fields() -> None:
@@ -164,6 +179,17 @@ def test_policy_model_rejects_unsupported_product_and_sensitive_or_arbitrary_fie
             field="email",
             operator="exists",
             value="cliente@example.com",
+        )
+
+    with pytest.raises(PolicyValidationError, match="dado sensível ou campo proibido"):
+        PolicyChangelogEntry.create(
+            change_type="created",
+            actor_subject_id="user_credit_manager",
+            changed_at=NOW,
+            change_summary="Endereço Rua das Flores 123",
+            correlation_id="corr_6234567890abcdef",
+            previous_revision=None,
+            resulting_revision=1,
         )
 
 
@@ -246,6 +272,14 @@ def test_operator_value_semantics_and_applicability_dates_are_validated() -> Non
             field="requested_amount_units",
             operator="exists",
             value=1_000,
+        )
+
+    with pytest.raises(PolicyValidationError, match="valor incompatível com operador"):
+        PolicyCriterion.create(
+            criterion_id="criterion_bad_eq",
+            field="age_years",
+            operator="eq",
+            value="adult",
         )
 
     with pytest.raises(PolicyValidationError, match="timezone"):

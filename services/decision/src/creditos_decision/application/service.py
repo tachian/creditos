@@ -56,6 +56,8 @@ class UpdateCreditPolicyDraftCommand:
     criteria: tuple[PolicyCriterion, ...]
     limits: tuple[PolicyLimit, ...]
     applicability: PolicyApplicability
+    owner_subject_id: str | None = None
+    product_type: str | None = None
     actor_subject_id: str = ""
 
 
@@ -120,6 +122,10 @@ class DecisionApplicationService:
                 actor_subject_id=operation_context.actor_subject_id,
                 correlation_id=context.correlation_id,
                 change_summary=command.change_summary,
+                version=self._repository.next_version(
+                    tenant_id=operation_context.tenant_id,
+                    policy_id=command.policy_id,
+                ),
             )
             self._repository.save(policy)
             persisted_policy = policy
@@ -206,6 +212,8 @@ class DecisionApplicationService:
                 actor_subject_id=operation_context.actor_subject_id,
                 correlation_id=context.correlation_id,
                 change_summary=command.change_summary,
+                owner_subject_id=command.owner_subject_id,
+                product_type=command.product_type,
             )
             self._repository.update(updated_policy, expected_revision=existing_policy.revision)
             try:
@@ -222,7 +230,10 @@ class DecisionApplicationService:
                     },
                 )
             except Exception:
-                self._repository.restore(existing_policy)
+                self._repository.restore_if_current(
+                    existing_policy,
+                    expected_revision=updated_policy.revision,
+                )
                 raise
             log = self._log_operation(
                 context=context,

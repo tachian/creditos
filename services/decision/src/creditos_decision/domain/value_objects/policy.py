@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -83,6 +84,7 @@ _GOVERNED_POLICY_FIELDS = {
     "requested_installments",
     "requested_term_days",
 }
+_NUMERIC_POLICY_FIELDS = frozenset(_GOVERNED_POLICY_FIELDS)
 _ALLOWED_CHANNELS = {"api", "batch", "portal", "partner", "checkout", "backoffice"}
 _ALLOWED_LIMIT_TYPES = {
     "max_amount_units",
@@ -353,10 +355,11 @@ def _normalize_rule(
     outcome: str,
     reason_code_refs: tuple[str, ...],
 ) -> dict[str, object]:
+    parsed_source_field = _validate_policy_field(source_field, field_path="rules.source_field")
     return {
         "rule_id": _validate_technical_id(rule_id, field_path="rules.rule_id"),
         "name": _validate_safe_text(name, field_path="rules.name"),
-        "source_field": _validate_policy_field(source_field, field_path="rules.source_field"),
+        "source_field": parsed_source_field,
         "operator": _parse_enum(
             PolicyOperator,
             operator,
@@ -367,6 +370,7 @@ def _normalize_rule(
             operator,
             threshold_value,
             field_path="rules.threshold_value",
+            policy_field=parsed_source_field,
         ),
         "outcome": _parse_enum(
             PolicyOutcome,
@@ -388,19 +392,25 @@ def _normalize_criterion(
     operator: str,
     value: int | str | bool,
 ) -> dict[str, object]:
+    parsed_field = _validate_policy_field(field, field_path="criteria.field")
     return {
         "criterion_id": _validate_technical_id(
             criterion_id,
             field_path="criteria.criterion_id",
         ),
-        "field": _validate_policy_field(field, field_path="criteria.field"),
+        "field": parsed_field,
         "operator": _parse_enum(
             PolicyOperator,
             operator,
             code="unsupported_policy_operator",
             field_path="criteria.operator",
         ),
-        "value": _validate_operator_value(operator, value, field_path="criteria.value"),
+        "value": _validate_operator_value(
+            operator,
+            value,
+            field_path="criteria.value",
+            policy_field=parsed_field,
+        ),
     }
 
 
@@ -549,6 +559,7 @@ def _validate_operator_value(
     value: int | str | bool,
     *,
     field_path: str,
+    policy_field: str,
 ) -> int | str | bool:
     parsed_operator = _parse_enum(
         PolicyOperator,
@@ -558,7 +569,9 @@ def _validate_operator_value(
     )
     parsed_value = _validate_rule_value(value, field_path=field_path)
     if (
-        parsed_operator in {PolicyOperator.GTE.value, PolicyOperator.LTE.value}
+        parsed_operator
+        in {PolicyOperator.GTE.value, PolicyOperator.LTE.value, PolicyOperator.EQ.value}
+        and policy_field in _NUMERIC_POLICY_FIELDS
         and type(parsed_value) is not int
     ):
         raise PolicyValidationError(
@@ -619,7 +632,7 @@ def _validate_safe_text(value: str, *, field_path: str) -> str:
 
 
 def _reject_sensitive_or_prohibited(value: Any, *, field_path: str) -> None:
-    normalized = str(value).lower()
+    normalized = _normalize_for_sensitive_matching(value)
     compact = re.sub(r"[^a-z0-9]", "", normalized)
     digits = re.sub(r"\D", "", normalized)
     normalized_tokens = set(re.split(r"[^a-z0-9]+", normalized))
@@ -635,6 +648,11 @@ def _reject_sensitive_or_prohibited(value: Any, *, field_path: str) -> None:
             code="sensitive_or_prohibited_policy_field",
             field_path=field_path,
         )
+
+
+def _normalize_for_sensitive_matching(value: Any) -> str:
+    decomposed = unicodedata.normalize("NFKD", str(value).lower())
+    return "".join(character for character in decomposed if not unicodedata.combining(character))
 
 
 def _validate_aware_utc_datetime(value: datetime, *, field_path: str) -> datetime:

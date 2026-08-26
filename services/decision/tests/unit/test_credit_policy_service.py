@@ -154,6 +154,65 @@ def test_update_policy_draft_records_history_and_audit_intent() -> None:
     assert audit.events[-1].safe_details["revision"] == "2"
 
 
+def test_update_policy_draft_allows_governed_metadata_changes() -> None:
+    audit = RecordingAuditPublisher()
+    service = DecisionApplicationService(
+        repository=InMemoryCreditPolicyRepository(),
+        audit_publisher=audit,
+        environment="test",
+        clock=lambda: NOW,
+    )
+    created = service.create_policy_draft(
+        _create_command(),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(),
+    )
+
+    updated = service.update_policy_draft(
+        UpdateCreditPolicyDraftCommand(
+            policy_id=created.policy.policy_id,
+            policy_version_id=created.policy.policy_version_id,
+            owner_subject_id="user_credit_owner_2",
+            product_type="bnpl",
+            change_summary="Revisão de metadados governados",
+            rules=created.policy.rules,
+            criteria=created.policy.criteria,
+            limits=created.policy.limits,
+            applicability=created.policy.applicability,
+        ),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(),
+    )
+
+    assert updated.policy.revision == 2
+    assert updated.policy.owner_subject_id == "user_credit_owner_2"
+    assert updated.policy.product_type == "bnpl"
+    assert audit.events[-1].safe_details["product_type"] == "bnpl"
+
+
+def test_create_policy_draft_numbers_new_versions_per_policy() -> None:
+    service = DecisionApplicationService(
+        repository=InMemoryCreditPolicyRepository(),
+        audit_publisher=RecordingAuditPublisher(),
+        environment="test",
+        clock=lambda: NOW,
+    )
+
+    first = service.create_policy_draft(
+        _create_command(policy_version_id="polver_personal_credit_default_v1"),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(),
+    )
+    second = service.create_policy_draft(
+        _create_command(policy_version_id="polver_personal_credit_default_v2"),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(),
+    )
+
+    assert first.policy.version == 1
+    assert second.policy.version == 2
+
+
 def test_create_policy_requires_matching_trusted_tenant_context() -> None:
     service = DecisionApplicationService(
         repository=InMemoryCreditPolicyRepository(),
@@ -288,6 +347,77 @@ def test_audit_failure_rolls_back_policy_creation_and_update() -> None:
     assert persisted.revision == 1
 
 
+def test_audit_failure_rollback_does_not_overwrite_concurrent_update() -> None:
+    class ConcurrentFailingAuditPublisher:
+        def __init__(self, repository: InMemoryCreditPolicyRepository) -> None:
+            self._repository = repository
+
+        def publish(self, event: CreditPolicyAuditIntent) -> None:
+            if event.event_type != "credit_policy.updated":
+                return
+            current = self._repository.get(
+                tenant_id=event.tenant_id,
+                policy_id=event.policy_id,
+                policy_version_id=event.policy_version_id,
+            )
+            assert current is not None
+            concurrent_update = current.update_draft(
+                rules=current.rules,
+                criteria=current.criteria,
+                limits=current.limits,
+                applicability=current.applicability,
+                now=NOW.replace(hour=13),
+                actor_subject_id="user_credit_manager",
+                correlation_id="corr_7234567890abcdef",
+                change_summary="Atualização concorrente auditada",
+            )
+            self._repository.update(concurrent_update, expected_revision=current.revision)
+            raise RuntimeError("audit unavailable")
+
+    repository = InMemoryCreditPolicyRepository()
+    service = DecisionApplicationService(
+        repository=repository,
+        audit_publisher=RecordingAuditPublisher(),
+        environment="test",
+        clock=lambda: NOW,
+    )
+    created = service.create_policy_draft(
+        _create_command(),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(),
+    )
+    service_with_failing_audit = DecisionApplicationService(
+        repository=repository,
+        audit_publisher=ConcurrentFailingAuditPublisher(repository),
+        environment="test",
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        service_with_failing_audit.update_policy_draft(
+            UpdateCreditPolicyDraftCommand(
+                policy_id=created.policy.policy_id,
+                policy_version_id=created.policy.policy_version_id,
+                change_summary="Falha de auditoria com concorrência",
+                rules=created.policy.rules,
+                criteria=created.policy.criteria,
+                limits=created.policy.limits,
+                applicability=created.policy.applicability,
+            ),
+            context=_context("tenant_alpha"),
+            trusted_context=_trusted_context(),
+        )
+
+    persisted = repository.get(
+        tenant_id="tenant_alpha",
+        policy_id=created.policy.policy_id,
+        policy_version_id=created.policy.policy_version_id,
+    )
+    assert persisted is not None
+    assert persisted.revision == 3
+    assert persisted.changelog[-1].change_summary == "Atualização concorrente auditada"
+
+
 def test_repository_rejects_stale_updates_with_expected_revision() -> None:
     repository = InMemoryCreditPolicyRepository()
     service = DecisionApplicationService(
@@ -330,10 +460,11 @@ def test_repository_rejects_stale_updates_with_expected_revision() -> None:
 
 def _create_command(
     actor_subject_id: str = "user_credit_manager",
+    policy_version_id: str = "polver_personal_credit_default_v1",
 ) -> CreateCreditPolicyDraftCommand:
     return CreateCreditPolicyDraftCommand(
         policy_id="pol_personal_credit_default",
-        policy_version_id="polver_personal_credit_default_v1",
+        policy_version_id=policy_version_id,
         owner_subject_id="user_credit_manager",
         product_type="personal_credit",
         actor_subject_id=actor_subject_id,

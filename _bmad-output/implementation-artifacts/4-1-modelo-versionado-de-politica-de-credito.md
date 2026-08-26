@@ -218,6 +218,7 @@ Codex
 - 2026-08-26 — Subtarefas Jira `CTOS-225` a `CTOS-231` movidas para `Concluído` após validações verdes.
 - 2026-08-26 — Code review adversarial executado; achados registrados e ciclo de patch iniciado.
 - 2026-08-26 — Patches do code review aplicados com foco em contexto confiável, governança de campos, auditoria de rejeições, rollback, concorrência otimista, datetimes UTC e lockfile.
+- 2026-08-26 — Code review do Codex no GitHub do PR #38 analisado; 6 achados corrigidos na mesma branch.
 
 ### Implementation Plan
 
@@ -266,6 +267,8 @@ Codex
 - 2026-08-26 — Modelo reforçado com allowlist de campos governados, bloqueio de CPF/CNPJ/e-mail/campos sensíveis, validação semântica de operadores, datetimes UTC-aware, changelog consistente e construtores diretos revalidados.
 - 2026-08-26 — Persistência in-memory reforçada com rollback em falha de auditoria e controle otimista por `expected_revision`.
 - 2026-08-26 — Validações verdes finais: `uv run ruff format --check .`; `uv run ruff check .`; `uv run pyright`; `uv run pytest services/decision/tests/unit -q` com `15 passed`; suíte completa fora do sandbox com `426 passed`.
+- 2026-08-26 — Correções pós-review do PR #38: rollback de update por compare-and-swap, normalização de diacríticos para dados sensíveis, fingerprint interno de snapshots não-draft, alteração de metadados governados em draft, numeração incremental de versões por política e validação de `eq` para campos numéricos.
+- 2026-08-26 — Validações verdes após correções do PR #38: `uv run ruff format --check .`; `uv run ruff check .`; `uv run pyright`; `uv run pytest services/decision/tests/unit -q` com `18 passed`; suíte completa fora do sandbox com `429 passed`.
 
 ### Change Log
 
@@ -273,3 +276,4 @@ Codex
 - 2026-08-26 — Implementada a Story 4.1 e movida para `review`.
 - 2026-08-26 — Story retornou para `in-progress` para aplicar patches do code review.
 - 2026-08-26 — Patches do code review aplicados e Story 4.1 marcada como `done`.
+- 2026-08-26 — Correções do review do Codex no GitHub aplicadas no PR #38.

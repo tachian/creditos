@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
@@ -36,6 +37,76 @@ class CreditPolicy:
     changelog: tuple[PolicyChangelogEntry, ...]
     created_at: datetime
     updated_at: datetime
+    _governed_fingerprint: str = ""
+
+    def __post_init__(self) -> None:
+        if self.version < 1:
+            raise PolicyValidationError(
+                "versão inválida",
+                code="invalid_policy_version",
+                field_path="version",
+            )
+        if self.revision < 1:
+            raise PolicyValidationError(
+                "revisão inválida",
+                code="invalid_policy_revision",
+                field_path="revision",
+            )
+        if not isinstance(self.applicability, PolicyApplicability):
+            raise PolicyValidationError(
+                "aplicabilidade inválida",
+                code="invalid_policy_applicability",
+                field_path="applicability",
+            )
+        rules = tuple(self.rules)
+        criteria = tuple(self.criteria)
+        limits = tuple(self.limits)
+        changelog = tuple(self.changelog)
+        _require_non_empty_tuple(rules, field_path="rules")
+        _require_non_empty_tuple(criteria, field_path="criteria")
+        _require_non_empty_tuple(limits, field_path="limits")
+        _require_non_empty_tuple(changelog, field_path="changelog")
+        _require_items(rules, PolicyRule, field_path="rules")
+        _require_items(criteria, PolicyCriterion, field_path="criteria")
+        _require_items(limits, PolicyLimit, field_path="limits")
+        _require_items(changelog, PolicyChangelogEntry, field_path="changelog")
+        _validate_changelog_chain(changelog, revision=self.revision)
+        _validate_aware_utc_datetime(self.created_at, field_path="created_at")
+        _validate_aware_utc_datetime(self.updated_at, field_path="updated_at")
+        parsed_status = parse_policy_status(self.status)
+        parsed_owner_subject_id = validate_subject_id(
+            self.owner_subject_id,
+            field_path="owner_subject_id",
+        )
+        parsed_product_type = parse_product_type(self.product_type)
+        fingerprint = _compute_governed_fingerprint(
+            status=parsed_status,
+            owner_subject_id=parsed_owner_subject_id,
+            product_type=parsed_product_type,
+            applicability=self.applicability,
+            rules=rules,
+            criteria=criteria,
+            limits=limits,
+        )
+        if parsed_status != "draft" and (
+            not self._governed_fingerprint or self._governed_fingerprint != fingerprint
+        ):
+            raise PolicyImmutableError("política não pode ser alterada")
+        object.__setattr__(self, "policy_id", validate_policy_id(self.policy_id))
+        object.__setattr__(
+            self,
+            "policy_version_id",
+            validate_policy_version_id(self.policy_version_id),
+        )
+        object.__setattr__(self, "tenant_id", validate_tenant_id(self.tenant_id))
+        object.__setattr__(self, "owner_subject_id", parsed_owner_subject_id)
+        object.__setattr__(self, "product_type", parsed_product_type)
+        object.__setattr__(self, "status", parsed_status)
+        object.__setattr__(self, "rules", rules)
+        object.__setattr__(self, "criteria", criteria)
+        object.__setattr__(self, "limits", limits)
+        object.__setattr__(self, "changelog", changelog)
+        object.__setattr__(self, "_governed_fingerprint", fingerprint)
 
     @classmethod
     def create_draft(
@@ -54,6 +125,7 @@ class CreditPolicy:
         actor_subject_id: str,
         correlation_id: str,
         change_summary: str,
+        version: int = 1,
     ) -> CreditPolicy:
         revision = 1
         changelog = (
@@ -74,7 +146,7 @@ class CreditPolicy:
             owner_subject_id=owner_subject_id,
             product_type=product_type,
             status="draft",
-            version=1,
+            version=version,
             revision=revision,
             applicability=applicability,
             rules=rules,
@@ -134,16 +206,19 @@ class CreditPolicy:
         _validate_changelog_chain(changelog, revision=revision)
         _validate_aware_utc_datetime(created_at, field_path="created_at")
         _validate_aware_utc_datetime(updated_at, field_path="updated_at")
+        parsed_status = parse_policy_status(status)
+        parsed_owner_subject_id = validate_subject_id(
+            owner_subject_id,
+            field_path="owner_subject_id",
+        )
+        parsed_product_type = parse_product_type(product_type)
         return cls(
             policy_id=validate_policy_id(policy_id),
             policy_version_id=validate_policy_version_id(policy_version_id),
             tenant_id=validate_tenant_id(tenant_id),
-            owner_subject_id=validate_subject_id(
-                owner_subject_id,
-                field_path="owner_subject_id",
-            ),
-            product_type=parse_product_type(product_type),
-            status=parse_policy_status(status),
+            owner_subject_id=parsed_owner_subject_id,
+            product_type=parsed_product_type,
+            status=parsed_status,
             version=version,
             revision=revision,
             applicability=applicability,
@@ -153,6 +228,15 @@ class CreditPolicy:
             changelog=tuple(changelog),
             created_at=created_at,
             updated_at=updated_at,
+            _governed_fingerprint=_compute_governed_fingerprint(
+                status=parsed_status,
+                owner_subject_id=parsed_owner_subject_id,
+                product_type=parsed_product_type,
+                applicability=applicability,
+                rules=tuple(rules),
+                criteria=tuple(criteria),
+                limits=tuple(limits),
+            ),
         )
 
     @property
@@ -170,6 +254,8 @@ class CreditPolicy:
         actor_subject_id: str,
         correlation_id: str,
         change_summary: str,
+        owner_subject_id: str | None = None,
+        product_type: str | None = None,
     ) -> CreditPolicy:
         if self.status != "draft":
             raise PolicyImmutableError("política não pode ser alterada")
@@ -199,6 +285,8 @@ class CreditPolicy:
         return replace(
             self,
             revision=next_revision,
+            owner_subject_id=owner_subject_id or self.owner_subject_id,
+            product_type=product_type or self.product_type,
             applicability=applicability,
             rules=tuple(rules),
             criteria=tuple(criteria),
@@ -257,6 +345,30 @@ def _raise_inconsistent_changelog() -> None:
         code="inconsistent_policy_changelog",
         field_path="changelog",
     )
+
+
+def _compute_governed_fingerprint(
+    *,
+    status: str,
+    owner_subject_id: str,
+    product_type: str,
+    applicability: PolicyApplicability,
+    rules: tuple[PolicyRule, ...],
+    criteria: tuple[PolicyCriterion, ...],
+    limits: tuple[PolicyLimit, ...],
+) -> str:
+    governed_snapshot = repr(
+        (
+            status,
+            owner_subject_id,
+            product_type,
+            applicability,
+            rules,
+            criteria,
+            limits,
+        )
+    )
+    return hashlib.sha256(governed_snapshot.encode("utf-8")).hexdigest()
 
 
 def _validate_aware_utc_datetime(value: datetime, *, field_path: str) -> None:
