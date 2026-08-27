@@ -45,6 +45,11 @@ class PolicyNotFoundError(DecisionDomainError):
     safe_message = "política não encontrada"
 
 
+class PolicySimulationNotFoundError(DecisionDomainError):
+    code = "policy_simulation_not_found"
+    safe_message = "simulação de política não encontrada"
+
+
 class PolicyConcurrencyError(DecisionDomainError):
     code = "policy_concurrent_revision"
     safe_message = "revisão concorrente"

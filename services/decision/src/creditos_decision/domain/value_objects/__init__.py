@@ -8,6 +8,18 @@ from creditos_decision.domain.value_objects.policy import (
     validate_policy_id,
     validate_policy_version_id,
 )
+from creditos_decision.domain.value_objects.policy_simulation import (
+    PolicySimulationCaseResult,
+    PolicySimulationFieldValue,
+    PolicySimulationInputCase,
+    PolicySimulationOutcomeCount,
+    PolicySimulationResult,
+    PolicySimulationStatus,
+    PolicySimulationSummary,
+    PolicyValidationIssue,
+    PolicyValidationSeverity,
+    validate_policy_simulation_id,
+)
 from creditos_decision.domain.value_objects.reason_codes import (
     ExplainableFactor,
     ReasonCode,
@@ -28,6 +40,15 @@ __all__ = [
     "PolicyCriterion",
     "PolicyLimit",
     "PolicyRule",
+    "PolicySimulationCaseResult",
+    "PolicySimulationFieldValue",
+    "PolicySimulationInputCase",
+    "PolicySimulationOutcomeCount",
+    "PolicySimulationResult",
+    "PolicySimulationStatus",
+    "PolicySimulationSummary",
+    "PolicyValidationIssue",
+    "PolicyValidationSeverity",
     "ReasonCode",
     "ReasonCodeAudience",
     "ReasonCodeCatalogChangeType",
@@ -39,5 +60,6 @@ __all__ = [
     "validate_reason_code_catalog_version_id",
     "validate_correlation_id",
     "validate_policy_id",
+    "validate_policy_simulation_id",
     "validate_policy_version_id",
 ]
