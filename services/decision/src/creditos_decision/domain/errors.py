@@ -48,3 +48,13 @@ class PolicyNotFoundError(DecisionDomainError):
 class PolicyConcurrencyError(DecisionDomainError):
     code = "policy_concurrent_revision"
     safe_message = "revisão concorrente"
+
+
+class ReasonCodeCatalogNotFoundError(DecisionDomainError):
+    code = "reason_code_catalog_not_found"
+    safe_message = "catálogo de reason codes não encontrado"
+
+
+class ReasonCodeCatalogVersioningError(DecisionDomainError):
+    code = "reason_code_catalog_requires_new_version"
+    safe_message = "mudança incompatível exige nova versão"

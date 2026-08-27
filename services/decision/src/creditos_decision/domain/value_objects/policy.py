@@ -47,8 +47,23 @@ _TECHNICAL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,160}$")
 _CORRELATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{8,160}$")
 _SAFE_TEXT_PATTERN = re.compile(r"^[A-Za-zÀ-ÿ0-9 .,;:_/()+\\-]{1,240}$")
 _EMAIL_PATTERN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}")
+_FORMATTED_CPF_PATTERN = re.compile(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b")
+_FORMATTED_CNPJ_PATTERN = re.compile(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b")
+_LIKELY_PERSON_NAME_PATTERN = re.compile(
+    r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]{2,}"
+    r"\s+(?:d[aeo]s?|e)\s+"
+    r"[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]{2,}\b"
+)
 _PROHIBITED_TOKENS = {
     "address",
+    "alameda",
+    "apartamento",
+    "apto",
+    "av",
+    "avenida",
+    "bairro",
+    "bloco",
+    "cep",
     "authorization",
     "cnpj",
     "cpf",
@@ -67,10 +82,13 @@ _PROHIBITED_TOKENS = {
     "raw_payload",
     "request_body",
     "response_body",
+    "rodovia",
+    "rua",
     "secret",
     "segredo",
     "street",
     "token",
+    "travessa",
 }
 _PROHIBITED_COMPACT_TOKENS = {re.sub(r"[^a-z0-9]", "", token) for token in _PROHIBITED_TOKENS}
 _GOVERNED_POLICY_FIELDS = {
@@ -356,6 +374,22 @@ def _normalize_rule(
     reason_code_refs: tuple[str, ...],
 ) -> dict[str, object]:
     parsed_source_field = _validate_policy_field(source_field, field_path="rules.source_field")
+    parsed_reason_code_refs = tuple(
+        _validate_technical_id(reference, field_path="rules.reason_code_refs")
+        for reference in reason_code_refs
+    )
+    if not parsed_reason_code_refs:
+        raise PolicyValidationError(
+            "reason code obrigatório",
+            code="missing_reason_code_ref",
+            field_path="rules.reason_code_refs",
+        )
+    if len(set(parsed_reason_code_refs)) != len(parsed_reason_code_refs):
+        raise PolicyValidationError(
+            "reason code duplicado",
+            code="duplicate_reason_code_ref",
+            field_path="rules.reason_code_refs",
+        )
     return {
         "rule_id": _validate_technical_id(rule_id, field_path="rules.rule_id"),
         "name": _validate_safe_text(name, field_path="rules.name"),
@@ -378,10 +412,7 @@ def _normalize_rule(
             code="unsupported_policy_outcome",
             field_path="rules.outcome",
         ),
-        "reason_code_refs": tuple(
-            _validate_technical_id(reference, field_path="rules.reason_code_refs")
-            for reference in reason_code_refs
-        ),
+        "reason_code_refs": parsed_reason_code_refs,
     }
 
 
@@ -641,7 +672,10 @@ def _reject_sensitive_or_prohibited(value: Any, *, field_path: str) -> None:
         or compact in _PROHIBITED_COMPACT_TOKENS
         or normalized_tokens.intersection(_PROHIBITED_TOKENS)
         or len(digits) in (11, 14)
+        or _FORMATTED_CPF_PATTERN.search(str(value))
+        or _FORMATTED_CNPJ_PATTERN.search(str(value))
         or _EMAIL_PATTERN.search(str(value))
+        or _LIKELY_PERSON_NAME_PATTERN.search(str(value))
     ):
         raise PolicyValidationError(
             "dado sensível ou campo proibido",

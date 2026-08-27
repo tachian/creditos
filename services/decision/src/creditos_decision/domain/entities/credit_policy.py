@@ -18,6 +18,10 @@ from creditos_decision.domain.value_objects.policy import (
     validate_subject_id,
     validate_tenant_id,
 )
+from creditos_decision.domain.value_objects.reason_codes import (
+    validate_reason_code_catalog_id,
+    validate_reason_code_catalog_version_id,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +31,8 @@ class CreditPolicy:
     tenant_id: str
     owner_subject_id: str
     product_type: str
+    reason_code_catalog_id: str
+    reason_code_catalog_version_id: str
     status: str
     version: int
     revision: int
@@ -79,10 +85,16 @@ class CreditPolicy:
             field_path="owner_subject_id",
         )
         parsed_product_type = parse_product_type(self.product_type)
+        parsed_reason_code_catalog_id = validate_reason_code_catalog_id(self.reason_code_catalog_id)
+        parsed_reason_code_catalog_version_id = validate_reason_code_catalog_version_id(
+            self.reason_code_catalog_version_id
+        )
         fingerprint = _compute_governed_fingerprint(
             status=parsed_status,
             owner_subject_id=parsed_owner_subject_id,
             product_type=parsed_product_type,
+            reason_code_catalog_id=parsed_reason_code_catalog_id,
+            reason_code_catalog_version_id=parsed_reason_code_catalog_version_id,
             applicability=self.applicability,
             rules=rules,
             criteria=criteria,
@@ -101,6 +113,12 @@ class CreditPolicy:
         object.__setattr__(self, "tenant_id", validate_tenant_id(self.tenant_id))
         object.__setattr__(self, "owner_subject_id", parsed_owner_subject_id)
         object.__setattr__(self, "product_type", parsed_product_type)
+        object.__setattr__(self, "reason_code_catalog_id", parsed_reason_code_catalog_id)
+        object.__setattr__(
+            self,
+            "reason_code_catalog_version_id",
+            parsed_reason_code_catalog_version_id,
+        )
         object.__setattr__(self, "status", parsed_status)
         object.__setattr__(self, "rules", rules)
         object.__setattr__(self, "criteria", criteria)
@@ -117,6 +135,8 @@ class CreditPolicy:
         tenant_id: str,
         owner_subject_id: str,
         product_type: str,
+        reason_code_catalog_id: str,
+        reason_code_catalog_version_id: str,
         applicability: PolicyApplicability,
         rules: tuple[PolicyRule, ...],
         criteria: tuple[PolicyCriterion, ...],
@@ -145,6 +165,8 @@ class CreditPolicy:
             tenant_id=tenant_id,
             owner_subject_id=owner_subject_id,
             product_type=product_type,
+            reason_code_catalog_id=reason_code_catalog_id,
+            reason_code_catalog_version_id=reason_code_catalog_version_id,
             status="draft",
             version=version,
             revision=revision,
@@ -166,6 +188,8 @@ class CreditPolicy:
         tenant_id: str,
         owner_subject_id: str,
         product_type: str,
+        reason_code_catalog_id: str,
+        reason_code_catalog_version_id: str,
         status: str,
         version: int,
         revision: int,
@@ -212,12 +236,18 @@ class CreditPolicy:
             field_path="owner_subject_id",
         )
         parsed_product_type = parse_product_type(product_type)
+        parsed_reason_code_catalog_id = validate_reason_code_catalog_id(reason_code_catalog_id)
+        parsed_reason_code_catalog_version_id = validate_reason_code_catalog_version_id(
+            reason_code_catalog_version_id
+        )
         return cls(
             policy_id=validate_policy_id(policy_id),
             policy_version_id=validate_policy_version_id(policy_version_id),
             tenant_id=validate_tenant_id(tenant_id),
             owner_subject_id=parsed_owner_subject_id,
             product_type=parsed_product_type,
+            reason_code_catalog_id=parsed_reason_code_catalog_id,
+            reason_code_catalog_version_id=parsed_reason_code_catalog_version_id,
             status=parsed_status,
             version=version,
             revision=revision,
@@ -232,6 +262,8 @@ class CreditPolicy:
                 status=parsed_status,
                 owner_subject_id=parsed_owner_subject_id,
                 product_type=parsed_product_type,
+                reason_code_catalog_id=parsed_reason_code_catalog_id,
+                reason_code_catalog_version_id=parsed_reason_code_catalog_version_id,
                 applicability=applicability,
                 rules=tuple(rules),
                 criteria=tuple(criteria),
@@ -254,6 +286,8 @@ class CreditPolicy:
         actor_subject_id: str,
         correlation_id: str,
         change_summary: str,
+        reason_code_catalog_id: str,
+        reason_code_catalog_version_id: str,
         owner_subject_id: str | None = None,
         product_type: str | None = None,
     ) -> CreditPolicy:
@@ -287,6 +321,8 @@ class CreditPolicy:
             revision=next_revision,
             owner_subject_id=owner_subject_id or self.owner_subject_id,
             product_type=product_type or self.product_type,
+            reason_code_catalog_id=reason_code_catalog_id,
+            reason_code_catalog_version_id=reason_code_catalog_version_id,
             applicability=applicability,
             rules=tuple(rules),
             criteria=tuple(criteria),
@@ -352,6 +388,8 @@ def _compute_governed_fingerprint(
     status: str,
     owner_subject_id: str,
     product_type: str,
+    reason_code_catalog_id: str,
+    reason_code_catalog_version_id: str,
     applicability: PolicyApplicability,
     rules: tuple[PolicyRule, ...],
     criteria: tuple[PolicyCriterion, ...],
@@ -362,6 +400,8 @@ def _compute_governed_fingerprint(
             status,
             owner_subject_id,
             product_type,
+            reason_code_catalog_id,
+            reason_code_catalog_version_id,
             applicability,
             rules,
             criteria,

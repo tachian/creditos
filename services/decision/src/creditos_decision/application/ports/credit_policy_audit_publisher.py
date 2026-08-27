@@ -15,5 +15,16 @@ class CreditPolicyAuditIntent:
     safe_details: dict[str, str]
 
 
+@dataclass(frozen=True, slots=True)
+class ReasonCodeCatalogAuditIntent:
+    event_type: str
+    tenant_id: str
+    actor_subject_id: str
+    catalog_id: str
+    catalog_version_id: str
+    correlation_id: str
+    safe_details: dict[str, str]
+
+
 class CreditPolicyAuditPublisher(Protocol):
-    def publish(self, event: CreditPolicyAuditIntent) -> None: ...
+    def publish(self, event: CreditPolicyAuditIntent | ReasonCodeCatalogAuditIntent) -> None: ...

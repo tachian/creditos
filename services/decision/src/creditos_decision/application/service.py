@@ -14,17 +14,27 @@ from creditos_decision.application.ports import (
     CreditPolicyAuditIntent,
     CreditPolicyAuditPublisher,
     CreditPolicyRepository,
+    ReasonCodeCatalogAuditIntent,
+    ReasonCodeCatalogRepository,
 )
-from creditos_decision.domain.entities import CreditPolicy
-from creditos_decision.domain.errors import PolicyNotFoundError, PolicyTenantContextError
+from creditos_decision.domain.entities import CreditPolicy, ReasonCodeCatalog
+from creditos_decision.domain.errors import (
+    PolicyNotFoundError,
+    PolicyTenantContextError,
+    ReasonCodeCatalogNotFoundError,
+)
 from creditos_decision.domain.value_objects import (
+    ExplainableFactor,
     PolicyApplicability,
     PolicyCriterion,
     PolicyLimit,
     PolicyRule,
+    ReasonCode,
     validate_correlation_id,
     validate_policy_id,
     validate_policy_version_id,
+    validate_reason_code_catalog_id,
+    validate_reason_code_catalog_version_id,
 )
 
 SERVICE_NAME = "decision"
@@ -44,6 +54,8 @@ class CreateCreditPolicyDraftCommand:
     rules: tuple[PolicyRule, ...]
     criteria: tuple[PolicyCriterion, ...]
     limits: tuple[PolicyLimit, ...]
+    reason_code_catalog_id: str
+    reason_code_catalog_version_id: str
     actor_subject_id: str = ""
 
 
@@ -56,6 +68,45 @@ class UpdateCreditPolicyDraftCommand:
     criteria: tuple[PolicyCriterion, ...]
     limits: tuple[PolicyLimit, ...]
     applicability: PolicyApplicability
+    reason_code_catalog_id: str
+    reason_code_catalog_version_id: str
+    owner_subject_id: str | None = None
+    product_type: str | None = None
+    actor_subject_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CreateReasonCodeCatalogDraftCommand:
+    catalog_id: str
+    catalog_version_id: str
+    owner_subject_id: str
+    product_type: str
+    change_summary: str
+    reason_codes: tuple[ReasonCode, ...]
+    explainable_factors: tuple[ExplainableFactor, ...]
+    actor_subject_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateReasonCodeCatalogDraftCommand:
+    catalog_id: str
+    catalog_version_id: str
+    change_summary: str
+    reason_codes: tuple[ReasonCode, ...]
+    explainable_factors: tuple[ExplainableFactor, ...]
+    owner_subject_id: str | None = None
+    product_type: str | None = None
+    actor_subject_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CreateReasonCodeCatalogVersionCommand:
+    catalog_id: str
+    current_catalog_version_id: str
+    new_catalog_version_id: str
+    change_summary: str
+    reason_codes: tuple[ReasonCode, ...]
+    explainable_factors: tuple[ExplainableFactor, ...]
     owner_subject_id: str | None = None
     product_type: str | None = None
     actor_subject_id: str = ""
@@ -64,6 +115,12 @@ class UpdateCreditPolicyDraftCommand:
 @dataclass(frozen=True, slots=True)
 class CreditPolicyApplicationResult:
     policy: CreditPolicy
+    logs: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReasonCodeCatalogApplicationResult:
+    catalog: ReasonCodeCatalog
     logs: tuple[dict[str, Any], ...]
 
 
@@ -80,9 +137,11 @@ class DecisionApplicationService:
         repository: CreditPolicyRepository,
         audit_publisher: CreditPolicyAuditPublisher,
         environment: str,
+        reason_code_catalog_repository: ReasonCodeCatalogRepository | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._repository = repository
+        self._reason_code_catalog_repository = reason_code_catalog_repository
         self._audit_publisher = audit_publisher
         self._environment = environment
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -114,6 +173,8 @@ class DecisionApplicationService:
                 tenant_id=operation_context.tenant_id,
                 owner_subject_id=command.owner_subject_id,
                 product_type=command.product_type,
+                reason_code_catalog_id=command.reason_code_catalog_id,
+                reason_code_catalog_version_id=command.reason_code_catalog_version_id,
                 applicability=command.applicability,
                 rules=command.rules,
                 criteria=command.criteria,
@@ -126,6 +187,11 @@ class DecisionApplicationService:
                     tenant_id=operation_context.tenant_id,
                     policy_id=command.policy_id,
                 ),
+            )
+            self._validate_policy_reason_code_refs(
+                command=command,
+                tenant_id=operation_context.tenant_id,
+                policy=policy,
             )
             self._repository.save(policy)
             persisted_policy = policy
@@ -212,8 +278,15 @@ class DecisionApplicationService:
                 actor_subject_id=operation_context.actor_subject_id,
                 correlation_id=context.correlation_id,
                 change_summary=command.change_summary,
+                reason_code_catalog_id=command.reason_code_catalog_id,
+                reason_code_catalog_version_id=command.reason_code_catalog_version_id,
                 owner_subject_id=command.owner_subject_id,
                 product_type=command.product_type,
+            )
+            self._validate_policy_reason_code_refs(
+                command=command,
+                tenant_id=operation_context.tenant_id,
+                policy=updated_policy,
             )
             self._repository.update(updated_policy, expected_revision=existing_policy.revision)
             try:
@@ -304,6 +377,330 @@ class DecisionApplicationService:
             )
             raise
 
+    def create_reason_code_catalog_draft(
+        self,
+        command: CreateReasonCodeCatalogDraftCommand,
+        *,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+    ) -> ReasonCodeCatalogApplicationResult:
+        started_at = perf_counter()
+        repository = self._require_reason_code_catalog_repository()
+        persisted_catalog: ReasonCodeCatalog | None = None
+        try:
+            operation_context = _require_policy_context(
+                context=context,
+                trusted_context=trusted_context,
+                required_scope="policy:write",
+            )
+            catalog = ReasonCodeCatalog.create_draft(
+                catalog_id=command.catalog_id,
+                catalog_version_id=command.catalog_version_id,
+                tenant_id=operation_context.tenant_id,
+                owner_subject_id=command.owner_subject_id,
+                product_type=command.product_type,
+                reason_codes=command.reason_codes,
+                explainable_factors=command.explainable_factors,
+                now=self._clock(),
+                actor_subject_id=operation_context.actor_subject_id,
+                correlation_id=context.correlation_id,
+                change_summary=command.change_summary,
+            )
+            catalog = repository.save_with_next_version(catalog)
+            persisted_catalog = catalog
+            try:
+                self._publish_reason_code_catalog_audit_intent(
+                    catalog=catalog,
+                    event_type="reason_code_catalog.created",
+                    actor_subject_id=operation_context.actor_subject_id,
+                    correlation_id=context.correlation_id,
+                    safe_details={
+                        "change_summary": catalog.changelog[-1].change_summary,
+                        "product_type": catalog.product_type,
+                        "status": catalog.status,
+                    },
+                )
+            except Exception as audit_error:
+                if not repository.delete_if_current(catalog, expected_revision=catalog.revision):
+                    raise RuntimeError("rollback de catálogo falhou") from audit_error
+                persisted_catalog = None
+                raise
+            log = self._log_operation(
+                context=context,
+                operation="reason_code_catalog.create_draft",
+                status="accepted",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                extra={
+                    "catalog_id": catalog.catalog_id,
+                    "catalog_version_id": catalog.catalog_version_id,
+                    "product_type": catalog.product_type,
+                    "status": catalog.status,
+                },
+            )
+            return ReasonCodeCatalogApplicationResult(catalog=catalog, logs=(log,))
+        except Exception as error:
+            self._publish_reason_code_catalog_rejection_intent(
+                operation="reason_code_catalog.create_draft",
+                command=command,
+                context=context,
+                trusted_context=trusted_context,
+                error=error,
+                skip_catalog_id=(
+                    persisted_catalog.catalog_id if persisted_catalog is not None else None
+                ),
+            )
+            self._log_operation(
+                context=context,
+                operation="reason_code_catalog.create_draft",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                error_type=type(error).__name__,
+                extra={"error_code": getattr(error, "code", type(error).__name__)},
+            )
+            raise
+
+    def update_reason_code_catalog_draft(
+        self,
+        command: UpdateReasonCodeCatalogDraftCommand,
+        *,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+    ) -> ReasonCodeCatalogApplicationResult:
+        started_at = perf_counter()
+        repository = self._require_reason_code_catalog_repository()
+        existing_catalog: ReasonCodeCatalog | None = None
+        try:
+            operation_context = _require_policy_context(
+                context=context,
+                trusted_context=trusted_context,
+                required_scope="policy:write",
+            )
+            existing_catalog = repository.get(
+                tenant_id=operation_context.tenant_id,
+                catalog_id=command.catalog_id,
+                catalog_version_id=command.catalog_version_id,
+            )
+            if existing_catalog is None:
+                raise ReasonCodeCatalogNotFoundError()
+            updated_catalog = existing_catalog.update_draft(
+                reason_codes=command.reason_codes,
+                explainable_factors=command.explainable_factors,
+                now=self._clock(),
+                actor_subject_id=operation_context.actor_subject_id,
+                correlation_id=context.correlation_id,
+                change_summary=command.change_summary,
+                owner_subject_id=command.owner_subject_id,
+                product_type=command.product_type,
+            )
+            repository.update(updated_catalog, expected_revision=existing_catalog.revision)
+            try:
+                self._publish_reason_code_catalog_audit_intent(
+                    catalog=updated_catalog,
+                    event_type="reason_code_catalog.updated",
+                    actor_subject_id=operation_context.actor_subject_id,
+                    correlation_id=context.correlation_id,
+                    safe_details={
+                        "change_summary": updated_catalog.changelog[-1].change_summary,
+                        "product_type": updated_catalog.product_type,
+                        "revision": str(updated_catalog.revision),
+                        "status": updated_catalog.status,
+                    },
+                )
+            except Exception as audit_error:
+                if not repository.restore_if_current(
+                    existing_catalog,
+                    expected_revision=updated_catalog.revision,
+                ):
+                    raise RuntimeError("rollback de catálogo falhou") from audit_error
+                raise
+            log = self._log_operation(
+                context=context,
+                operation="reason_code_catalog.update_draft",
+                status="accepted",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                extra={
+                    "catalog_id": updated_catalog.catalog_id,
+                    "catalog_version_id": updated_catalog.catalog_version_id,
+                    "product_type": updated_catalog.product_type,
+                    "revision": updated_catalog.revision,
+                    "status": updated_catalog.status,
+                },
+            )
+            return ReasonCodeCatalogApplicationResult(catalog=updated_catalog, logs=(log,))
+        except Exception as error:
+            self._publish_reason_code_catalog_rejection_intent(
+                operation="reason_code_catalog.update_draft",
+                command=command,
+                context=context,
+                trusted_context=trusted_context,
+                error=error,
+            )
+            self._log_operation(
+                context=context,
+                operation="reason_code_catalog.update_draft",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                error_type=type(error).__name__,
+                extra={"error_code": getattr(error, "code", type(error).__name__)},
+            )
+            raise
+
+    def create_reason_code_catalog_version(
+        self,
+        command: CreateReasonCodeCatalogVersionCommand,
+        *,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+    ) -> ReasonCodeCatalogApplicationResult:
+        started_at = perf_counter()
+        repository = self._require_reason_code_catalog_repository()
+        persisted_catalog: ReasonCodeCatalog | None = None
+        try:
+            operation_context = _require_policy_context(
+                context=context,
+                trusted_context=trusted_context,
+                required_scope="policy:write",
+            )
+            current_catalog = repository.get(
+                tenant_id=operation_context.tenant_id,
+                catalog_id=command.catalog_id,
+                catalog_version_id=command.current_catalog_version_id,
+            )
+            if current_catalog is None:
+                raise ReasonCodeCatalogNotFoundError()
+            next_catalog = current_catalog.create_new_version(
+                catalog_version_id=command.new_catalog_version_id,
+                reason_codes=command.reason_codes,
+                explainable_factors=command.explainable_factors,
+                now=self._clock(),
+                actor_subject_id=operation_context.actor_subject_id,
+                correlation_id=context.correlation_id,
+                change_summary=command.change_summary,
+                owner_subject_id=command.owner_subject_id,
+                product_type=command.product_type,
+            )
+            next_catalog = repository.save_with_next_version(next_catalog)
+            persisted_catalog = next_catalog
+            try:
+                self._publish_reason_code_catalog_audit_intent(
+                    catalog=next_catalog,
+                    event_type="reason_code_catalog.versioned",
+                    actor_subject_id=operation_context.actor_subject_id,
+                    correlation_id=context.correlation_id,
+                    safe_details={
+                        "change_summary": next_catalog.changelog[-1].change_summary,
+                        "previous_catalog_version_id": current_catalog.catalog_version_id,
+                        "product_type": next_catalog.product_type,
+                        "status": next_catalog.status,
+                    },
+                )
+            except Exception as audit_error:
+                if not repository.delete_if_current(
+                    next_catalog,
+                    expected_revision=next_catalog.revision,
+                ):
+                    raise RuntimeError("rollback de catálogo falhou") from audit_error
+                persisted_catalog = None
+                raise
+            log = self._log_operation(
+                context=context,
+                operation="reason_code_catalog.create_version",
+                status="accepted",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                extra={
+                    "catalog_id": next_catalog.catalog_id,
+                    "catalog_version_id": next_catalog.catalog_version_id,
+                    "previous_catalog_version_id": current_catalog.catalog_version_id,
+                    "product_type": next_catalog.product_type,
+                    "status": next_catalog.status,
+                },
+            )
+            return ReasonCodeCatalogApplicationResult(catalog=next_catalog, logs=(log,))
+        except Exception as error:
+            self._publish_reason_code_catalog_rejection_intent(
+                operation="reason_code_catalog.create_version",
+                command=command,
+                context=context,
+                trusted_context=trusted_context,
+                error=error,
+                skip_catalog_id=(
+                    persisted_catalog.catalog_id if persisted_catalog is not None else None
+                ),
+            )
+            self._log_operation(
+                context=context,
+                operation="reason_code_catalog.create_version",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                error_type=type(error).__name__,
+                extra={"error_code": getattr(error, "code", type(error).__name__)},
+            )
+            raise
+
+    def get_reason_code_catalog(
+        self,
+        *,
+        catalog_id: str,
+        catalog_version_id: str,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+    ) -> ReasonCodeCatalog:
+        try:
+            operation_context = _require_policy_context(
+                context=context,
+                trusted_context=trusted_context,
+                required_scope="policy:read",
+            )
+            catalog = self._require_reason_code_catalog_repository().get(
+                tenant_id=operation_context.tenant_id,
+                catalog_id=catalog_id,
+                catalog_version_id=catalog_version_id,
+            )
+            if catalog is None:
+                raise ReasonCodeCatalogNotFoundError()
+            return catalog
+        except Exception as error:
+            self._publish_reason_code_catalog_rejection_intent(
+                operation="reason_code_catalog.get",
+                command=_ReasonCodeCatalogLookupCommand(
+                    catalog_id=catalog_id,
+                    catalog_version_id=catalog_version_id,
+                ),
+                context=context,
+                trusted_context=trusted_context,
+                error=error,
+            )
+            raise
+
+    def _validate_policy_reason_code_refs(
+        self,
+        *,
+        command: CreateCreditPolicyDraftCommand | UpdateCreditPolicyDraftCommand,
+        tenant_id: str,
+        policy: CreditPolicy,
+    ) -> None:
+        catalog = self._require_reason_code_catalog_repository().get(
+            tenant_id=tenant_id,
+            catalog_id=command.reason_code_catalog_id,
+            catalog_version_id=command.reason_code_catalog_version_id,
+        )
+        if catalog is None:
+            raise ReasonCodeCatalogNotFoundError()
+        if catalog.product_type != policy.product_type:
+            raise ReasonCodeCatalogNotFoundError()
+        catalog.validate_policy_rules(policy.rules)
+
+    def _require_reason_code_catalog_repository(self) -> ReasonCodeCatalogRepository:
+        if self._reason_code_catalog_repository is None:
+            raise ReasonCodeCatalogNotFoundError()
+        return self._reason_code_catalog_repository
+
     def _publish_audit_intent(
         self,
         *,
@@ -320,6 +717,27 @@ class DecisionApplicationService:
                 actor_subject_id=actor_subject_id,
                 policy_id=policy.policy_id,
                 policy_version_id=policy.policy_version_id,
+                correlation_id=correlation_id,
+                safe_details=safe_details,
+            )
+        )
+
+    def _publish_reason_code_catalog_audit_intent(
+        self,
+        *,
+        catalog: ReasonCodeCatalog,
+        event_type: str,
+        actor_subject_id: str,
+        correlation_id: str,
+        safe_details: dict[str, str],
+    ) -> None:
+        self._audit_publisher.publish(
+            ReasonCodeCatalogAuditIntent(
+                event_type=event_type,
+                tenant_id=catalog.tenant_id,
+                actor_subject_id=actor_subject_id,
+                catalog_id=catalog.catalog_id,
+                catalog_version_id=catalog.catalog_version_id,
                 correlation_id=correlation_id,
                 safe_details=safe_details,
             )
@@ -378,6 +796,63 @@ class DecisionApplicationService:
         except Exception:
             return
 
+    def _publish_reason_code_catalog_rejection_intent(
+        self,
+        *,
+        operation: str,
+        command: Any,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+        error: Exception,
+        skip_catalog_id: str | None = None,
+    ) -> None:
+        catalog_id = _safe_reason_code_catalog_identifier(
+            getattr(command, "catalog_id", None),
+            fallback="unknown_reason_code_catalog",
+        )
+        if skip_catalog_id is not None and catalog_id == skip_catalog_id:
+            return
+        catalog_version_id = _safe_reason_code_catalog_version_identifier(
+            (
+                getattr(command, "catalog_version_id", None)
+                or getattr(command, "new_catalog_version_id", None)
+                or getattr(command, "current_catalog_version_id", None)
+            ),
+            fallback="unknown_reason_code_catalog_version",
+        )
+        tenant_id = (
+            trusted_context.trusted.tenant_id
+            if isinstance(trusted_context, PropagatedContext)
+            else context.tenant_id or "unknown_tenant"
+        )
+        actor_subject_id = (
+            trusted_context.trusted.subject_id
+            if isinstance(trusted_context, PropagatedContext)
+            else "unknown_actor"
+        )
+        correlation_id = _safe_correlation_id(
+            context.correlation_id,
+            fallback="corr_unknown0000",
+        )
+        try:
+            self._audit_publisher.publish(
+                ReasonCodeCatalogAuditIntent(
+                    event_type="reason_code_catalog.rejected",
+                    tenant_id=tenant_id,
+                    actor_subject_id=actor_subject_id,
+                    catalog_id=catalog_id,
+                    catalog_version_id=catalog_version_id,
+                    correlation_id=correlation_id,
+                    safe_details={
+                        "operation": operation,
+                        "rejection_reason": getattr(error, "code", type(error).__name__),
+                        "status": "rejected",
+                    },
+                )
+            )
+        except Exception:
+            return
+
     def _log_operation(
         self,
         *,
@@ -413,6 +888,12 @@ class DecisionApplicationService:
 class _PolicyLookupCommand:
     policy_id: str
     policy_version_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ReasonCodeCatalogLookupCommand:
+    catalog_id: str
+    catalog_version_id: str
 
 
 def _require_policy_context(
@@ -466,6 +947,24 @@ def _safe_policy_version_identifier(value: object, *, fallback: str) -> str:
         return fallback
     try:
         return validate_policy_version_id(value)
+    except Exception:
+        return fallback
+
+
+def _safe_reason_code_catalog_identifier(value: object, *, fallback: str) -> str:
+    if not isinstance(value, str):
+        return fallback
+    try:
+        return validate_reason_code_catalog_id(value)
+    except Exception:
+        return fallback
+
+
+def _safe_reason_code_catalog_version_identifier(value: object, *, fallback: str) -> str:
+    if not isinstance(value, str):
+        return fallback
+    try:
+        return validate_reason_code_catalog_version_id(value)
     except Exception:
         return fallback
 

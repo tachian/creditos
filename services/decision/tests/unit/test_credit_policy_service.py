@@ -3,35 +3,45 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from creditos_decision.adapters.persistence import InMemoryCreditPolicyRepository
-from creditos_decision.application.ports import CreditPolicyAuditIntent
+from creditos_decision.adapters.persistence import (
+    InMemoryCreditPolicyRepository,
+    InMemoryReasonCodeCatalogRepository,
+)
+from creditos_decision.application.ports import (
+    CreditPolicyAuditIntent,
+    ReasonCodeCatalogAuditIntent,
+)
 from creditos_decision.application.service import (
     CreateCreditPolicyDraftCommand,
     DecisionApplicationService,
     UpdateCreditPolicyDraftCommand,
 )
+from creditos_decision.domain.entities import ReasonCodeCatalog
 from creditos_decision.domain.errors import (
     PolicyConcurrencyError,
     PolicyNotFoundError,
     PolicyTenantContextError,
 )
 from creditos_decision.domain.value_objects import (
+    ExplainableFactor,
     PolicyApplicability,
     PolicyCriterion,
     PolicyLimit,
     PolicyRule,
+    ReasonCode,
 )
 from creditos_observability.context import ObservabilityContext
 from creditos_security import PropagatedContext, TrustedContext
 
 NOW = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+DecisionAuditIntent = CreditPolicyAuditIntent | ReasonCodeCatalogAuditIntent
 
 
 class RecordingAuditPublisher:
     def __init__(self) -> None:
-        self.events: list[CreditPolicyAuditIntent] = []
+        self.events: list[DecisionAuditIntent] = []
 
-    def publish(self, event: CreditPolicyAuditIntent) -> None:
+    def publish(self, event: DecisionAuditIntent) -> None:
         self.events.append(event)
 
 
@@ -39,6 +49,7 @@ def test_create_policy_uses_trusted_context_and_publishes_minimized_audit_intent
     audit = RecordingAuditPublisher()
     service = DecisionApplicationService(
         repository=InMemoryCreditPolicyRepository(),
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=audit,
         environment="test",
         clock=lambda: NOW,
@@ -54,12 +65,14 @@ def test_create_policy_uses_trusted_context_and_publishes_minimized_audit_intent
     assert result.policy.status == "draft"
     assert result.policy.is_executable_in_production is False
     assert len(audit.events) == 1
-    assert audit.events[0].event_type == "credit_policy.created"
-    assert audit.events[0].tenant_id == "tenant_alpha"
-    assert audit.events[0].actor_subject_id == "user_credit_manager"
-    assert audit.events[0].policy_id == result.policy.policy_id
-    assert audit.events[0].policy_version_id == result.policy.policy_version_id
-    assert audit.events[0].safe_details == {
+    event = audit.events[0]
+    assert isinstance(event, CreditPolicyAuditIntent)
+    assert event.event_type == "credit_policy.created"
+    assert event.tenant_id == "tenant_alpha"
+    assert event.actor_subject_id == "user_credit_manager"
+    assert event.policy_id == result.policy.policy_id
+    assert event.policy_version_id == result.policy.policy_version_id
+    assert event.safe_details == {
         "change_summary": "Criação inicial da política padrão",
         "product_type": "personal_credit",
         "status": "draft",
@@ -73,6 +86,7 @@ def test_policy_queries_and_updates_reject_cross_tenant_without_revealing_policy
     repository = InMemoryCreditPolicyRepository()
     service = DecisionApplicationService(
         repository=repository,
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=audit,
         environment="test",
         clock=lambda: NOW,
@@ -101,6 +115,8 @@ def test_policy_queries_and_updates_reject_cross_tenant_without_revealing_policy
                 criteria=created.policy.criteria,
                 limits=created.policy.limits,
                 applicability=created.policy.applicability,
+                reason_code_catalog_id="rcc_personal_credit_default",
+                reason_code_catalog_version_id="rccver_personal_credit_default_v1",
             ),
             context=_context("tenant_beta"),
             trusted_context=_trusted_context(tenant_id="tenant_beta"),
@@ -114,6 +130,7 @@ def test_update_policy_draft_records_history_and_audit_intent() -> None:
     audit = RecordingAuditPublisher()
     service = DecisionApplicationService(
         repository=InMemoryCreditPolicyRepository(),
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=audit,
         environment="test",
         clock=lambda: NOW,
@@ -136,12 +153,15 @@ def test_update_policy_draft_records_history_and_audit_intent() -> None:
                     source_field="monthly_income_units",
                     operator="gte",
                     threshold_value=300_000,
-                    outcome="approve",
+                    outcome="reject",
+                    reason_code_refs=("rc_min_income",),
                 ),
             ),
             criteria=created.policy.criteria,
             limits=created.policy.limits,
             applicability=created.policy.applicability,
+            reason_code_catalog_id="rcc_personal_credit_default",
+            reason_code_catalog_version_id="rccver_personal_credit_default_v1",
         ),
         context=_context("tenant_alpha"),
         trusted_context=_trusted_context(),
@@ -158,6 +178,7 @@ def test_update_policy_draft_allows_governed_metadata_changes() -> None:
     audit = RecordingAuditPublisher()
     service = DecisionApplicationService(
         repository=InMemoryCreditPolicyRepository(),
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=audit,
         environment="test",
         clock=lambda: NOW,
@@ -179,6 +200,8 @@ def test_update_policy_draft_allows_governed_metadata_changes() -> None:
             criteria=created.policy.criteria,
             limits=created.policy.limits,
             applicability=created.policy.applicability,
+            reason_code_catalog_id="rcc_bnpl_default",
+            reason_code_catalog_version_id="rccver_bnpl_default_v1",
         ),
         context=_context("tenant_alpha"),
         trusted_context=_trusted_context(),
@@ -193,6 +216,7 @@ def test_update_policy_draft_allows_governed_metadata_changes() -> None:
 def test_create_policy_draft_numbers_new_versions_per_policy() -> None:
     service = DecisionApplicationService(
         repository=InMemoryCreditPolicyRepository(),
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=RecordingAuditPublisher(),
         environment="test",
         clock=lambda: NOW,
@@ -216,6 +240,7 @@ def test_create_policy_draft_numbers_new_versions_per_policy() -> None:
 def test_create_policy_requires_matching_trusted_tenant_context() -> None:
     service = DecisionApplicationService(
         repository=InMemoryCreditPolicyRepository(),
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=RecordingAuditPublisher(),
         environment="test",
         clock=lambda: NOW,
@@ -233,6 +258,7 @@ def test_policy_operations_require_policy_write_scope_and_bridge_tier() -> None:
     audit = RecordingAuditPublisher()
     service = DecisionApplicationService(
         repository=InMemoryCreditPolicyRepository(),
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=audit,
         environment="test",
         clock=lambda: NOW,
@@ -260,6 +286,7 @@ def test_command_actor_is_ignored_in_favor_of_trusted_context_subject() -> None:
     audit = RecordingAuditPublisher()
     service = DecisionApplicationService(
         repository=InMemoryCreditPolicyRepository(),
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=audit,
         environment="test",
         clock=lambda: NOW,
@@ -277,12 +304,13 @@ def test_command_actor_is_ignored_in_favor_of_trusted_context_subject() -> None:
 
 def test_audit_failure_rolls_back_policy_creation_and_update() -> None:
     class FailingAuditPublisher:
-        def publish(self, event: CreditPolicyAuditIntent) -> None:
+        def publish(self, event: DecisionAuditIntent) -> None:
             raise RuntimeError("audit unavailable")
 
     repository = InMemoryCreditPolicyRepository()
     service = DecisionApplicationService(
         repository=repository,
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=FailingAuditPublisher(),
         environment="test",
         clock=lambda: NOW,
@@ -307,6 +335,7 @@ def test_audit_failure_rolls_back_policy_creation_and_update() -> None:
     audit = RecordingAuditPublisher()
     service = DecisionApplicationService(
         repository=repository,
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=audit,
         environment="test",
         clock=lambda: NOW,
@@ -318,6 +347,7 @@ def test_audit_failure_rolls_back_policy_creation_and_update() -> None:
     )
     service_with_failing_audit = DecisionApplicationService(
         repository=repository,
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=FailingAuditPublisher(),
         environment="test",
         clock=lambda: NOW,
@@ -333,6 +363,8 @@ def test_audit_failure_rolls_back_policy_creation_and_update() -> None:
                 criteria=created.policy.criteria,
                 limits=created.policy.limits,
                 applicability=created.policy.applicability,
+                reason_code_catalog_id="rcc_personal_credit_default",
+                reason_code_catalog_version_id="rccver_personal_credit_default_v1",
             ),
             context=_context("tenant_alpha"),
             trusted_context=_trusted_context(),
@@ -352,9 +384,10 @@ def test_audit_failure_rollback_does_not_overwrite_concurrent_update() -> None:
         def __init__(self, repository: InMemoryCreditPolicyRepository) -> None:
             self._repository = repository
 
-        def publish(self, event: CreditPolicyAuditIntent) -> None:
+        def publish(self, event: DecisionAuditIntent) -> None:
             if event.event_type != "credit_policy.updated":
                 return
+            assert isinstance(event, CreditPolicyAuditIntent)
             current = self._repository.get(
                 tenant_id=event.tenant_id,
                 policy_id=event.policy_id,
@@ -370,6 +403,8 @@ def test_audit_failure_rollback_does_not_overwrite_concurrent_update() -> None:
                 actor_subject_id="user_credit_manager",
                 correlation_id="corr_7234567890abcdef",
                 change_summary="Atualização concorrente auditada",
+                reason_code_catalog_id="rcc_personal_credit_default",
+                reason_code_catalog_version_id="rccver_personal_credit_default_v1",
             )
             self._repository.update(concurrent_update, expected_revision=current.revision)
             raise RuntimeError("audit unavailable")
@@ -377,6 +412,7 @@ def test_audit_failure_rollback_does_not_overwrite_concurrent_update() -> None:
     repository = InMemoryCreditPolicyRepository()
     service = DecisionApplicationService(
         repository=repository,
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=RecordingAuditPublisher(),
         environment="test",
         clock=lambda: NOW,
@@ -388,6 +424,7 @@ def test_audit_failure_rollback_does_not_overwrite_concurrent_update() -> None:
     )
     service_with_failing_audit = DecisionApplicationService(
         repository=repository,
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=ConcurrentFailingAuditPublisher(repository),
         environment="test",
         clock=lambda: NOW,
@@ -403,6 +440,8 @@ def test_audit_failure_rollback_does_not_overwrite_concurrent_update() -> None:
                 criteria=created.policy.criteria,
                 limits=created.policy.limits,
                 applicability=created.policy.applicability,
+                reason_code_catalog_id="rcc_personal_credit_default",
+                reason_code_catalog_version_id="rccver_personal_credit_default_v1",
             ),
             context=_context("tenant_alpha"),
             trusted_context=_trusted_context(),
@@ -422,6 +461,7 @@ def test_repository_rejects_stale_updates_with_expected_revision() -> None:
     repository = InMemoryCreditPolicyRepository()
     service = DecisionApplicationService(
         repository=repository,
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
         audit_publisher=RecordingAuditPublisher(),
         environment="test",
         clock=lambda: NOW,
@@ -440,6 +480,8 @@ def test_repository_rejects_stale_updates_with_expected_revision() -> None:
         actor_subject_id="user_credit_manager",
         correlation_id="corr_9234567890abcdef",
         change_summary="Atualização stale",
+        reason_code_catalog_id="rcc_personal_credit_default",
+        reason_code_catalog_version_id="rccver_personal_credit_default_v1",
     )
     concurrent_update = created.policy.update_draft(
         rules=created.policy.rules,
@@ -450,6 +492,8 @@ def test_repository_rejects_stale_updates_with_expected_revision() -> None:
         actor_subject_id="user_credit_manager",
         correlation_id="corr_8234567890abcdef",
         change_summary="Atualização concorrente",
+        reason_code_catalog_id="rcc_personal_credit_default",
+        reason_code_catalog_version_id="rccver_personal_credit_default_v1",
     )
 
     repository.update(concurrent_update, expected_revision=1)
@@ -465,6 +509,8 @@ def _create_command(
     return CreateCreditPolicyDraftCommand(
         policy_id="pol_personal_credit_default",
         policy_version_id=policy_version_id,
+        reason_code_catalog_id="rcc_personal_credit_default",
+        reason_code_catalog_version_id="rccver_personal_credit_default_v1",
         owner_subject_id="user_credit_manager",
         product_type="personal_credit",
         actor_subject_id=actor_subject_id,
@@ -477,7 +523,8 @@ def _create_command(
                 source_field="monthly_income_units",
                 operator="gte",
                 threshold_value=250_000,
-                outcome="approve",
+                outcome="reject",
+                reason_code_refs=("rc_min_income",),
             ),
         ),
         criteria=(
@@ -495,6 +542,65 @@ def _create_command(
                 value=24,
             ),
         ),
+    )
+
+
+def _reason_code_catalog_repository() -> InMemoryReasonCodeCatalogRepository:
+    repository = InMemoryReasonCodeCatalogRepository()
+    repository.save_with_next_version(
+        _reason_code_catalog(
+            catalog_id="rcc_personal_credit_default",
+            catalog_version_id="rccver_personal_credit_default_v1",
+            product_type="personal_credit",
+        )
+    )
+    repository.save_with_next_version(
+        _reason_code_catalog(
+            catalog_id="rcc_bnpl_default",
+            catalog_version_id="rccver_bnpl_default_v1",
+            product_type="bnpl",
+        )
+    )
+    return repository
+
+
+def _reason_code_catalog(
+    *,
+    catalog_id: str,
+    catalog_version_id: str,
+    product_type: str,
+) -> ReasonCodeCatalog:
+    return ReasonCodeCatalog.create_draft(
+        catalog_id=catalog_id,
+        catalog_version_id=catalog_version_id,
+        tenant_id="tenant_alpha",
+        owner_subject_id="user_credit_manager",
+        product_type=product_type,
+        reason_codes=(
+            ReasonCode.create(
+                reason_code_id="reason_min_income",
+                code="rc_min_income",
+                outcome="reject",
+                title="Renda mínima",
+                internal_description="Renda declarada abaixo da política",
+                external_description="Renda declarada insuficiente para aprovação",
+                factor_refs=("factor_monthly_income",),
+            ),
+        ),
+        explainable_factors=(
+            ExplainableFactor.create(
+                factor_id="factor_monthly_income",
+                field="monthly_income_units",
+                title="Renda declarada",
+                internal_description="Renda mensal declarada em unidades monetárias menores",
+                external_description="Renda declarada informada para análise",
+                required=True,
+            ),
+        ),
+        now=NOW,
+        actor_subject_id="user_credit_manager",
+        correlation_id="corr_1234567890abcdef",
+        change_summary="Criação inicial do catálogo",
     )
 
 
