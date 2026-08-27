@@ -24,6 +24,8 @@ def test_create_draft_policy_with_versioning_and_initial_changelog() -> None:
         tenant_id="tenant_alpha",
         owner_subject_id="user_credit_manager",
         product_type="personal_credit",
+        reason_code_catalog_id="rcc_personal_credit_default",
+        reason_code_catalog_version_id="rccver_personal_credit_default_v1",
         applicability=PolicyApplicability.create(channels=("api", "checkout")),
         rules=(
             PolicyRule.create(
@@ -33,6 +35,7 @@ def test_create_draft_policy_with_versioning_and_initial_changelog() -> None:
                 operator="gte",
                 threshold_value=250_000,
                 outcome="approve",
+                reason_code_refs=("rc_min_income",),
             ),
         ),
         criteria=(
@@ -78,6 +81,7 @@ def test_update_draft_policy_preserves_history_and_does_not_mutate_original() ->
                 operator="gte",
                 threshold_value=300_000,
                 outcome="approve",
+                reason_code_refs=("rc_min_income",),
             ),
         ),
         criteria=original.criteria,
@@ -87,6 +91,8 @@ def test_update_draft_policy_preserves_history_and_does_not_mutate_original() ->
         actor_subject_id="user_credit_manager",
         correlation_id="corr_2234567890abcdef",
         change_summary="Revisão da renda mínima",
+        reason_code_catalog_id="rcc_personal_credit_default",
+        reason_code_catalog_version_id="rccver_personal_credit_default_v1",
     )
 
     assert original.revision == 1
@@ -106,6 +112,8 @@ def test_published_policy_snapshot_is_immutable() -> None:
         tenant_id="tenant_alpha",
         owner_subject_id="user_credit_manager",
         product_type="personal_credit",
+        reason_code_catalog_id="rcc_personal_credit_default",
+        reason_code_catalog_version_id="rccver_personal_credit_default_v1",
         status="published",
         version=1,
         revision=3,
@@ -128,6 +136,8 @@ def test_published_policy_snapshot_is_immutable() -> None:
             actor_subject_id="user_credit_manager",
             correlation_id="corr_3234567890abcdef",
             change_summary="Tentativa de alteração em publicada",
+            reason_code_catalog_id="rcc_personal_credit_default",
+            reason_code_catalog_version_id="rccver_personal_credit_default_v1",
         )
     with pytest.raises(PolicyImmutableError, match="política não pode ser alterada"):
         replace(
@@ -140,6 +150,7 @@ def test_published_policy_snapshot_is_immutable() -> None:
                     operator="lte",
                     threshold_value=500_000,
                     outcome="approve",
+                    reason_code_refs=("rc_min_income",),
                 ),
             ),
         )
@@ -153,6 +164,8 @@ def test_policy_model_rejects_unsupported_product_and_sensitive_or_arbitrary_fie
             tenant_id="tenant_alpha",
             owner_subject_id="user_credit_manager",
             product_type="mortgage",
+            reason_code_catalog_id="rcc_personal_credit_default",
+            reason_code_catalog_version_id="rccver_personal_credit_default_v1",
             applicability=PolicyApplicability.create(channels=("api",)),
             rules=(_rule(),),
             criteria=(_criterion(),),
@@ -171,6 +184,7 @@ def test_policy_model_rejects_unsupported_product_and_sensitive_or_arbitrary_fie
             operator="exists",
             threshold_value=True,
             outcome="reject",
+            reason_code_refs=("rc_min_income",),
         )
 
     with pytest.raises(PolicyValidationError, match="dado sensível ou campo proibido"):
@@ -202,6 +216,7 @@ def test_policy_model_rejects_unknown_fields_formatted_documents_and_pt_br_alias
             operator="gte",
             threshold_value=1,
             outcome="approve",
+            reason_code_refs=("rc_min_income",),
         )
 
     with pytest.raises(PolicyValidationError, match="dado sensível ou campo proibido"):
@@ -212,6 +227,7 @@ def test_policy_model_rejects_unknown_fields_formatted_documents_and_pt_br_alias
             operator="exists",
             threshold_value=True,
             outcome="reject",
+            reason_code_refs=("rc_min_income",),
         )
 
     with pytest.raises(PolicyValidationError, match="dado sensível ou campo proibido"):
@@ -242,6 +258,8 @@ def test_policy_model_rejects_direct_construction_and_inconsistent_changelog_cha
             tenant_id="tenant_alpha",
             owner_subject_id="user_credit_manager",
             product_type="personal_credit",
+            reason_code_catalog_id="rcc_personal_credit_default",
+            reason_code_catalog_version_id="rccver_personal_credit_default_v1",
             status="draft",
             version=1,
             revision=3,
@@ -264,6 +282,7 @@ def test_operator_value_semantics_and_applicability_dates_are_validated() -> Non
             operator="gte",
             threshold_value="alto",
             outcome="approve",
+            reason_code_refs=("rc_min_income",),
         )
 
     with pytest.raises(PolicyValidationError, match="valor incompatível com operador"):
@@ -304,6 +323,8 @@ def _draft_policy() -> CreditPolicy:
         tenant_id="tenant_alpha",
         owner_subject_id="user_credit_manager",
         product_type="personal_credit",
+        reason_code_catalog_id="rcc_personal_credit_default",
+        reason_code_catalog_version_id="rccver_personal_credit_default_v1",
         applicability=PolicyApplicability.create(channels=("api",)),
         rules=(_rule(),),
         criteria=(_criterion(),),
@@ -350,6 +371,7 @@ def _rule() -> PolicyRule:
         operator="gte",
         threshold_value=250_000,
         outcome="approve",
+        reason_code_refs=("rc_min_income",),
     )
 
 

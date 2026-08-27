@@ -16,6 +16,23 @@ O escopo inicial implementa somente o modelo versionado de política de crédito
 
 Ficam fora desta etapa: motor de decisão, publicação produtiva, simulação, catálogo completo de reason codes, banco real, NATS, HTTP/gRPC real e IA.
 
+## Story 4.2
+
+O catálogo versionado de reason codes e fatores explicáveis adiciona:
+
+- reason codes governados por tenant, produto, versão, revisão, status e changelog;
+- fatores explicáveis allowlistados sobre campos canônicos seguros;
+- descrições internas e externas curtas, compreensíveis e sem dados sensíveis;
+- validação obrigatória de `PolicyRule.reason_code_refs`;
+- verificação de reason codes ativos e compatíveis com o outcome da regra;
+- criação de nova versão quando uma mudança incompatível altera semântica, outcome, descrição externa, remoção ou fator obrigatório;
+- repositório in-memory com isolamento por tenant;
+- casos de uso de aplicação com `PropagatedContext`, scopes `policy:write`/`policy:read`, logs estruturados com payload omitido e intenção auditável minimizada.
+
+Catálogos em `draft` podem apoiar validação de políticas em draft, mas não devem ser usados como referência produtiva para decisões finais. Para decisão final, o catálogo deve estar `published`.
+
+Ficam fora desta etapa: motor de decisão determinística, simulação, publicação produtiva por API real, persistência em banco, NATS, gRPC/HTTP real, IA e resposta pública de decisão explicável.
+
 ## Arquitetura
 
 O serviço segue DDD + arquitetura hexagonal:

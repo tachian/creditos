@@ -356,6 +356,22 @@ def _normalize_rule(
     reason_code_refs: tuple[str, ...],
 ) -> dict[str, object]:
     parsed_source_field = _validate_policy_field(source_field, field_path="rules.source_field")
+    parsed_reason_code_refs = tuple(
+        _validate_technical_id(reference, field_path="rules.reason_code_refs")
+        for reference in reason_code_refs
+    )
+    if not parsed_reason_code_refs:
+        raise PolicyValidationError(
+            "reason code obrigatório",
+            code="missing_reason_code_ref",
+            field_path="rules.reason_code_refs",
+        )
+    if len(set(parsed_reason_code_refs)) != len(parsed_reason_code_refs):
+        raise PolicyValidationError(
+            "reason code duplicado",
+            code="duplicate_reason_code_ref",
+            field_path="rules.reason_code_refs",
+        )
     return {
         "rule_id": _validate_technical_id(rule_id, field_path="rules.rule_id"),
         "name": _validate_safe_text(name, field_path="rules.name"),
@@ -378,10 +394,7 @@ def _normalize_rule(
             code="unsupported_policy_outcome",
             field_path="rules.outcome",
         ),
-        "reason_code_refs": tuple(
-            _validate_technical_id(reference, field_path="rules.reason_code_refs")
-            for reference in reason_code_refs
-        ),
+        "reason_code_refs": parsed_reason_code_refs,
     }
 
 
