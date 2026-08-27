@@ -14,13 +14,22 @@ from creditos_decision.application.ports import (
     CreditPolicyAuditIntent,
     CreditPolicyAuditPublisher,
     CreditPolicyRepository,
+    PolicySimulationAuditIntent,
+    PolicySimulationRepository,
     ReasonCodeCatalogAuditIntent,
     ReasonCodeCatalogRepository,
 )
-from creditos_decision.domain.entities import CreditPolicy, ReasonCodeCatalog
+from creditos_decision.domain.entities import (
+    CreditPolicy,
+    PolicySimulation,
+    PolicySimulationResult,
+    ReasonCodeCatalog,
+)
 from creditos_decision.domain.errors import (
     PolicyNotFoundError,
+    PolicySimulationNotFoundError,
     PolicyTenantContextError,
+    PolicyValidationError,
     ReasonCodeCatalogNotFoundError,
 )
 from creditos_decision.domain.value_objects import (
@@ -29,9 +38,11 @@ from creditos_decision.domain.value_objects import (
     PolicyCriterion,
     PolicyLimit,
     PolicyRule,
+    PolicySimulationInputCase,
     ReasonCode,
     validate_correlation_id,
     validate_policy_id,
+    validate_policy_simulation_id,
     validate_policy_version_id,
     validate_reason_code_catalog_id,
     validate_reason_code_catalog_version_id,
@@ -113,6 +124,20 @@ class CreateReasonCodeCatalogVersionCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class RunPolicySimulationCommand:
+    simulation_id: str
+    policy_id: str
+    policy_version_id: str
+    cases: tuple[PolicySimulationInputCase, ...]
+    actor_subject_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class GetPolicySimulationCommand:
+    simulation_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class CreditPolicyApplicationResult:
     policy: CreditPolicy
     logs: tuple[dict[str, Any], ...]
@@ -121,6 +146,12 @@ class CreditPolicyApplicationResult:
 @dataclass(frozen=True, slots=True)
 class ReasonCodeCatalogApplicationResult:
     catalog: ReasonCodeCatalog
+    logs: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PolicySimulationApplicationResult:
+    simulation: PolicySimulationResult
     logs: tuple[dict[str, Any], ...]
 
 
@@ -138,10 +169,12 @@ class DecisionApplicationService:
         audit_publisher: CreditPolicyAuditPublisher,
         environment: str,
         reason_code_catalog_repository: ReasonCodeCatalogRepository | None = None,
+        policy_simulation_repository: PolicySimulationRepository | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._repository = repository
         self._reason_code_catalog_repository = reason_code_catalog_repository
+        self._policy_simulation_repository = policy_simulation_repository
         self._audit_publisher = audit_publisher
         self._environment = environment
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -371,6 +404,126 @@ class DecisionApplicationService:
                     policy_id=policy_id,
                     policy_version_id=policy_version_id,
                 ),
+                context=context,
+                trusted_context=trusted_context,
+                error=error,
+            )
+            raise
+
+    def run_policy_simulation(
+        self,
+        command: RunPolicySimulationCommand,
+        *,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+    ) -> PolicySimulationApplicationResult:
+        started_at = perf_counter()
+        persisted_simulation: PolicySimulationResult | None = None
+        try:
+            operation_context = _require_policy_context(
+                context=context,
+                trusted_context=trusted_context,
+                required_scope="policy:write",
+            )
+            policy = self._repository.get(
+                tenant_id=operation_context.tenant_id,
+                policy_id=command.policy_id,
+                policy_version_id=command.policy_version_id,
+            )
+            if policy is None:
+                raise PolicyNotFoundError()
+            catalog = self._require_reason_code_catalog_repository().get(
+                tenant_id=operation_context.tenant_id,
+                catalog_id=policy.reason_code_catalog_id,
+                catalog_version_id=policy.reason_code_catalog_version_id,
+            )
+            if catalog is None or catalog.product_type != policy.product_type:
+                raise ReasonCodeCatalogNotFoundError()
+            simulation = PolicySimulation.run(
+                simulation_id=command.simulation_id,
+                policy=policy,
+                catalog=catalog,
+                cases=tuple(command.cases),
+                correlation_id=context.correlation_id,
+                now=self._clock(),
+            )
+            simulation_repository = self._require_policy_simulation_repository()
+            simulation_repository.save(simulation)
+            persisted_simulation = simulation
+            try:
+                self._publish_policy_simulation_audit_intent(
+                    simulation=simulation,
+                    event_type="policy_simulation.completed",
+                    actor_subject_id=operation_context.actor_subject_id,
+                    correlation_id=context.correlation_id,
+                )
+            except Exception:
+                simulation_repository.delete(simulation)
+                persisted_simulation = None
+                raise
+            log = self._log_operation(
+                context=context,
+                operation="policy_simulation.run",
+                status="accepted",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                extra={
+                    "simulation_id": simulation.simulation_id,
+                    "policy_id": simulation.policy_id,
+                    "policy_version_id": simulation.policy_version_id,
+                    "status": simulation.status,
+                    "case_count": simulation.summary.total_cases,
+                    "issue_count": simulation.summary.issue_count,
+                    "non_production": simulation.non_production,
+                },
+            )
+            return PolicySimulationApplicationResult(simulation=simulation, logs=(log,))
+        except Exception as error:
+            self._publish_policy_simulation_rejection_intent(
+                operation="policy_simulation.run",
+                command=command,
+                context=context,
+                trusted_context=trusted_context,
+                error=error,
+                skip_simulation_id=(
+                    persisted_simulation.simulation_id if persisted_simulation is not None else None
+                ),
+            )
+            self._log_operation(
+                context=context,
+                operation="policy_simulation.run",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                error_type=type(error).__name__,
+                extra={"error_code": getattr(error, "code", type(error).__name__)},
+            )
+            raise
+
+    def get_policy_simulation(
+        self,
+        command: GetPolicySimulationCommand,
+        *,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+    ) -> PolicySimulationResult:
+        try:
+            operation_context = _require_policy_context(
+                context=context,
+                trusted_context=trusted_context,
+                required_scope="policy:read",
+            )
+            simulation = self._require_policy_simulation_repository().get(
+                tenant_id=operation_context.tenant_id,
+                simulation_id=command.simulation_id,
+            )
+            if simulation is None:
+                raise PolicySimulationNotFoundError()
+            return simulation
+        except Exception as error:
+            self._publish_policy_simulation_rejection_intent(
+                operation="policy_simulation.get",
+                command=command,
                 context=context,
                 trusted_context=trusted_context,
                 error=error,
@@ -701,6 +854,15 @@ class DecisionApplicationService:
             raise ReasonCodeCatalogNotFoundError()
         return self._reason_code_catalog_repository
 
+    def _require_policy_simulation_repository(self) -> PolicySimulationRepository:
+        if self._policy_simulation_repository is None:
+            raise PolicyValidationError(
+                "repositório de simulação obrigatório",
+                code="policy_simulation_repository_required",
+                field_path="policy_simulation_repository",
+            )
+        return self._policy_simulation_repository
+
     def _publish_audit_intent(
         self,
         *,
@@ -740,6 +902,27 @@ class DecisionApplicationService:
                 catalog_version_id=catalog.catalog_version_id,
                 correlation_id=correlation_id,
                 safe_details=safe_details,
+            )
+        )
+
+    def _publish_policy_simulation_audit_intent(
+        self,
+        *,
+        simulation: PolicySimulationResult,
+        event_type: str,
+        actor_subject_id: str,
+        correlation_id: str,
+    ) -> None:
+        self._audit_publisher.publish(
+            PolicySimulationAuditIntent(
+                event_type=event_type,
+                tenant_id=simulation.tenant_id,
+                actor_subject_id=actor_subject_id,
+                simulation_id=simulation.simulation_id,
+                policy_id=simulation.policy_id,
+                policy_version_id=simulation.policy_version_id,
+                correlation_id=correlation_id,
+                safe_details=_policy_simulation_safe_details(simulation),
             )
         )
 
@@ -787,6 +970,64 @@ class DecisionApplicationService:
                     policy_version_id=policy_version_id,
                     correlation_id=correlation_id,
                     safe_details={
+                        "operation": operation,
+                        "rejection_reason": getattr(error, "code", type(error).__name__),
+                        "status": "rejected",
+                    },
+                )
+            )
+        except Exception:
+            return
+
+    def _publish_policy_simulation_rejection_intent(
+        self,
+        *,
+        operation: str,
+        command: Any,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+        error: Exception,
+        skip_simulation_id: str | None = None,
+    ) -> None:
+        simulation_id = _safe_simulation_identifier(
+            getattr(command, "simulation_id", None),
+            fallback="unknown_policy_simulation",
+        )
+        if skip_simulation_id is not None and simulation_id == skip_simulation_id:
+            return
+        tenant_id = (
+            trusted_context.trusted.tenant_id
+            if isinstance(trusted_context, PropagatedContext)
+            else context.tenant_id or "unknown_tenant"
+        )
+        actor_subject_id = (
+            trusted_context.trusted.subject_id
+            if isinstance(trusted_context, PropagatedContext)
+            else "unknown_actor"
+        )
+        correlation_id = _safe_correlation_id(
+            context.correlation_id,
+            fallback="corr_unknown0000",
+        )
+        try:
+            self._audit_publisher.publish(
+                PolicySimulationAuditIntent(
+                    event_type="policy_simulation.rejected",
+                    tenant_id=tenant_id,
+                    actor_subject_id=actor_subject_id,
+                    simulation_id=simulation_id,
+                    policy_id=_safe_policy_identifier(
+                        getattr(command, "policy_id", None),
+                        fallback="unknown_policy",
+                    ),
+                    policy_version_id=_safe_policy_version_identifier(
+                        getattr(command, "policy_version_id", None),
+                        fallback="unknown_policy_version",
+                    ),
+                    correlation_id=correlation_id,
+                    safe_details={
+                        "case_count": _safe_case_count(command),
+                        "non_production": "true",
                         "operation": operation,
                         "rejection_reason": getattr(error, "code", type(error).__name__),
                         "status": "rejected",
@@ -951,6 +1192,15 @@ def _safe_policy_version_identifier(value: object, *, fallback: str) -> str:
         return fallback
 
 
+def _safe_simulation_identifier(value: object, *, fallback: str) -> str:
+    if not isinstance(value, str):
+        return fallback
+    try:
+        return validate_policy_simulation_id(value)
+    except Exception:
+        return fallback
+
+
 def _safe_reason_code_catalog_identifier(value: object, *, fallback: str) -> str:
     if not isinstance(value, str):
         return fallback
@@ -980,3 +1230,28 @@ def _safe_correlation_id(value: object, *, fallback: str) -> str:
 
 def _duration_ms(started_at: float) -> float:
     return round((perf_counter() - started_at) * 1000, 3)
+
+
+def _policy_simulation_safe_details(
+    simulation: PolicySimulationResult,
+) -> dict[str, str]:
+    return {
+        "case_count": str(simulation.summary.total_cases),
+        "issue_count": str(simulation.summary.issue_count),
+        "non_production": "true",
+        "operation": "policy_simulation.run",
+        "outcome_approve": str(simulation.summary.count_for("approve")),
+        "outcome_approve_with_changes": str(simulation.summary.count_for("approve_with_changes")),
+        "outcome_reject": str(simulation.summary.count_for("reject")),
+        "outcome_request_more_data": str(simulation.summary.count_for("request_more_data")),
+        "outcome_unable_to_decide": str(simulation.summary.count_for("unable_to_decide")),
+        "status": simulation.status,
+    }
+
+
+def _safe_case_count(command: Any) -> str:
+    cases = getattr(command, "cases", ())
+    try:
+        return str(len(cases))
+    except Exception:
+        return "0"

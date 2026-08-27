@@ -8,7 +8,7 @@ from creditos_decision.adapters.persistence import (
     InMemoryReasonCodeCatalogRepository,
 )
 from creditos_decision.application.ports import (
-    CreditPolicyAuditIntent,
+    DecisionAuditIntent,
     ReasonCodeCatalogAuditIntent,
 )
 from creditos_decision.application.service import (
@@ -38,9 +38,9 @@ NOW = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
 
 class RecordingAuditPublisher:
     def __init__(self) -> None:
-        self.events: list[CreditPolicyAuditIntent | ReasonCodeCatalogAuditIntent] = []
+        self.events: list[DecisionAuditIntent] = []
 
-    def publish(self, event: CreditPolicyAuditIntent | ReasonCodeCatalogAuditIntent) -> None:
+    def publish(self, event: DecisionAuditIntent) -> None:
         self.events.append(event)
 
 

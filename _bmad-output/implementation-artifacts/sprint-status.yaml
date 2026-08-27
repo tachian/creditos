@@ -82,7 +82,7 @@ development_status:
   epic-4: in-progress
   4-1-modelo-versionado-de-politica-de-credito: done
   4-2-catalogo-de-reason-codes-e-fatores-explicaveis: done
-  4-3-simulacao-e-validacao-de-politica: backlog
+  4-3-simulacao-e-validacao-de-politica: done
   4-4-publicacao-imutavel-de-politica-aprovada: backlog
   4-5-execucao-deterministica-de-decisao: backlog
   4-6-tratamento-de-propostas-inconclusivas-sem-fila-manual: backlog

@@ -26,5 +26,22 @@ class ReasonCodeCatalogAuditIntent:
     safe_details: dict[str, str]
 
 
+@dataclass(frozen=True, slots=True)
+class PolicySimulationAuditIntent:
+    event_type: str
+    tenant_id: str
+    actor_subject_id: str
+    simulation_id: str
+    policy_id: str
+    policy_version_id: str
+    correlation_id: str
+    safe_details: dict[str, str]
+
+
+DecisionAuditIntent = (
+    CreditPolicyAuditIntent | ReasonCodeCatalogAuditIntent | PolicySimulationAuditIntent
+)
+
+
 class CreditPolicyAuditPublisher(Protocol):
-    def publish(self, event: CreditPolicyAuditIntent | ReasonCodeCatalogAuditIntent) -> None: ...
+    def publish(self, event: DecisionAuditIntent) -> None: ...
