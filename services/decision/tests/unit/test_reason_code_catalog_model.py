@@ -63,6 +63,29 @@ def test_reason_codes_and_explainable_factors_reject_sensitive_or_free_form_data
         )
 
 
+@pytest.mark.parametrize(
+    "external_description",
+    (
+        "Joao da Silva reprovado",
+        "Rua das Flores 123",
+        "123.456.789-10 registro 2",
+    ),
+)
+def test_reason_code_external_description_rejects_pii_values(
+    external_description: str,
+) -> None:
+    with pytest.raises(PolicyValidationError, match="dado sensível ou campo proibido"):
+        ReasonCode.create(
+            reason_code_id="reason_sensitive_description",
+            code="rc_sensitive_description",
+            outcome="reject",
+            title="Descrição sensível",
+            internal_description="Descrição interna segura",
+            external_description=external_description,
+            factor_refs=("factor_monthly_income",),
+        )
+
+
 def test_catalog_rejects_duplicate_reason_codes_and_factor_refs() -> None:
     reason_code = _reason_code()
 
@@ -207,6 +230,60 @@ def test_incompatible_catalog_change_requires_new_version_and_preserves_old_snap
     assert next_version.version == 2
     assert next_version.catalog_version_id == "rccver_personal_credit_default_v2"
     assert next_version.reason_codes[0].outcome == "approve"
+
+
+def test_reason_code_title_change_requires_new_catalog_version() -> None:
+    catalog = _draft_catalog()
+
+    with pytest.raises(ReasonCodeCatalogVersioningError, match="nova versão"):
+        catalog.update_draft(
+            reason_codes=(replace(catalog.reason_codes[0], title="Idade mínima"),),
+            explainable_factors=catalog.explainable_factors,
+            now=NOW.replace(hour=13),
+            actor_subject_id="user_credit_manager",
+            correlation_id="corr_1334567890abcdef",
+            change_summary="Troca incompatível de título",
+        )
+
+
+def test_product_type_only_change_can_create_new_catalog_version() -> None:
+    catalog = _draft_catalog()
+
+    next_version = catalog.create_new_version(
+        catalog_version_id="rccver_personal_credit_default_v2",
+        reason_codes=catalog.reason_codes,
+        explainable_factors=catalog.explainable_factors,
+        now=NOW.replace(hour=13),
+        actor_subject_id="user_credit_manager",
+        correlation_id="corr_1434567890abcdef",
+        change_summary="Nova versão por troca de produto",
+        product_type="bnpl",
+    )
+
+    assert next_version.version == 2
+    assert next_version.product_type == "bnpl"
+
+
+def test_new_required_explainable_factor_requires_new_catalog_version() -> None:
+    catalog = _draft_catalog()
+    required_factor = ExplainableFactor.create(
+        factor_id="factor_requested_amount",
+        field="requested_amount_units",
+        title="Valor solicitado",
+        internal_description="Valor solicitado em unidades monetárias menores",
+        external_description="Valor solicitado informado para análise",
+        required=True,
+    )
+
+    with pytest.raises(ReasonCodeCatalogVersioningError, match="nova versão"):
+        catalog.update_draft(
+            reason_codes=catalog.reason_codes,
+            explainable_factors=(*catalog.explainable_factors, required_factor),
+            now=NOW.replace(hour=13),
+            actor_subject_id="user_credit_manager",
+            correlation_id="corr_1534567890abcdef",
+            change_summary="Adição incompatível de fator obrigatório",
+        )
 
 
 def test_published_reason_code_catalog_snapshot_is_immutable() -> None:

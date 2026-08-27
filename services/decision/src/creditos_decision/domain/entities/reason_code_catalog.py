@@ -359,12 +359,17 @@ class ReasonCodeCatalog:
         product_type: str | None = None,
         version: int | None = None,
     ) -> ReasonCodeCatalog:
-        if not _has_incompatible_change(
-            current_reason_codes=self.reason_codes,
-            next_reason_codes=tuple(reason_codes),
-            current_factors=self.explainable_factors,
-            next_factors=tuple(explainable_factors),
-        ):
+        next_product_type = product_type or self.product_type
+        has_incompatible_change = (
+            next_product_type != self.product_type
+            or _has_incompatible_change(
+                current_reason_codes=self.reason_codes,
+                next_reason_codes=tuple(reason_codes),
+                current_factors=self.explainable_factors,
+                next_factors=tuple(explainable_factors),
+            )
+        )
+        if not has_incompatible_change:
             raise ReasonCodeCatalogVersioningError(
                 "nova versão deve representar mudança incompatível",
                 code="reason_code_catalog_version_without_incompatible_change",
@@ -374,7 +379,7 @@ class ReasonCodeCatalog:
             catalog_version_id=catalog_version_id,
             tenant_id=self.tenant_id,
             owner_subject_id=owner_subject_id or self.owner_subject_id,
-            product_type=product_type or self.product_type,
+            product_type=next_product_type,
             reason_codes=reason_codes,
             explainable_factors=explainable_factors,
             now=now,
@@ -544,6 +549,9 @@ def _has_incompatible_change(
     current_factors_by_id = {factor.factor_id: factor for factor in current_factors}
     next_factors_by_id = {factor.factor_id: factor for factor in next_factors}
     if not set(current_factors_by_id).issubset(set(next_factors_by_id)):
+        return True
+    new_factor_ids = set(next_factors_by_id) - set(current_factors_by_id)
+    if any(next_factors_by_id[factor_id].required for factor_id in new_factor_ids):
         return True
     for factor_id, current_factor in current_factors_by_id.items():
         next_factor = next_factors_by_id[factor_id]

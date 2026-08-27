@@ -196,6 +196,7 @@ class ReasonCode:
         return (
             self.code == other.code
             and self.outcome == other.outcome
+            and self.title == other.title
             and self.external_description == other.external_description
             and self.factor_refs == other.factor_refs
             and self.status == other.status

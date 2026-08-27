@@ -212,6 +212,7 @@ Codex
 - 2026-08-26 — `bmad-create-story` executado para detalhar Story 4.2 antes da implementação.
 - 2026-08-27 — Revisão adversarial Step 02 concluída com Blind Hunter, Edge Case Hunter e Acceptance Auditor; 7 achados classificados como patch.
 - 2026-08-27 — `CTOS-232`, `CTOS-233`, `CTOS-234`, `CTOS-235`, `CTOS-236`, `CTOS-237` e `CTOS-238` movidas para `Concluído`; `CTOS-40` movida para `GQ`.
+- 2026-08-27 — Code Review do Codex no PR #39 coletado via GitHub; 4 pontos classificados como patch e corrigidos na mesma branch.
 
 ### Completion Notes List
 
@@ -228,6 +229,8 @@ Codex
 - 2026-08-27 — Aplicados patches da revisão adversarial: proveniência obrigatória do catálogo em políticas, validação log-safe de `change_summary`, fingerprint governado ampliado, incompatibilidade por status/audiência/produto, versionamento atômico e rollback condicional.
 - 2026-08-27 — Validações verdes após review: `.venv/bin/python -m pytest services/decision/tests/unit -q` (33 testes), `.venv/bin/python -m ruff format --check .`, `.venv/bin/python -m ruff check .`, `.venv/bin/python -m pyright` e `.venv/bin/python -m pytest -q --ignore=tests/test_local_harness.py` (437 testes).
 - 2026-08-27 — Suíte completa local: `.venv/bin/python -m pytest -q` passou 441 testes e falhou 3 testes do harness por limitação ambiental desta sessão (`Operation not permitted` ao abrir sockets e `uv` indisponível no `PATH`).
+- 2026-08-27 — Corrigidos apontamentos do Code Review do PR #39: detecção de PII real em textos seguros, título de reason code como semântica governada, troca isolada de produto como nova versão válida e adição de fator obrigatório como mudança incompatível.
+- 2026-08-27 — Validações verdes após patch do PR #39: `.venv/bin/python -m pytest services/decision/tests/unit -q` (39 testes), `.venv/bin/python -m ruff format .`, `.venv/bin/python -m ruff check .`, `.venv/bin/python -m pyright` e `.venv/bin/python -m pytest -q --ignore=tests/test_local_harness.py` (443 testes).
 
 ### File List
 
@@ -255,3 +258,4 @@ Codex
 
 - 2026-08-26 — Implementado catálogo versionado de reason codes e fatores explicáveis, integrado à validação de políticas em draft e preparado para code review.
 - 2026-08-27 — Patches da revisão adversarial aplicados e Story 4.2 marcada como `done` no BMAD; Jira permanece em `GQ` até PR/merge.
+- 2026-08-27 — Pontos do Code Review do PR #39 corrigidos e preparados para push incremental no mesmo PR.
