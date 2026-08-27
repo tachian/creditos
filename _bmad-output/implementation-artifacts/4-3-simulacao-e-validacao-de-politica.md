@@ -198,6 +198,7 @@ Codex
 - 2026-08-27 — `CTOS-239` movida para `Em andamento` antes da implementação dos value objects de simulação.
 - 2026-08-27 — Testes RED criados para domínio e aplicação da simulação de política.
 - 2026-08-27 — `bmad-code-review` executado com Blind Hunter, Edge Case Hunter e Acceptance Auditor; 9 achados classificados como patch e corrigidos.
+- 2026-08-27 — Code Review do Codex no PR #40 coletado via GitHub; 4 pontos classificados como patch e corrigidos na mesma branch.
 
 ### Completion Notes List
 
@@ -211,6 +212,8 @@ Codex
 - 2026-08-27 — Validações verdes: `.venv/bin/python -m pytest services/decision/tests/unit -q` (46 testes), `.venv/bin/python -m ruff format --check .`, `.venv/bin/python -m ruff check .`, `.venv/bin/python -m pyright` e `.venv/bin/python -m pytest -q --ignore=tests/test_local_harness.py` (450 testes).
 - 2026-08-27 — Patches de code review aplicados: conflito de outcomes, campos por política, limite de dataset, validação de tipo, rollback de auditoria, contrato de auditoria fechado, auditoria minimizada completa, consulta segura e validação consistente de `simulation_id`.
 - 2026-08-27 — Validações verdes após code review: `.venv/bin/python -m pytest services/decision/tests/unit -q` (51 testes), `.venv/bin/python -m ruff format --check .`, `.venv/bin/python -m ruff check .`, `.venv/bin/python -m pyright` e `.venv/bin/python -m pytest -q --ignore=tests/test_local_harness.py` (455 testes).
+- 2026-08-27 — Corrigidos apontamentos do Code Review do PR #40: fallback quando qualquer regra não puder ser avaliada, semântica de `exists=False`, tenant desconhecido para auditoria sem contexto confiável e preservação do limite numérico governado `10_000_000_000`.
+- 2026-08-27 — Validações verdes após patch do PR #40: `.venv/bin/python -m pytest services/decision/tests/unit -q` (55 testes), `.venv/bin/python -m ruff format --check .`, `.venv/bin/python -m ruff check .`, `.venv/bin/python -m pyright` e `.venv/bin/python -m pytest -q --ignore=tests/test_local_harness.py` (459 testes).
 
 ### File List
 
@@ -235,3 +238,4 @@ Codex
 - 2026-08-27 — Story 4.3 detalhada para desenvolvimento com guardrails de simulação não produtiva, validação mínima, dataset seguro e auditoria minimizada.
 - 2026-08-27 — Implementada simulação/validação não produtiva de política e Story 4.3 movida para `review`.
 - 2026-08-27 — Achados do code review aplicados e Story 4.3 marcada como `done` no BMAD; Jira permanece em fluxo de QA/PR até merge.
+- 2026-08-27 — Patches do Code Review do PR #40 aplicados na mesma branch, mantendo Story 4.3 em `done`.

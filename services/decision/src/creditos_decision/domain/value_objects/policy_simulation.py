@@ -10,7 +10,6 @@ from creditos_decision.domain.errors import PolicyValidationError
 from creditos_decision.domain.value_objects.policy import (
     PolicyOutcome,
     _parse_enum,
-    _reject_sensitive_or_prohibited,
     _validate_aware_utc_datetime,
     _validate_policy_field,
     _validate_rule_value,
@@ -432,14 +431,6 @@ def _validate_simulation_field_value(
     *,
     field_path: str,
 ) -> int:
-    try:
-        _reject_sensitive_or_prohibited(value, field_path=field_path)
-    except PolicyValidationError as error:
-        raise PolicyValidationError(
-            "valor de simulação sensível",
-            code="sensitive_simulation_value",
-            field_path=field_path,
-        ) from error
     parsed_value = _validate_rule_value(value, field_path=field_path)
     if type(parsed_value) is not int:
         raise PolicyValidationError(

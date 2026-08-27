@@ -174,7 +174,7 @@ def _evaluate_case(
     triggered_rules = []
     for rule in policy.rules:
         case_value = simulation_case.value_for(rule.source_field)
-        if case_value is None:
+        if case_value is None and rule.operator != PolicyOperator.EXISTS.value:
             issues.append(
                 PolicyValidationIssue.create(
                     code="missing_rule_field",
@@ -189,6 +189,9 @@ def _evaluate_case(
             expected_value=rule.threshold_value,
         ):
             triggered_rules.append(rule)
+
+    if issues:
+        return _unable_to_decide_result(simulation_case=simulation_case, issues=tuple(issues))
 
     if not triggered_rules:
         return _unable_to_decide_result(
@@ -247,7 +250,7 @@ def _criteria_are_satisfied(
     satisfied = True
     for criterion in policy.criteria:
         case_value = simulation_case.value_for(criterion.field)
-        if case_value is None:
+        if case_value is None and criterion.operator != PolicyOperator.EXISTS.value:
             issues.append(
                 PolicyValidationIssue.create(
                     code="missing_criterion_field",
@@ -315,17 +318,26 @@ def _limits_are_satisfied(
 def _matches_operator(
     *,
     operator: str,
-    case_value: int,
+    case_value: int | None,
     expected_value: int | str | bool,
 ) -> bool:
+    if operator == PolicyOperator.EXISTS.value:
+        if type(expected_value) is not bool:
+            raise PolicyValidationError(
+                "valor incompatível com operador",
+                code="operator_value_type_mismatch",
+                field_path="operator",
+            )
+        field_is_present = case_value is not None
+        return field_is_present is expected_value
+    if case_value is None:
+        return False
     if operator == PolicyOperator.GTE.value:
         return type(expected_value) is int and case_value >= expected_value
     if operator == PolicyOperator.LTE.value:
         return type(expected_value) is int and case_value <= expected_value
     if operator == PolicyOperator.EQ.value:
-        return case_value == expected_value
-    if operator == PolicyOperator.EXISTS.value:
-        return expected_value is True
+        return type(expected_value) is int and case_value == expected_value
     raise PolicyValidationError(
         "operador de política não suportado",
         code="unsupported_policy_operator",

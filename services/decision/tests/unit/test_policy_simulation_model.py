@@ -33,10 +33,10 @@ def test_simulation_input_case_accepts_only_governed_minimized_fields() -> None:
     assert case.value_for("unknown_field") is None
 
 
-def test_simulation_input_case_rejects_sensitive_values_and_free_fields() -> None:
-    with pytest.raises(PolicyValidationError) as sensitive_error:
+def test_simulation_input_case_rejects_invalid_values_and_free_fields() -> None:
+    with pytest.raises(PolicyValidationError) as invalid_value_error:
         PolicySimulationInputCase.create(
-            case_id="case_sensitive_credit_001",
+            case_id="case_invalid_credit_001",
             values={"monthly_income_units": 12_345_678_901},
         )
 
@@ -46,11 +46,20 @@ def test_simulation_input_case_rejects_sensitive_values_and_free_fields() -> Non
             values={"provider_payload": 1},
         )
 
-    assert sensitive_error.value.code == "sensitive_simulation_value"
+    assert invalid_value_error.value.code == "invalid_policy_value"
     assert free_field_error.value.code in {
         "sensitive_or_prohibited_policy_field",
         "unsupported_policy_field",
     }
+
+
+def test_simulation_input_case_preserves_governed_numeric_upper_bound() -> None:
+    case = PolicySimulationInputCase.create(
+        case_id="case_max_amount_001",
+        values={"requested_amount_units": 10_000_000_000},
+    )
+
+    assert case.value_for("requested_amount_units") == 10_000_000_000
 
 
 def test_policy_simulation_is_non_production_and_explainable() -> None:
@@ -197,6 +206,56 @@ def test_policy_simulation_rejects_too_many_cases_and_invalid_case_type() -> Non
     assert invalid_case_error.value.code == "invalid_policy_simulation_case"
 
 
+def test_policy_simulation_returns_fallback_when_any_rule_field_is_missing() -> None:
+    result = PolicySimulation.run(
+        simulation_id="sim_personal_credit_006",
+        policy=_policy_with_missing_rule_risk(),
+        catalog=_catalog(),
+        cases=(
+            PolicySimulationInputCase.create(
+                case_id="case_partial_rules_001",
+                values={
+                    "monthly_income_units": 300_000,
+                    "requested_amount_units": 700_000,
+                    "requested_installments": 12,
+                },
+            ),
+        ),
+        correlation_id="corr_1234567890abcdef",
+        now=NOW,
+    )
+
+    assert result.status == "completed_with_issues"
+    assert result.case_results[0].outcome == "unable_to_decide"
+    assert result.case_results[0].triggered_rule_ids == ()
+    assert result.case_results[0].reason_code_refs == ()
+    assert result.case_results[0].validation_issues[0].code == "missing_rule_field"
+
+
+def test_policy_simulation_evaluates_exists_false_for_missing_field() -> None:
+    result = PolicySimulation.run(
+        simulation_id="sim_personal_credit_007",
+        policy=_policy_with_exists_false(),
+        catalog=_catalog(),
+        cases=(
+            PolicySimulationInputCase.create(
+                case_id="case_missing_age_001",
+                values={
+                    "requested_amount_units": 700_000,
+                    "requested_installments": 12,
+                },
+            ),
+        ),
+        correlation_id="corr_1234567890abcdef",
+        now=NOW,
+    )
+
+    assert result.status == "completed"
+    assert result.case_results[0].outcome == "reject"
+    assert result.case_results[0].triggered_rule_ids == ("rule_age_absent",)
+    assert result.case_results[0].reason_code_refs == ("rc_low_income",)
+
+
 def _policy() -> CreditPolicy:
     return CreditPolicy.create_draft(
         policy_id="pol_personal_credit_default",
@@ -324,6 +383,107 @@ def _policy_with_conflicting_rules() -> CreditPolicy:
             ),
         ),
         criteria=(
+            PolicyCriterion.create(
+                criterion_id="criterion_requested_amount",
+                field="requested_amount_units",
+                operator="lte",
+                value=1_000_000,
+            ),
+        ),
+        limits=(
+            PolicyLimit.create(
+                limit_id="limit_max_installments",
+                limit_type="max_installments",
+                value=24,
+            ),
+        ),
+        now=NOW,
+        actor_subject_id="user_credit_manager",
+        correlation_id="corr_1234567890abcdef",
+        change_summary="Criação inicial da política",
+    )
+
+
+def _policy_with_missing_rule_risk() -> CreditPolicy:
+    return CreditPolicy.create_draft(
+        policy_id="pol_personal_credit_default",
+        policy_version_id="polver_personal_credit_default_v1",
+        tenant_id="tenant_alpha",
+        owner_subject_id="user_credit_manager",
+        product_type="personal_credit",
+        reason_code_catalog_id="rcc_personal_credit_default",
+        reason_code_catalog_version_id="rccver_personal_credit_default_v1",
+        applicability=PolicyApplicability.create(channels=("api", "checkout")),
+        rules=(
+            PolicyRule.create(
+                rule_id="rule_sufficient_income",
+                name="Renda suficiente",
+                source_field="monthly_income_units",
+                operator="gte",
+                threshold_value=250_000,
+                outcome="approve",
+                reason_code_refs=("rc_sufficient_income",),
+            ),
+            PolicyRule.create(
+                rule_id="rule_age_reject",
+                name="Idade rejeitada",
+                source_field="age_years",
+                operator="lte",
+                threshold_value=17,
+                outcome="reject",
+                reason_code_refs=("rc_low_income",),
+            ),
+        ),
+        criteria=(
+            PolicyCriterion.create(
+                criterion_id="criterion_requested_amount",
+                field="requested_amount_units",
+                operator="lte",
+                value=1_000_000,
+            ),
+        ),
+        limits=(
+            PolicyLimit.create(
+                limit_id="limit_max_installments",
+                limit_type="max_installments",
+                value=24,
+            ),
+        ),
+        now=NOW,
+        actor_subject_id="user_credit_manager",
+        correlation_id="corr_1234567890abcdef",
+        change_summary="Criação inicial da política",
+    )
+
+
+def _policy_with_exists_false() -> CreditPolicy:
+    return CreditPolicy.create_draft(
+        policy_id="pol_personal_credit_default",
+        policy_version_id="polver_personal_credit_default_v1",
+        tenant_id="tenant_alpha",
+        owner_subject_id="user_credit_manager",
+        product_type="personal_credit",
+        reason_code_catalog_id="rcc_personal_credit_default",
+        reason_code_catalog_version_id="rccver_personal_credit_default_v1",
+        applicability=PolicyApplicability.create(channels=("api", "checkout")),
+        rules=(
+            PolicyRule.create(
+                rule_id="rule_age_absent",
+                name="Idade ausente",
+                source_field="age_years",
+                operator="exists",
+                threshold_value=False,
+                outcome="reject",
+                reason_code_refs=("rc_low_income",),
+            ),
+        ),
+        criteria=(
+            PolicyCriterion.create(
+                criterion_id="criterion_age_absent",
+                field="age_years",
+                operator="exists",
+                value=False,
+            ),
             PolicyCriterion.create(
                 criterion_id="criterion_requested_amount",
                 field="requested_amount_units",

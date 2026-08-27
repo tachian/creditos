@@ -946,16 +946,8 @@ class DecisionApplicationService:
             getattr(command, "policy_version_id", None),
             fallback="unknown_policy_version",
         )
-        tenant_id = (
-            trusted_context.trusted.tenant_id
-            if isinstance(trusted_context, PropagatedContext)
-            else context.tenant_id or "unknown_tenant"
-        )
-        actor_subject_id = (
-            trusted_context.trusted.subject_id
-            if isinstance(trusted_context, PropagatedContext)
-            else "unknown_actor"
-        )
+        tenant_id = _trusted_tenant_id_or_unknown(trusted_context)
+        actor_subject_id = _trusted_actor_subject_id_or_unknown(trusted_context)
         correlation_id = _safe_correlation_id(
             context.correlation_id,
             fallback="corr_unknown0000",
@@ -995,16 +987,8 @@ class DecisionApplicationService:
         )
         if skip_simulation_id is not None and simulation_id == skip_simulation_id:
             return
-        tenant_id = (
-            trusted_context.trusted.tenant_id
-            if isinstance(trusted_context, PropagatedContext)
-            else context.tenant_id or "unknown_tenant"
-        )
-        actor_subject_id = (
-            trusted_context.trusted.subject_id
-            if isinstance(trusted_context, PropagatedContext)
-            else "unknown_actor"
-        )
+        tenant_id = _trusted_tenant_id_or_unknown(trusted_context)
+        actor_subject_id = _trusted_actor_subject_id_or_unknown(trusted_context)
         correlation_id = _safe_correlation_id(
             context.correlation_id,
             fallback="corr_unknown0000",
@@ -1061,16 +1045,8 @@ class DecisionApplicationService:
             ),
             fallback="unknown_reason_code_catalog_version",
         )
-        tenant_id = (
-            trusted_context.trusted.tenant_id
-            if isinstance(trusted_context, PropagatedContext)
-            else context.tenant_id or "unknown_tenant"
-        )
-        actor_subject_id = (
-            trusted_context.trusted.subject_id
-            if isinstance(trusted_context, PropagatedContext)
-            else "unknown_actor"
-        )
+        tenant_id = _trusted_tenant_id_or_unknown(trusted_context)
+        actor_subject_id = _trusted_actor_subject_id_or_unknown(trusted_context)
         correlation_id = _safe_correlation_id(
             context.correlation_id,
             fallback="corr_unknown0000",
@@ -1226,6 +1202,18 @@ def _safe_correlation_id(value: object, *, fallback: str) -> str:
         return validate_correlation_id(value)
     except Exception:
         return fallback
+
+
+def _trusted_tenant_id_or_unknown(trusted_context: object) -> str:
+    if not isinstance(trusted_context, PropagatedContext):
+        return "unknown_tenant"
+    return trusted_context.trusted.tenant_id or "unknown_tenant"
+
+
+def _trusted_actor_subject_id_or_unknown(trusted_context: object) -> str:
+    if not isinstance(trusted_context, PropagatedContext):
+        return "unknown_actor"
+    return trusted_context.trusted.subject_id or "unknown_actor"
 
 
 def _duration_ms(started_at: float) -> float:

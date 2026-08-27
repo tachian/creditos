@@ -24,6 +24,7 @@ from creditos_decision.domain.entities import ReasonCodeCatalog
 from creditos_decision.domain.errors import (
     PolicyNotFoundError,
     PolicySimulationNotFoundError,
+    PolicyTenantContextError,
     PolicyValidationError,
 )
 from creditos_decision.domain.value_objects import (
@@ -178,6 +179,28 @@ def test_run_policy_simulation_rejects_cross_tenant_without_revealing_policy() -
     )
     assert audit.events[-1].event_type == "policy_simulation.rejected"
     assert audit.events[-1].safe_details["rejection_reason"] == "credit_policy_not_found"
+
+
+def test_policy_simulation_rejection_audit_does_not_trust_unverified_tenant() -> None:
+    audit = RecordingAuditPublisher()
+    service = _service(audit=audit)
+
+    with pytest.raises(PolicyTenantContextError):
+        service.run_policy_simulation(
+            RunPolicySimulationCommand(
+                simulation_id="sim_untrusted_context_001",
+                policy_id="pol_personal_credit_default",
+                policy_version_id="polver_personal_credit_default_v1",
+                cases=(_safe_case(),),
+            ),
+            context=_context("tenant_forged"),
+            trusted_context=object(),  # type: ignore[arg-type]
+        )
+
+    assert isinstance(audit.events[-1], PolicySimulationAuditIntent)
+    assert audit.events[-1].tenant_id == "unknown_tenant"
+    assert audit.events[-1].actor_subject_id == "unknown_actor"
+    assert audit.events[-1].safe_details["rejection_reason"] == ("policy_tenant_context_required")
 
 
 def test_policy_simulation_is_removed_when_audit_publish_fails() -> None:
