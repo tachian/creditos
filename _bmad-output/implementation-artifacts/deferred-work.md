@@ -13,3 +13,7 @@
 ## Deferred from: code review of 3-5-registro-de-custo-e-resultado-de-integracao (2026-08-24)
 
 - Durabilidade transacional de projeção/outbox para custo e resultado: a story prepara projeção minimizada local/testável, mas a garantia de entrega durável para Reporting depende de outbox/inbox, broker real ou persistência transacional futura, explicitamente fora do escopo desta story.
+
+## Deferred from: code review of 4-4-publicacao-imutavel-de-politica-aprovada (2026-08-28)
+
+- Verificação de fingerprint persistido em `CreditPolicy.restore`: o método recalcula o fingerprint a partir dos campos restaurados e não recebe/verifica um fingerprint previamente armazenado. É um endurecimento de persistência/auditoria para adapter real; no escopo atual in-memory não há serialização externa nem banco real.

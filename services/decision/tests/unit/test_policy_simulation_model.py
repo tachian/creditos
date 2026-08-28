@@ -101,6 +101,7 @@ def test_policy_simulation_result_cannot_be_marked_as_production() -> None:
             tenant_id="tenant_alpha",
             policy_id="pol_personal_credit_default",
             policy_version_id="polver_personal_credit_default_v1",
+            policy_revision=1,
             reason_code_catalog_id="rcc_personal_credit_default",
             reason_code_catalog_version_id="rccver_personal_credit_default_v1",
             status="completed",

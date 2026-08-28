@@ -50,6 +50,22 @@ A simulação e validação de política adiciona um fluxo não produtivo para a
 
 A simulação não cria decisão produtiva, não publica evento final de decisão, não altera status de proposta, não publica política e não chama IA, Integration Service ou fornecedor externo.
 
+## Story 4.4
+
+A publicação imutável de política aprovada adiciona o lifecycle produtivo de versões:
+
+- publicação de política `draft` como `published` somente com vigência UTC explícita;
+- exigência de catálogo de reason codes `published` para uso produtivo;
+- exigência de simulação prévia da mesma política/versão/tenant com status `completed` e sem issues;
+- proteção forte contra alteração de snapshot publicado;
+- criação de nova versão `draft` para qualquer correção em política já publicada;
+- consulta de versão publicada aplicável por tenant, produto, canal e data efetiva;
+- bloqueio de janelas de vigência conflitantes para mesmo tenant/produto/canal;
+- scope dedicado `policy:publish` para publicar ou derivar nova versão;
+- auditoria minimizada para publicação/versionamento/rejeição e rollback quando auditoria crítica falha.
+
+A publicação não executa decisão final, não cria `decision_id`, não publica evento final de decisão, não chama Proposal Intake, Integration Service, IA, NATS ou banco real.
+
 ## Arquitetura
 
 O serviço segue DDD + arquitetura hexagonal:

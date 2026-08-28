@@ -42,6 +42,7 @@ class PolicySimulation:
             tenant_id=policy.tenant_id,
             policy_id=policy.policy_id,
             policy_version_id=policy.policy_version_id,
+            policy_revision=policy.revision,
             reason_code_catalog_id=catalog.catalog_id,
             reason_code_catalog_version_id=catalog.catalog_version_id,
             status=status,

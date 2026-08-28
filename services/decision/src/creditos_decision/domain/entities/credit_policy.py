@@ -331,6 +331,120 @@ class CreditPolicy:
             updated_at=now,
         )
 
+    def publish(
+        self,
+        *,
+        now: datetime,
+        actor_subject_id: str,
+        correlation_id: str,
+        change_summary: str,
+    ) -> CreditPolicy:
+        if self.status != "draft":
+            raise PolicyImmutableError("política não pode ser alterada")
+        if self.applicability.starts_at is None:
+            raise PolicyValidationError(
+                "vigência inicial obrigatória",
+                code="missing_policy_effective_start",
+                field_path="applicability.starts_at",
+            )
+        _validate_aware_utc_datetime(now, field_path="updated_at")
+        if self.applicability.ends_at is not None and self.applicability.ends_at <= now:
+            raise PolicyValidationError(
+                "vigência expirada",
+                code="expired_policy_effective_window",
+                field_path="applicability.ends_at",
+            )
+        next_revision = self.revision + 1
+        changelog_entry = PolicyChangelogEntry.create(
+            change_type="published",
+            actor_subject_id=actor_subject_id,
+            changed_at=now,
+            change_summary=change_summary,
+            correlation_id=correlation_id,
+            previous_revision=self.revision,
+            resulting_revision=next_revision,
+        )
+        return CreditPolicy.restore(
+            policy_id=self.policy_id,
+            policy_version_id=self.policy_version_id,
+            tenant_id=self.tenant_id,
+            owner_subject_id=self.owner_subject_id,
+            product_type=self.product_type,
+            reason_code_catalog_id=self.reason_code_catalog_id,
+            reason_code_catalog_version_id=self.reason_code_catalog_version_id,
+            status="published",
+            version=self.version,
+            revision=next_revision,
+            applicability=self.applicability,
+            rules=self.rules,
+            criteria=self.criteria,
+            limits=self.limits,
+            changelog=(*self.changelog, changelog_entry),
+            created_at=self.created_at,
+            updated_at=now,
+        )
+
+    def create_new_version(
+        self,
+        *,
+        policy_version_id: str,
+        version: int,
+        rules: tuple[PolicyRule, ...],
+        criteria: tuple[PolicyCriterion, ...],
+        limits: tuple[PolicyLimit, ...],
+        applicability: PolicyApplicability,
+        reason_code_catalog_id: str,
+        reason_code_catalog_version_id: str,
+        now: datetime,
+        actor_subject_id: str,
+        correlation_id: str,
+        change_summary: str,
+        owner_subject_id: str | None = None,
+        product_type: str | None = None,
+    ) -> CreditPolicy:
+        if self.status != "published":
+            raise PolicyValidationError(
+                "nova versão exige política publicada",
+                code="policy_version_requires_published_source",
+                field_path="status",
+            )
+        if policy_version_id == self.policy_version_id:
+            raise PolicyValidationError(
+                "nova versão exige identificador diferente",
+                code="policy_version_id_must_change",
+                field_path="policy_version_id",
+            )
+        changelog = (
+            PolicyChangelogEntry.create(
+                change_type="versioned",
+                actor_subject_id=actor_subject_id,
+                changed_at=now,
+                change_summary=change_summary,
+                correlation_id=correlation_id,
+                previous_revision=None,
+                resulting_revision=1,
+            ),
+        )
+        return CreditPolicy.restore(
+            policy_id=self.policy_id,
+            policy_version_id=policy_version_id,
+            tenant_id=self.tenant_id,
+            owner_subject_id=owner_subject_id or self.owner_subject_id,
+            product_type=product_type or self.product_type,
+            reason_code_catalog_id=reason_code_catalog_id,
+            reason_code_catalog_version_id=reason_code_catalog_version_id,
+            status="draft",
+            version=version,
+            revision=1,
+            applicability=applicability,
+            rules=rules,
+            criteria=criteria,
+            limits=limits,
+            changelog=changelog,
+            created_at=now,
+            updated_at=now,
+        )
+
 
 def _require_non_empty_tuple(value: tuple[object, ...], *, field_path: str) -> None:
     if not value:
@@ -366,9 +480,9 @@ def _validate_changelog_chain(
             _raise_inconsistent_changelog()
         if entry.resulting_revision != expected_revision:
             _raise_inconsistent_changelog()
-        if entry.resulting_revision != 1 and entry.change_type != "updated":
+        if entry.resulting_revision != 1 and entry.change_type not in {"updated", "published"}:
             _raise_inconsistent_changelog()
-        if entry.resulting_revision == 1 and entry.change_type != "created":
+        if entry.resulting_revision == 1 and entry.change_type not in {"created", "versioned"}:
             _raise_inconsistent_changelog()
         previous_resulting_revision = entry.resulting_revision
     if previous_resulting_revision != revision:

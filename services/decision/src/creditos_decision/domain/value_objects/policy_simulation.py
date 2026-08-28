@@ -313,6 +313,7 @@ class PolicySimulationResult:
     tenant_id: str
     policy_id: str
     policy_version_id: str
+    policy_revision: int
     reason_code_catalog_id: str
     reason_code_catalog_version_id: str
     status: str
@@ -355,6 +356,13 @@ class PolicySimulationResult:
             "policy_version_id",
             validate_policy_version_id(self.policy_version_id),
         )
+        if not isinstance(self.policy_revision, int) or self.policy_revision < 1:
+            raise PolicyValidationError(
+                "revisão da política inválida",
+                code="invalid_policy_revision",
+                field_path="policy_revision",
+            )
+        object.__setattr__(self, "policy_revision", self.policy_revision)
         object.__setattr__(
             self,
             "reason_code_catalog_id",
@@ -400,6 +408,7 @@ class PolicySimulationResult:
         tenant_id: str,
         policy_id: str,
         policy_version_id: str,
+        policy_revision: int,
         reason_code_catalog_id: str,
         reason_code_catalog_version_id: str,
         status: str,
@@ -414,6 +423,7 @@ class PolicySimulationResult:
             tenant_id=tenant_id,
             policy_id=policy_id,
             policy_version_id=policy_version_id,
+            policy_revision=policy_revision,
             reason_code_catalog_id=reason_code_catalog_id,
             reason_code_catalog_version_id=reason_code_catalog_version_id,
             status=status,
