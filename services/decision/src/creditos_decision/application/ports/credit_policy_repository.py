@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol
 
 from creditos_decision.domain.entities import CreditPolicy
@@ -8,7 +9,12 @@ from creditos_decision.domain.entities import CreditPolicy
 class CreditPolicyRepository(Protocol):
     def save(self, policy: CreditPolicy) -> None: ...
 
-    def save_new_version(self, policy: CreditPolicy) -> None: ...
+    def save_new_version(
+        self,
+        policy: CreditPolicy,
+        *,
+        before_commit: Callable[[], None] | None = None,
+    ) -> None: ...
 
     def update(self, policy: CreditPolicy, *, expected_revision: int | None = None) -> None: ...
 
@@ -17,6 +23,7 @@ class CreditPolicyRepository(Protocol):
         policy: CreditPolicy,
         *,
         expected_revision: int,
+        before_commit: Callable[[], None] | None = None,
     ) -> None: ...
 
     def delete(self, policy: CreditPolicy) -> None: ...

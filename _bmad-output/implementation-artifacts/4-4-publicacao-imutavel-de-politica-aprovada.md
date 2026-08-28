@@ -94,6 +94,13 @@ so that novas propostas usem a versão correta sem alterar decisões antigas.
 - [x] [Review][Patch] Auditoria de versionamento não registra vigência [services/decision/src/creditos_decision/application/service.py:600]
 - [x] [Review][Defer] `CreditPolicy.restore` não verifica fingerprint persistido original [services/decision/src/creditos_decision/domain/entities/credit_policy.py:243] — deferred, pre-existing
 
+### GitHub Codex Review Findings
+
+- [x] [GitHub Review][P1] Não ignorar conflito de vigência apenas por `policy_version_id` reutilizado por outra política.
+- [x] [GitHub Review][P1] Não expor política publicada antes da auditoria crítica de publicação.
+- [x] [GitHub Review][P1] Não expor nova versão antes da auditoria crítica de versionamento.
+- [x] [GitHub Review][P2] Enriquecer rejeições de publicação com contexto seguro de simulação e vigência quando disponível.
+
 ## Dev Notes
 
 ### Escopo desta story

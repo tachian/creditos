@@ -252,11 +252,12 @@ def test_publish_policy_rejects_stale_simulation_after_draft_update() -> None:
 def test_publish_policy_rejects_overlapping_effective_windows_and_supports_lookup() -> None:
     repository = InMemoryCreditPolicyRepository()
     simulation_repository = InMemoryPolicySimulationRepository()
+    audit = RecordingAuditPublisher()
     service = _service(
         repository=repository,
         simulation_repository=simulation_repository,
         catalog_repository=_published_catalog_repository(),
-        audit=RecordingAuditPublisher(),
+        audit=audit,
     )
     first = _create_and_simulate(
         service,
@@ -294,6 +295,15 @@ def test_publish_policy_rejects_overlapping_effective_windows_and_supports_looku
             context=_context("tenant_alpha"),
             trusted_context=_trusted_context(scopes=("policy:publish", "policy:read")),
         )
+    rejection_event = audit.events[-1]
+    assert isinstance(rejection_event, CreditPolicyAuditIntent)
+    assert rejection_event.event_type == "credit_policy.rejected"
+    assert rejection_event.safe_details["simulation_id"] == "sim_policy_publication_v2"
+    assert rejection_event.safe_details["simulation_issue_count"] == "0"
+    assert (
+        rejection_event.safe_details["effective_starts_at"]
+        == (NOW + timedelta(days=15)).isoformat()
+    )
 
     published = service.get_published_policy(
         GetPublishedCreditPolicyCommand(
@@ -316,6 +326,54 @@ def test_publish_policy_rejects_overlapping_effective_windows_and_supports_looku
             ),
             context=_context("tenant_alpha"),
             trusted_context=_trusted_context(scopes=("policy:read",)),
+        )
+
+
+def test_publish_policy_rejects_overlap_when_policy_version_id_is_reused() -> None:
+    repository = InMemoryCreditPolicyRepository()
+    service = _service(
+        repository=repository,
+        simulation_repository=InMemoryPolicySimulationRepository(),
+        catalog_repository=_published_catalog_repository(),
+        audit=RecordingAuditPublisher(),
+    )
+    first = _create_and_simulate(
+        service,
+        policy_id="pol_personal_credit_default",
+        policy_version_id="polver_personal_credit_shared_v1",
+        simulation_id="sim_policy_publication_shared_v1",
+        starts_at=NOW + timedelta(days=1),
+        ends_at=NOW + timedelta(days=31),
+    )
+    service.publish_policy(
+        PublishCreditPolicyCommand(
+            policy_id=first.policy.policy_id,
+            policy_version_id=first.policy.policy_version_id,
+            simulation_id="sim_policy_publication_shared_v1",
+            change_summary="Publicação política principal",
+        ),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("policy:publish", "policy:read")),
+    )
+    second = _create_and_simulate(
+        service,
+        policy_id="pol_personal_credit_alternative",
+        policy_version_id="polver_personal_credit_shared_v1",
+        simulation_id="sim_policy_publication_shared_v2",
+        starts_at=NOW + timedelta(days=15),
+        ends_at=NOW + timedelta(days=45),
+    )
+
+    with pytest.raises(PolicyValidationError, match="vigência conflitante"):
+        service.publish_policy(
+            PublishCreditPolicyCommand(
+                policy_id=second.policy.policy_id,
+                policy_version_id=second.policy.policy_version_id,
+                simulation_id="sim_policy_publication_shared_v2",
+                change_summary="Publicação com version id reutilizado",
+            ),
+            context=_context("tenant_alpha"),
+            trusted_context=_trusted_context(scopes=("policy:publish", "policy:read")),
         )
 
 
@@ -469,6 +527,88 @@ def test_publication_requires_publish_scope_and_rolls_back_when_audit_fails() ->
     assert restored.status == "draft"
 
 
+def test_publication_and_versioning_are_invisible_until_audit_commit() -> None:
+    class VisibilityAuditPublisher(RecordingAuditPublisher):
+        def __init__(self, repository: InMemoryCreditPolicyRepository) -> None:
+            super().__init__()
+            self._repository = repository
+            self.published_visible_during_audit = False
+            self.version_visible_during_audit = False
+
+        def publish(self, event: DecisionAuditIntent) -> None:
+            super().publish(event)
+            if (
+                isinstance(event, CreditPolicyAuditIntent)
+                and event.event_type == "credit_policy.published"
+            ):
+                self.published_visible_during_audit = bool(
+                    self._repository.list_published_by_product(
+                        tenant_id=event.tenant_id,
+                        product_type="personal_credit",
+                    )
+                )
+            if (
+                isinstance(event, CreditPolicyAuditIntent)
+                and event.event_type == "credit_policy.versioned"
+            ):
+                self.version_visible_during_audit = (
+                    self._repository.get(
+                        tenant_id=event.tenant_id,
+                        policy_id=event.policy_id,
+                        policy_version_id=event.policy_version_id,
+                    )
+                    is not None
+                )
+
+    repository = InMemoryCreditPolicyRepository()
+    audit = VisibilityAuditPublisher(repository)
+    service = _service(
+        repository=repository,
+        catalog_repository=_published_catalog_repository(),
+        audit=audit,
+    )
+    created = _create_and_simulate(
+        service,
+        policy_version_id="polver_personal_credit_default_v1",
+        simulation_id="sim_policy_publication_visibility",
+        starts_at=NOW + timedelta(days=1),
+        ends_at=NOW + timedelta(days=31),
+    )
+    published = service.publish_policy(
+        PublishCreditPolicyCommand(
+            policy_id=created.policy.policy_id,
+            policy_version_id=created.policy.policy_version_id,
+            simulation_id="sim_policy_publication_visibility",
+            change_summary="Publicação auditada antes do commit",
+        ),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("policy:publish", "policy:read")),
+    )
+
+    service.create_policy_version(
+        CreateCreditPolicyVersionCommand(
+            policy_id=published.policy.policy_id,
+            current_policy_version_id=published.policy.policy_version_id,
+            new_policy_version_id="polver_personal_credit_default_v2",
+            change_summary="Nova versão invisível até auditoria",
+            rules=published.policy.rules,
+            criteria=published.policy.criteria,
+            limits=published.policy.limits,
+            applicability=PolicyApplicability.create(
+                channels=("api",),
+                starts_at=NOW + timedelta(days=40),
+            ),
+            reason_code_catalog_id=published.policy.reason_code_catalog_id,
+            reason_code_catalog_version_id=published.policy.reason_code_catalog_version_id,
+        ),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("policy:publish", "policy:read")),
+    )
+
+    assert audit.published_visible_during_audit is False
+    assert audit.version_visible_during_audit is False
+
+
 def _service(
     *,
     audit: CreditPolicyAuditPublisher,
@@ -489,6 +629,7 @@ def _service(
 def _create_and_simulate(
     service: DecisionApplicationService,
     *,
+    policy_id: str = "pol_personal_credit_default",
     policy_version_id: str,
     simulation_id: str,
     starts_at: datetime,
@@ -496,6 +637,7 @@ def _create_and_simulate(
 ):
     created = service.create_policy_draft(
         _create_policy_command(
+            policy_id=policy_id,
             policy_version_id=policy_version_id,
             applicability=PolicyApplicability.create(
                 channels=("api",),
@@ -532,11 +674,12 @@ def _safe_case() -> PolicySimulationInputCase:
 
 def _create_policy_command(
     *,
+    policy_id: str = "pol_personal_credit_default",
     policy_version_id: str = "polver_personal_credit_default_v1",
     applicability: PolicyApplicability | None = None,
 ) -> CreateCreditPolicyDraftCommand:
     return CreateCreditPolicyDraftCommand(
-        policy_id="pol_personal_credit_default",
+        policy_id=policy_id,
         policy_version_id=policy_version_id,
         reason_code_catalog_id="rcc_personal_credit_default",
         reason_code_catalog_version_id="rccver_personal_credit_default_v1",

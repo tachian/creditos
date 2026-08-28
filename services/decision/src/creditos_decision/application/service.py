@@ -454,6 +454,7 @@ class DecisionApplicationService:
         started_at = perf_counter()
         existing_policy: CreditPolicy | None = None
         published_policy: CreditPolicy | None = None
+        simulation: PolicySimulationResult | None = None
         try:
             operation_context = _require_policy_context(
                 context=context,
@@ -482,11 +483,10 @@ class DecisionApplicationService:
                 correlation_id=context.correlation_id,
                 change_summary=command.change_summary,
             )
-            self._repository.publish_if_no_window_conflict(
-                published_policy,
-                expected_revision=existing_policy.revision,
-            )
-            try:
+
+            def publish_audit_before_commit() -> None:
+                assert published_policy is not None
+                assert simulation is not None
                 self._publish_audit_intent(
                     policy=published_policy,
                     event_type="credit_policy.published",
@@ -498,14 +498,12 @@ class DecisionApplicationService:
                         simulation=simulation,
                     ),
                 )
-            except Exception as audit_error:
-                if not self._repository.restore_if_current(
-                    existing_policy,
-                    expected_revision=published_policy.revision,
-                ):
-                    raise RuntimeError("rollback de política falhou") from audit_error
-                published_policy = None
-                raise
+
+            self._repository.publish_if_no_window_conflict(
+                published_policy,
+                expected_revision=existing_policy.revision,
+                before_commit=publish_audit_before_commit,
+            )
             log = self._log_operation(
                 context=context,
                 operation="credit_policy.publish",
@@ -527,6 +525,14 @@ class DecisionApplicationService:
                 context=context,
                 trusted_context=trusted_context,
                 error=error,
+                safe_details=(
+                    _policy_publication_rejection_safe_details(
+                        policy=published_policy or existing_policy,
+                        simulation=simulation,
+                    )
+                    if existing_policy is not None and simulation is not None
+                    else None
+                ),
             )
             self._log_operation(
                 context=context,
@@ -588,9 +594,8 @@ class DecisionApplicationService:
                 tenant_id=operation_context.tenant_id,
                 policy=next_policy,
             )
-            self._repository.save_new_version(next_policy)
-            persisted_policy = next_policy
-            try:
+
+            def publish_versioned_audit_before_commit() -> None:
                 self._publish_audit_intent(
                     policy=next_policy,
                     event_type="credit_policy.versioned",
@@ -615,14 +620,12 @@ class DecisionApplicationService:
                         ),
                     },
                 )
-            except Exception as audit_error:
-                if not self._repository.delete_if_current(
-                    next_policy,
-                    expected_revision=next_policy.revision,
-                ):
-                    raise RuntimeError("rollback de política falhou") from audit_error
-                persisted_policy = None
-                raise
+
+            self._repository.save_new_version(
+                next_policy,
+                before_commit=publish_versioned_audit_before_commit,
+            )
+            persisted_policy = next_policy
             log = self._log_operation(
                 context=context,
                 operation="credit_policy.create_version",
@@ -1307,6 +1310,7 @@ class DecisionApplicationService:
         trusted_context: PropagatedContext,
         error: Exception,
         skip_policy_id: str | None = None,
+        safe_details: dict[str, str] | None = None,
     ) -> None:
         policy_id = _safe_policy_identifier(
             getattr(command, "policy_id", None),
@@ -1324,6 +1328,13 @@ class DecisionApplicationService:
             context.correlation_id,
             fallback="corr_unknown0000",
         )
+        rejection_safe_details = {
+            "operation": operation,
+            "rejection_reason": getattr(error, "code", type(error).__name__),
+            "status": "rejected",
+        }
+        if safe_details is not None:
+            rejection_safe_details.update(safe_details)
         try:
             self._audit_publisher.publish(
                 CreditPolicyAuditIntent(
@@ -1333,11 +1344,7 @@ class DecisionApplicationService:
                     policy_id=policy_id,
                     policy_version_id=policy_version_id,
                     correlation_id=correlation_id,
-                    safe_details={
-                        "operation": operation,
-                        "rejection_reason": getattr(error, "code", type(error).__name__),
-                        "status": "rejected",
-                    },
+                    safe_details=rejection_safe_details,
                 )
             )
         except Exception:
@@ -1647,6 +1654,30 @@ def _policy_publication_safe_details(
         "simulation_id": simulation.simulation_id,
         "simulation_issue_count": str(simulation.summary.issue_count),
         "status": policy.status,
+    }
+
+
+def _policy_publication_rejection_safe_details(
+    *,
+    policy: CreditPolicy,
+    simulation: PolicySimulationResult,
+) -> dict[str, str]:
+    return {
+        "effective_ends_at": (
+            policy.applicability.ends_at.isoformat()
+            if policy.applicability.ends_at is not None
+            else ""
+        ),
+        "effective_starts_at": (
+            policy.applicability.starts_at.isoformat()
+            if policy.applicability.starts_at is not None
+            else ""
+        ),
+        "policy_revision": str(policy.revision),
+        "product_type": policy.product_type,
+        "simulation_id": simulation.simulation_id,
+        "simulation_issue_count": str(simulation.summary.issue_count),
+        "simulation_policy_revision": str(simulation.policy_revision),
     }
 
 

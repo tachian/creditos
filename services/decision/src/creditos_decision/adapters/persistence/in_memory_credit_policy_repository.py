@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from threading import RLock
 
@@ -23,7 +24,12 @@ class InMemoryCreditPolicyRepository:
                 )
             self._policies[key] = policy
 
-    def save_new_version(self, policy: CreditPolicy) -> None:
+    def save_new_version(
+        self,
+        policy: CreditPolicy,
+        *,
+        before_commit: Callable[[], None] | None = None,
+    ) -> None:
         key = _key(policy.tenant_id, policy.policy_id, policy.policy_version_id)
         with self._lock:
             if key in self._policies:
@@ -43,6 +49,8 @@ class InMemoryCreditPolicyRepository:
                     code="duplicate_credit_policy_version",
                     field_path="version",
                 )
+            if before_commit is not None:
+                before_commit()
             self._policies[key] = policy
 
     def update(self, policy: CreditPolicy, *, expected_revision: int | None = None) -> None:
@@ -71,6 +79,7 @@ class InMemoryCreditPolicyRepository:
         policy: CreditPolicy,
         *,
         expected_revision: int,
+        before_commit: Callable[[], None] | None = None,
     ) -> None:
         key = _key(policy.tenant_id, policy.policy_id, policy.policy_version_id)
         with self._lock:
@@ -97,7 +106,10 @@ class InMemoryCreditPolicyRepository:
                     continue
                 if published_policy.status != "published":
                     continue
-                if published_policy.policy_version_id == policy.policy_version_id:
+                if (
+                    published_policy.policy_id == policy.policy_id
+                    and published_policy.policy_version_id == policy.policy_version_id
+                ):
                     continue
                 if _policy_windows_overlap(policy, published_policy):
                     raise PolicyValidationError(
@@ -105,6 +117,8 @@ class InMemoryCreditPolicyRepository:
                         code="conflicting_published_policy_window",
                         field_path="applicability",
                     )
+            if before_commit is not None:
+                before_commit()
             self._policies[key] = policy
 
     def delete(self, policy: CreditPolicy) -> None:
