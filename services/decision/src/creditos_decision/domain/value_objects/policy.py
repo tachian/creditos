@@ -26,6 +26,8 @@ class PolicyStatus(StrEnum):
 class PolicyChangeType(StrEnum):
     CREATED = "created"
     UPDATED = "updated"
+    PUBLISHED = "published"
+    VERSIONED = "versioned"
 
 
 class PolicyOperator(StrEnum):
