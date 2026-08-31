@@ -66,6 +66,23 @@ A publicação imutável de política aprovada adiciona o lifecycle produtivo de
 
 A publicação não executa decisão final, não cria `decision_id`, não publica evento final de decisão, não chama Proposal Intake, Integration Service, IA, NATS ou banco real.
 
+## Story 4.5
+
+A execução determinística de decisão adiciona o primeiro fluxo produtivo interno:
+
+- entidade `CreditDecision` com `decision_id`, `proposal_id`, tenant, produto, canal, horário UTC, política/catálogo versionados, outcome, regras acionadas, reason codes, fatores explicáveis, issues controladas e fingerprint estável;
+- input produtivo minimizado por campos canônicos governados, sem CPF, CNPJ, e-mail, nome, endereço, payload bruto, headers, tokens, secrets ou payload proprietário de fornecedor;
+- avaliador determinístico comum para simulação e decisão real, preservando a restrição de que simulação continua não produtiva e limitada a políticas em `draft`;
+- execução somente contra política `published` aplicável por tenant, produto, canal e data efetiva;
+- catálogo de reason codes deve estar `published` para decisão final;
+- `approve` produtivo exige termos aprovados completos; `approve_with_changes` fica bloqueado até existir modelo explícito e rastreável de termos ajustados;
+- scope dedicado `decision:execute`, separado dos scopes de política;
+- repositório in-memory próprio para decisões, com isolamento por tenant e controle de duplicidade por proposta;
+- auditoria crítica minimizada antes da decisão ficar visível no repositório ou ser retornada como final;
+- logs estruturados com payload omitido e apenas metadados seguros.
+
+Ficam fora desta etapa: API HTTP/gRPC real, NATS JetStream, outbox transacional, banco real, callbacks/webhooks, Reporting, consulta pública de decisão, IA consultiva e chamadas diretas ao Integration Service ou fornecedores externos.
+
 ## Arquitetura
 
 O serviço segue DDD + arquitetura hexagonal:

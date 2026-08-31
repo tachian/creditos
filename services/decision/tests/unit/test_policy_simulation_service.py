@@ -9,10 +9,9 @@ from creditos_decision.adapters.persistence import (
     InMemoryReasonCodeCatalogRepository,
 )
 from creditos_decision.application.ports import (
-    CreditPolicyAuditIntent,
     CreditPolicyAuditPublisher,
+    DecisionAuditIntent,
     PolicySimulationAuditIntent,
-    ReasonCodeCatalogAuditIntent,
 )
 from creditos_decision.application.service import (
     CreateCreditPolicyDraftCommand,
@@ -40,9 +39,6 @@ from creditos_observability.context import ObservabilityContext
 from creditos_security import PropagatedContext, TrustedContext
 
 NOW = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
-DecisionAuditIntent = (
-    CreditPolicyAuditIntent | ReasonCodeCatalogAuditIntent | PolicySimulationAuditIntent
-)
 
 
 class RecordingAuditPublisher:

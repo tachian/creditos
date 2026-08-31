@@ -1,3 +1,6 @@
+from creditos_decision.adapters.persistence.in_memory_credit_decision_repository import (
+    InMemoryCreditDecisionRepository,
+)
 from creditos_decision.adapters.persistence.in_memory_credit_policy_repository import (
     InMemoryCreditPolicyRepository,
 )
@@ -9,6 +12,7 @@ from creditos_decision.adapters.persistence.in_memory_reason_code_catalog_reposi
 )
 
 __all__ = [
+    "InMemoryCreditDecisionRepository",
     "InMemoryCreditPolicyRepository",
     "InMemoryPolicySimulationRepository",
     "InMemoryReasonCodeCatalogRepository",
