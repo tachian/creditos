@@ -5,7 +5,10 @@ from datetime import datetime
 from creditos_decision.domain.entities.credit_policy import CreditPolicy
 from creditos_decision.domain.entities.reason_code_catalog import ReasonCodeCatalog
 from creditos_decision.domain.errors import PolicyValidationError
-from creditos_decision.domain.services.policy_evaluator import evaluate_policy_case
+from creditos_decision.domain.services.policy_evaluator import (
+    evaluate_policy_case,
+    validate_policy_evaluation_scope,
+)
 from creditos_decision.domain.value_objects.policy_evaluation import PolicyEvaluationIssue
 from creditos_decision.domain.value_objects.policy_simulation import (
     PolicySimulationCaseResult,
@@ -101,7 +104,7 @@ def _validate_simulation_scope(
         )
     for simulation_case in cases:
         try:
-            evaluate_policy_case(
+            validate_policy_evaluation_scope(
                 policy=policy,
                 catalog=catalog,
                 evaluation_id=simulation_case.case_id,

@@ -12,6 +12,14 @@ from creditos_decision.domain.value_objects.policy_evaluation import (
     PolicyEvaluationResult,
 )
 
+APPROVAL_TERM_FIELDS = frozenset(
+    {
+        "requested_amount_units",
+        "requested_installments",
+        "requested_term_days",
+    }
+)
+
 
 class PolicyFieldValue(Protocol):
     @property
@@ -28,7 +36,7 @@ def evaluate_policy_case(
     evaluation_id: str,
     field_values: Sequence[PolicyFieldValue],
 ) -> PolicyEvaluationResult:
-    _validate_policy_evaluation_scope(
+    validate_policy_evaluation_scope(
         policy=policy,
         catalog=catalog,
         evaluation_id=evaluation_id,
@@ -137,7 +145,7 @@ def validate_policy_evaluation_fields(
         )
 
 
-def _validate_policy_evaluation_scope(
+def validate_policy_evaluation_scope(
     *,
     policy: CreditPolicy,
     catalog: ReasonCodeCatalog,
@@ -294,6 +302,7 @@ def _limit_field_and_operator(limit_type: str) -> tuple[str, str] | None:
 def _policy_evaluation_allowed_fields(policy: CreditPolicy) -> set[str]:
     fields = {rule.source_field for rule in policy.rules}
     fields.update(criterion.field for criterion in policy.criteria)
+    fields.update(APPROVAL_TERM_FIELDS)
     fields.update(
         mapped[0]
         for policy_limit in policy.limits

@@ -140,6 +140,103 @@ def test_credit_decision_fingerprint_changes_with_canonical_input_values() -> No
     assert first_decision.decision_fingerprint != second_decision.decision_fingerprint
 
 
+def test_credit_decision_fingerprint_changes_with_channel() -> None:
+    policy = _published_policy(
+        applicability=PolicyApplicability.create(channels=("api", "partner"), starts_at=NOW)
+    )
+    catalog = _published_catalog()
+    decision_input = CreditDecisionInput.create(
+        proposal_id="proposal_personal_credit_001",
+        values={
+            "monthly_income_units": 300_000,
+            "requested_amount_units": 700_000,
+            "requested_installments": 12,
+            "requested_term_days": 360,
+        },
+    )
+    evaluation = evaluate_policy_case(
+        policy=policy,
+        catalog=catalog,
+        evaluation_id=decision_input.proposal_id,
+        field_values=decision_input.field_values,
+    )
+
+    api_decision = CreditDecision.create(
+        decision_id="decision_personal_credit_001",
+        policy=policy,
+        catalog=catalog,
+        decision_input=decision_input,
+        evaluation=evaluation,
+        channel="api",
+        correlation_id="corr_1234567890abcdef",
+        decided_at=NOW,
+    )
+    partner_decision = CreditDecision.create(
+        decision_id="decision_personal_credit_002",
+        policy=policy,
+        catalog=catalog,
+        decision_input=decision_input,
+        evaluation=evaluation,
+        channel="partner",
+        correlation_id="corr_2234567890abcdef",
+        decided_at=NOW.replace(hour=13),
+    )
+
+    assert api_decision.decision_fingerprint != partner_decision.decision_fingerprint
+
+
+def test_credit_decision_allows_approval_terms_even_when_policy_does_not_reference_them() -> None:
+    policy = _published_policy(
+        criteria=(
+            PolicyCriterion.create(
+                criterion_id="criterion_min_income",
+                field="monthly_income_units",
+                operator="gte",
+                value=250_000,
+            ),
+        ),
+        limits=(
+            PolicyLimit.create(
+                limit_id="limit_max_amount",
+                limit_type="max_amount_units",
+                value=1_000_000,
+            ),
+        ),
+    )
+    catalog = _published_catalog()
+    decision_input = CreditDecisionInput.create(
+        proposal_id="proposal_personal_credit_001",
+        values={
+            "monthly_income_units": 300_000,
+            "requested_amount_units": 700_000,
+            "requested_installments": 12,
+            "requested_term_days": 360,
+        },
+    )
+    evaluation = evaluate_policy_case(
+        policy=policy,
+        catalog=catalog,
+        evaluation_id=decision_input.proposal_id,
+        field_values=decision_input.field_values,
+    )
+
+    decision = CreditDecision.create(
+        decision_id="decision_personal_credit_001",
+        policy=policy,
+        catalog=catalog,
+        decision_input=decision_input,
+        evaluation=evaluation,
+        channel="api",
+        correlation_id="corr_1234567890abcdef",
+        decided_at=NOW,
+    )
+
+    assert decision.outcome == "approve"
+    assert decision.approved_terms is not None
+    assert decision.approved_terms.approved_installments == 12
+    assert decision.approved_terms.approved_term_days == 360
+
+
 def test_credit_decision_rejects_approvals_without_complete_terms() -> None:
     policy = _published_policy()
     catalog = _published_catalog()
@@ -370,6 +467,9 @@ def test_policy_evaluator_supports_governed_outcomes(
 def _published_policy(
     *,
     rules: tuple[PolicyRule, ...] | None = None,
+    criteria: tuple[PolicyCriterion, ...] | None = None,
+    limits: tuple[PolicyLimit, ...] | None = None,
+    applicability: PolicyApplicability | None = None,
 ) -> CreditPolicy:
     return CreditPolicy.create_draft(
         policy_id="pol_personal_credit_default",
@@ -379,9 +479,10 @@ def _published_policy(
         product_type="personal_credit",
         reason_code_catalog_id="rcc_personal_credit_default",
         reason_code_catalog_version_id="rccver_personal_credit_default_v1",
-        applicability=PolicyApplicability.create(channels=("api",), starts_at=NOW),
+        applicability=applicability or PolicyApplicability.create(channels=("api",), starts_at=NOW),
         rules=rules or (_approval_rule(),),
-        criteria=(
+        criteria=criteria
+        or (
             PolicyCriterion.create(
                 criterion_id="criterion_requested_amount",
                 field="requested_amount_units",
@@ -389,7 +490,8 @@ def _published_policy(
                 value=1_000_000,
             ),
         ),
-        limits=(
+        limits=limits
+        or (
             PolicyLimit.create(
                 limit_id="limit_max_installments",
                 limit_type="max_installments",

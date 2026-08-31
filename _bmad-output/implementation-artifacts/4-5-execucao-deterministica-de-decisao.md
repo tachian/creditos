@@ -249,6 +249,7 @@ Codex CLI
 - 2026-08-30 — Implementados domínio, avaliador comum, repositório in-memory, auditoria e caso de uso de execução.
 - 2026-08-30 — Validações executadas: Ruff format/check, Pyright, testes unitários do Decision e regressão completa.
 - 2026-08-31 — `bmad-code-review` executado com Blind Hunter, Edge Case Hunter e Acceptance Auditor; 9 patches aplicados e validados.
+- 2026-08-31 — Code Review do Codex no GitHub PR #42 corrigido: termos obrigatórios de aprovação aceitos como campos canônicos, simulação sem avaliação duplicada e `channel` incluído no fingerprint.
 
 ### Completion Notes List
 
@@ -261,6 +262,7 @@ Codex CLI
 - Atualizado README do `Decision Service` com escopo e fronteiras da Story 4.5.
 - Pós-review: fingerprint passou a incluir hash da entrada canônica, auditoria registra refs de catálogo, `approve` exige termos completos e `approve_with_changes` produtivo fica bloqueado até modelo explícito de ajuste.
 - Pós-review: avaliador comum preserva identidade do caso/proposta em issues, simulação remapeia erros para códigos específicos e rejeições usam ID gerado internamente quando aplicável.
+- Pós-review GitHub: campos de termos solicitados necessários à aprovação são permitidos mesmo quando não aparecem diretamente na política; simulação usa validação estática compartilhada antes de avaliar casos; fingerprint da decisão agora inclui `channel`.
 
 ### File List
 
@@ -290,3 +292,4 @@ Codex CLI
 
 - 2026-08-30 — Implementada execução determinística produtiva de decisão com domínio, aplicação, auditoria, persistência in-memory, documentação e testes.
 - 2026-08-31 — Aplicadas correções do `bmad-code-review` da Story 4.5 e status BMAD atualizado para `done`.
+- 2026-08-31 — Aplicadas correções do Code Review do Codex no GitHub para PR #42.
