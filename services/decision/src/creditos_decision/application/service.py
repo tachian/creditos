@@ -5,12 +5,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from creditos_observability.context import ObservabilityContext
 from creditos_observability.logging import build_structured_log
 from creditos_security import PropagatedContext
 
 from creditos_decision.application.ports import (
+    CreditDecisionAuditIntent,
+    CreditDecisionRepository,
     CreditPolicyAuditIntent,
     CreditPolicyAuditPublisher,
     CreditPolicyRepository,
@@ -20,6 +23,7 @@ from creditos_decision.application.ports import (
     ReasonCodeCatalogRepository,
 )
 from creditos_decision.domain.entities import (
+    CreditDecision,
     CreditPolicy,
     PolicySimulation,
     PolicySimulationResult,
@@ -32,7 +36,10 @@ from creditos_decision.domain.errors import (
     PolicyValidationError,
     ReasonCodeCatalogNotFoundError,
 )
+from creditos_decision.domain.services.policy_evaluator import evaluate_policy_case
 from creditos_decision.domain.value_objects import (
+    CreditDecisionInput,
+    CreditDecisionInputFieldValue,
     ExplainableFactor,
     PolicyApplicability,
     PolicyCriterion,
@@ -41,9 +48,11 @@ from creditos_decision.domain.value_objects import (
     PolicySimulationInputCase,
     ReasonCode,
     validate_correlation_id,
+    validate_credit_decision_id,
     validate_policy_id,
     validate_policy_simulation_id,
     validate_policy_version_id,
+    validate_proposal_id,
     validate_reason_code_catalog_id,
     validate_reason_code_catalog_version_id,
 )
@@ -172,6 +181,18 @@ class GetPublishedCreditPolicyCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecuteCreditDecisionCommand:
+    proposal_id: str
+    product_type: str
+    channel: str
+    effective_at: datetime
+    field_values: tuple[CreditDecisionInputFieldValue, ...]
+    integration_result_refs: tuple[str, ...] = ()
+    decision_id: str = ""
+    actor_subject_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class CreditPolicyApplicationResult:
     policy: CreditPolicy
     logs: tuple[dict[str, Any], ...]
@@ -190,6 +211,12 @@ class PolicySimulationApplicationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CreditDecisionApplicationResult:
+    decision: CreditDecision
+    logs: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _PolicyOperationContext:
     tenant_id: str
     actor_subject_id: str
@@ -204,11 +231,13 @@ class DecisionApplicationService:
         environment: str,
         reason_code_catalog_repository: ReasonCodeCatalogRepository | None = None,
         policy_simulation_repository: PolicySimulationRepository | None = None,
+        credit_decision_repository: CreditDecisionRepository | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._repository = repository
         self._reason_code_catalog_repository = reason_code_catalog_repository
         self._policy_simulation_repository = policy_simulation_repository
+        self._credit_decision_repository = credit_decision_repository
         self._audit_publisher = audit_publisher
         self._environment = environment
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -679,31 +708,12 @@ class DecisionApplicationService:
                 trusted_context=trusted_context,
                 required_scope="policy:read",
             )
-            product_type = parse_product_type(command.product_type)
-            channel = PolicyApplicability.create(channels=(command.channel,)).channels[0]
-            effective_at = PolicyApplicability.create(
-                starts_at=command.effective_at,
-            ).starts_at
-            if effective_at is None:
-                raise PolicyNotFoundError()
-            matches = tuple(
-                policy
-                for policy in self._repository.list_published_by_product(
-                    tenant_id=operation_context.tenant_id,
-                    product_type=product_type,
-                )
-                if _policy_applies_to_channel(policy, channel)
-                and _policy_is_effective(policy, effective_at)
+            return self._select_published_policy(
+                tenant_id=operation_context.tenant_id,
+                product_type=command.product_type,
+                channel=command.channel,
+                effective_at=command.effective_at,
             )
-            if len(matches) != 1:
-                if len(matches) > 1:
-                    raise PolicyValidationError(
-                        "vigência conflitante",
-                        code="conflicting_published_policy_window",
-                        field_path="applicability",
-                    )
-                raise PolicyNotFoundError()
-            return matches[0]
         except Exception as error:
             self._publish_rejection_intent(
                 operation="credit_policy.get_published",
@@ -714,6 +724,119 @@ class DecisionApplicationService:
                 context=context,
                 trusted_context=trusted_context,
                 error=error,
+            )
+            raise
+
+    def execute_credit_decision(
+        self,
+        command: ExecuteCreditDecisionCommand,
+        *,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+    ) -> CreditDecisionApplicationResult:
+        started_at = perf_counter()
+        decision: CreditDecision | None = None
+        generated_decision_id: str | None = None
+        decision_audit_completed = False
+        try:
+            operation_context = _require_policy_context(
+                context=context,
+                trusted_context=trusted_context,
+                required_scope="decision:execute",
+            )
+            policy = self._select_published_policy(
+                tenant_id=operation_context.tenant_id,
+                product_type=command.product_type,
+                channel=command.channel,
+                effective_at=command.effective_at,
+            )
+            catalog = self._require_reason_code_catalog_repository().get(
+                tenant_id=operation_context.tenant_id,
+                catalog_id=policy.reason_code_catalog_id,
+                catalog_version_id=policy.reason_code_catalog_version_id,
+            )
+            if catalog is None or catalog.product_type != policy.product_type:
+                raise ReasonCodeCatalogNotFoundError()
+            if not catalog.is_referenceable_for_final_decisions:
+                raise PolicyValidationError(
+                    "decisão exige catálogo publicado",
+                    code="credit_decision_requires_published_catalog",
+                    field_path="reason_code_catalog_version_id",
+                )
+            decision_input = CreditDecisionInput(
+                proposal_id=command.proposal_id,
+                field_values=tuple(command.field_values),
+                integration_result_refs=tuple(command.integration_result_refs),
+            )
+            evaluation = evaluate_policy_case(
+                policy=policy,
+                catalog=catalog,
+                evaluation_id=decision_input.proposal_id,
+                field_values=decision_input.field_values,
+            )
+            generated_decision_id = command.decision_id or f"decision_{uuid4().hex}"
+            decision = CreditDecision.create(
+                decision_id=generated_decision_id,
+                policy=policy,
+                catalog=catalog,
+                decision_input=decision_input,
+                evaluation=evaluation,
+                channel=command.channel,
+                correlation_id=context.correlation_id,
+                decided_at=self._clock(),
+            )
+            repository = self._require_credit_decision_repository()
+
+            def publish_audit_before_commit() -> None:
+                nonlocal decision_audit_completed
+                assert decision is not None
+                self._publish_credit_decision_audit_intent(
+                    decision=decision,
+                    event_type="credit_decision.completed",
+                    actor_subject_id=operation_context.actor_subject_id,
+                    correlation_id=context.correlation_id,
+                )
+                decision_audit_completed = True
+
+            repository.save(decision, before_commit=publish_audit_before_commit)
+            log = self._log_operation(
+                context=context,
+                operation="credit_decision.execute",
+                status="accepted",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                extra={
+                    "decision_id": decision.decision_id,
+                    "proposal_id": decision.proposal_id,
+                    "policy_id": decision.policy_id,
+                    "policy_version_id": decision.policy_version_id,
+                    "product_type": decision.product_type,
+                    "outcome": decision.outcome,
+                    "fingerprint": decision.decision_fingerprint,
+                },
+            )
+            return CreditDecisionApplicationResult(decision=decision, logs=(log,))
+        except Exception as error:
+            skip_decision_id = (
+                decision.decision_id if decision_audit_completed and decision is not None else None
+            )
+            self._publish_credit_decision_rejection_intent(
+                operation="credit_decision.execute",
+                command=command,
+                context=context,
+                trusted_context=trusted_context,
+                error=error,
+                skip_decision_id=skip_decision_id,
+                fallback_decision_id=generated_decision_id,
+            )
+            self._log_operation(
+                context=context,
+                operation="credit_decision.execute",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                error_type=type(error).__name__,
+                extra={"error_code": getattr(error, "code", type(error).__name__)},
             )
             raise
 
@@ -1238,6 +1361,47 @@ class DecisionApplicationService:
             )
         return self._policy_simulation_repository
 
+    def _require_credit_decision_repository(self) -> CreditDecisionRepository:
+        if self._credit_decision_repository is None:
+            raise PolicyValidationError(
+                "repositório de decisão obrigatório",
+                code="credit_decision_repository_required",
+                field_path="credit_decision_repository",
+            )
+        return self._credit_decision_repository
+
+    def _select_published_policy(
+        self,
+        *,
+        tenant_id: str,
+        product_type: str,
+        channel: str,
+        effective_at: datetime,
+    ) -> CreditPolicy:
+        parsed_product_type = parse_product_type(product_type)
+        parsed_channel = PolicyApplicability.create(channels=(channel,)).channels[0]
+        parsed_effective_at = PolicyApplicability.create(starts_at=effective_at).starts_at
+        if parsed_effective_at is None:
+            raise PolicyNotFoundError()
+        matches = tuple(
+            policy
+            for policy in self._repository.list_published_by_product(
+                tenant_id=tenant_id,
+                product_type=parsed_product_type,
+            )
+            if _policy_applies_to_channel(policy, parsed_channel)
+            and _policy_is_effective(policy, parsed_effective_at)
+        )
+        if len(matches) != 1:
+            if len(matches) > 1:
+                raise PolicyValidationError(
+                    "vigência conflitante",
+                    code="conflicting_published_policy_window",
+                    field_path="applicability",
+                )
+            raise PolicyNotFoundError()
+        return matches[0]
+
     def _publish_audit_intent(
         self,
         *,
@@ -1298,6 +1462,30 @@ class DecisionApplicationService:
                 policy_version_id=simulation.policy_version_id,
                 correlation_id=correlation_id,
                 safe_details=_policy_simulation_safe_details(simulation),
+            )
+        )
+
+    def _publish_credit_decision_audit_intent(
+        self,
+        *,
+        decision: CreditDecision,
+        event_type: str,
+        actor_subject_id: str,
+        correlation_id: str,
+    ) -> None:
+        self._audit_publisher.publish(
+            CreditDecisionAuditIntent(
+                event_type=event_type,
+                tenant_id=decision.tenant_id,
+                actor_subject_id=actor_subject_id,
+                decision_id=decision.decision_id,
+                proposal_id=decision.proposal_id,
+                policy_id=decision.policy_id,
+                policy_version_id=decision.policy_version_id,
+                reason_code_catalog_id=decision.reason_code_catalog_id,
+                reason_code_catalog_version_id=decision.reason_code_catalog_version_id,
+                correlation_id=correlation_id,
+                safe_details=_credit_decision_safe_details(decision),
             )
         )
 
@@ -1392,6 +1580,58 @@ class DecisionApplicationService:
                         "case_count": _safe_case_count(command),
                         "non_production": "true",
                         "operation": operation,
+                        "rejection_reason": getattr(error, "code", type(error).__name__),
+                        "status": "rejected",
+                    },
+                )
+            )
+        except Exception:
+            return
+
+    def _publish_credit_decision_rejection_intent(
+        self,
+        *,
+        operation: str,
+        command: Any,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+        error: Exception,
+        skip_decision_id: str | None = None,
+        fallback_decision_id: str | None = None,
+    ) -> None:
+        decision_id = _safe_credit_decision_identifier(
+            getattr(command, "decision_id", None) or fallback_decision_id,
+            fallback="unknown_credit_decision",
+        )
+        if skip_decision_id is not None and decision_id == skip_decision_id:
+            return
+        tenant_id = _trusted_tenant_id_or_unknown(trusted_context)
+        actor_subject_id = _trusted_actor_subject_id_or_unknown(trusted_context)
+        correlation_id = _safe_correlation_id(
+            context.correlation_id,
+            fallback="corr_unknown0000",
+        )
+        try:
+            self._audit_publisher.publish(
+                CreditDecisionAuditIntent(
+                    event_type="credit_decision.rejected",
+                    tenant_id=tenant_id,
+                    actor_subject_id=actor_subject_id,
+                    decision_id=decision_id,
+                    proposal_id=_safe_proposal_identifier(
+                        getattr(command, "proposal_id", None),
+                        fallback="unknown_proposal",
+                    ),
+                    policy_id="unknown_policy",
+                    policy_version_id="unknown_policy_version",
+                    reason_code_catalog_id="unknown_reason_code_catalog",
+                    reason_code_catalog_version_id="unknown_reason_code_catalog_version",
+                    correlation_id=correlation_id,
+                    safe_details={
+                        "operation": operation,
+                        "product_type": _safe_product_type_value(
+                            getattr(command, "product_type", None),
+                        ),
                         "rejection_reason": getattr(error, "code", type(error).__name__),
                         "status": "rejected",
                     },
@@ -1562,6 +1802,33 @@ def _safe_simulation_identifier(value: object, *, fallback: str) -> str:
         return fallback
 
 
+def _safe_credit_decision_identifier(value: object, *, fallback: str) -> str:
+    if not isinstance(value, str) or not value:
+        return fallback
+    try:
+        return validate_credit_decision_id(value)
+    except Exception:
+        return fallback
+
+
+def _safe_proposal_identifier(value: object, *, fallback: str) -> str:
+    if not isinstance(value, str):
+        return fallback
+    try:
+        return validate_proposal_id(value)
+    except Exception:
+        return fallback
+
+
+def _safe_product_type_value(value: object) -> str:
+    if not isinstance(value, str):
+        return "unknown_product"
+    try:
+        return parse_product_type(value)
+    except Exception:
+        return "unknown_product"
+
+
 def _safe_reason_code_catalog_identifier(value: object, *, fallback: str) -> str:
     if not isinstance(value, str):
         return fallback
@@ -1619,6 +1886,23 @@ def _policy_simulation_safe_details(
         "outcome_request_more_data": str(simulation.summary.count_for("request_more_data")),
         "outcome_unable_to_decide": str(simulation.summary.count_for("unable_to_decide")),
         "status": simulation.status,
+    }
+
+
+def _credit_decision_safe_details(decision: CreditDecision) -> dict[str, str]:
+    return {
+        "factor_count": str(len(decision.factor_refs)),
+        "fingerprint": decision.decision_fingerprint,
+        "operation": "credit_decision.execute",
+        "outcome": decision.outcome,
+        "reason_code_catalog_id": decision.reason_code_catalog_id,
+        "reason_code_catalog_version_id": decision.reason_code_catalog_version_id,
+        "policy_revision": str(decision.policy_revision),
+        "product_type": decision.product_type,
+        "reason_code_count": str(len(decision.reason_code_refs)),
+        "status": "completed",
+        "triggered_rule_count": str(len(decision.triggered_rule_ids)),
+        "validation_issue_count": str(len(decision.validation_issues)),
     }
 
 

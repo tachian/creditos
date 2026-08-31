@@ -38,8 +38,26 @@ class PolicySimulationAuditIntent:
     safe_details: dict[str, str]
 
 
+@dataclass(frozen=True, slots=True)
+class CreditDecisionAuditIntent:
+    event_type: str
+    tenant_id: str
+    actor_subject_id: str
+    decision_id: str
+    proposal_id: str
+    policy_id: str
+    policy_version_id: str
+    reason_code_catalog_id: str
+    reason_code_catalog_version_id: str
+    correlation_id: str
+    safe_details: dict[str, str]
+
+
 DecisionAuditIntent = (
-    CreditPolicyAuditIntent | ReasonCodeCatalogAuditIntent | PolicySimulationAuditIntent
+    CreditPolicyAuditIntent
+    | ReasonCodeCatalogAuditIntent
+    | PolicySimulationAuditIntent
+    | CreditDecisionAuditIntent
 )
 
 

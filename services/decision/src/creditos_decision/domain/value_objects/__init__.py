@@ -1,3 +1,11 @@
+from creditos_decision.domain.value_objects.credit_decision import (
+    CreditDecisionApprovedTerms,
+    CreditDecisionInput,
+    CreditDecisionInputFieldValue,
+    input_fingerprint_for,
+    validate_credit_decision_id,
+    validate_proposal_id,
+)
 from creditos_decision.domain.value_objects.policy import (
     PolicyApplicability,
     PolicyChangelogEntry,
@@ -7,6 +15,10 @@ from creditos_decision.domain.value_objects.policy import (
     validate_correlation_id,
     validate_policy_id,
     validate_policy_version_id,
+)
+from creditos_decision.domain.value_objects.policy_evaluation import (
+    PolicyEvaluationIssue,
+    PolicyEvaluationResult,
 )
 from creditos_decision.domain.value_objects.policy_simulation import (
     PolicySimulationCaseResult,
@@ -34,10 +46,15 @@ from creditos_decision.domain.value_objects.reason_codes import (
 )
 
 __all__ = [
+    "CreditDecisionApprovedTerms",
+    "CreditDecisionInput",
+    "CreditDecisionInputFieldValue",
     "ExplainableFactor",
     "PolicyApplicability",
     "PolicyChangelogEntry",
     "PolicyCriterion",
+    "PolicyEvaluationIssue",
+    "PolicyEvaluationResult",
     "PolicyLimit",
     "PolicyRule",
     "PolicySimulationCaseResult",
@@ -55,11 +72,14 @@ __all__ = [
     "ReasonCodeCatalogStatus",
     "ReasonCodeSeverity",
     "ReasonCodeStatus",
+    "input_fingerprint_for",
     "parse_reason_code_catalog_status",
     "validate_reason_code_catalog_id",
     "validate_reason_code_catalog_version_id",
     "validate_correlation_id",
+    "validate_credit_decision_id",
     "validate_policy_id",
     "validate_policy_simulation_id",
     "validate_policy_version_id",
+    "validate_proposal_id",
 ]

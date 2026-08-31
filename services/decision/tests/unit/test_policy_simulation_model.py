@@ -9,6 +9,7 @@ from creditos_decision.domain.value_objects import (
     ExplainableFactor,
     PolicyApplicability,
     PolicyCriterion,
+    PolicyEvaluationResult,
     PolicyLimit,
     PolicyRule,
     PolicySimulationInputCase,
@@ -94,6 +95,52 @@ def test_policy_simulation_is_non_production_and_explainable() -> None:
     assert result.reason_code_catalog_version_id == catalog.catalog_version_id
 
 
+def test_policy_simulation_evaluates_each_case_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def recording_evaluate_policy_case(
+        *,
+        policy: CreditPolicy,
+        catalog: ReasonCodeCatalog,
+        evaluation_id: str,
+        field_values: object,
+    ) -> PolicyEvaluationResult:
+        calls.append(evaluation_id)
+        return PolicyEvaluationResult(
+            evaluation_id=evaluation_id,
+            outcome="reject",
+            triggered_rule_ids=("rule_low_income",),
+            reason_code_refs=("rc_low_income",),
+            factor_refs=("factor_monthly_income",),
+        )
+
+    monkeypatch.setattr(
+        "creditos_decision.domain.entities.policy_simulation.evaluate_policy_case",
+        recording_evaluate_policy_case,
+    )
+
+    result = PolicySimulation.run(
+        simulation_id="sim_personal_credit_single_eval",
+        policy=_policy(),
+        catalog=_catalog(),
+        cases=(
+            PolicySimulationInputCase.create(
+                case_id="case_low_income_001",
+                values={
+                    "monthly_income_units": 200_000,
+                    "requested_amount_units": 700_000,
+                    "requested_installments": 12,
+                },
+            ),
+        ),
+        correlation_id="corr_1234567890abcdef",
+        now=NOW,
+    )
+
+    assert calls == ["case_low_income_001"]
+    assert result.case_results[0].outcome == "reject"
+
+
 def test_policy_simulation_result_cannot_be_marked_as_production() -> None:
     with pytest.raises(PolicyValidationError) as error:
         PolicySimulationResult.restore(
@@ -137,6 +184,53 @@ def test_policy_simulation_rejects_fields_not_used_by_policy() -> None:
         )
 
     assert error.value.code == "unsupported_policy_simulation_field_for_policy"
+
+
+def test_policy_simulation_remaps_catalog_mismatch_to_simulation_specific_codes() -> None:
+    with pytest.raises(PolicyValidationError) as mismatch_error:
+        PolicySimulation.run(
+            simulation_id="sim_personal_credit_catalog_mismatch",
+            policy=_policy(),
+            catalog=_catalog(catalog_id="rcc_personal_credit_alternative"),
+            cases=(
+                PolicySimulationInputCase.create(
+                    case_id="case_catalog_mismatch",
+                    values={
+                        "monthly_income_units": 300_000,
+                        "requested_amount_units": 700_000,
+                        "requested_installments": 12,
+                    },
+                ),
+            ),
+            correlation_id="corr_1234567890abcdef",
+            now=NOW,
+        )
+
+    assert mismatch_error.value.code == "policy_simulation_catalog_provenance_mismatch"
+
+
+def test_policy_simulation_issue_paths_include_case_identity() -> None:
+    result = PolicySimulation.run(
+        simulation_id="sim_personal_credit_case_paths",
+        policy=_policy(),
+        catalog=_catalog(),
+        cases=(
+            PolicySimulationInputCase.create(
+                case_id="case_missing_limit_field",
+                values={
+                    "monthly_income_units": 300_000,
+                    "requested_amount_units": 700_000,
+                },
+            ),
+        ),
+        correlation_id="corr_1234567890abcdef",
+        now=NOW,
+    )
+
+    assert result.status == "completed_with_issues"
+    assert result.case_results[0].validation_issues[0].field_path == (
+        "cases.case_missing_limit_field.limits.requested_installments"
+    )
 
 
 def test_policy_simulation_returns_issue_for_conflicting_rule_outcomes() -> None:
@@ -309,10 +403,14 @@ def _policy() -> CreditPolicy:
     )
 
 
-def _catalog() -> ReasonCodeCatalog:
+def _catalog(
+    *,
+    catalog_id: str = "rcc_personal_credit_default",
+    catalog_version_id: str = "rccver_personal_credit_default_v1",
+) -> ReasonCodeCatalog:
     return ReasonCodeCatalog.create_draft(
-        catalog_id="rcc_personal_credit_default",
-        catalog_version_id="rccver_personal_credit_default_v1",
+        catalog_id=catalog_id,
+        catalog_version_id=catalog_version_id,
         tenant_id="tenant_alpha",
         owner_subject_id="user_credit_manager",
         product_type="personal_credit",

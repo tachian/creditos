@@ -1,4 +1,8 @@
+from creditos_decision.application.ports.credit_decision_repository import (
+    CreditDecisionRepository,
+)
 from creditos_decision.application.ports.credit_policy_audit_publisher import (
+    CreditDecisionAuditIntent,
     CreditPolicyAuditIntent,
     CreditPolicyAuditPublisher,
     DecisionAuditIntent,
@@ -14,6 +18,8 @@ from creditos_decision.application.ports.reason_code_catalog_repository import (
 )
 
 __all__ = [
+    "CreditDecisionAuditIntent",
+    "CreditDecisionRepository",
     "CreditPolicyAuditIntent",
     "CreditPolicyAuditPublisher",
     "CreditPolicyRepository",
