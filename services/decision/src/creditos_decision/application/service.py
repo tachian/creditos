@@ -826,7 +826,7 @@ class DecisionApplicationService:
                 extra={
                     "channel": decision.channel,
                     "decision_id": decision.decision_id,
-                    "fallback_action": decision.fallback_action or "",
+                    "fallback_action": decision.fallback_action,
                     "proposal_id": decision.proposal_id,
                     "policy_id": decision.policy_id,
                     "policy_version_id": decision.policy_version_id,
