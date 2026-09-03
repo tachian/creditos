@@ -21,6 +21,7 @@ from creditos_decision.domain.value_objects.policy import (
     PolicyOutcome,
     _parse_enum,
     _validate_technical_id,
+    parse_policy_fallback_action,
     parse_product_type,
     validate_correlation_id,
     validate_policy_id,
@@ -60,6 +61,8 @@ class CreditDecision:
     correlation_id: str
     decision_fingerprint: str
     approved_terms: CreditDecisionApprovedTerms | None = None
+    fallback_action: str | None = None
+    required_data_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.policy_revision < 1:
@@ -129,6 +132,17 @@ class CreditDecision:
                 field_path="integration_result_refs",
             ),
         )
+        if self.fallback_action is not None:
+            object.__setattr__(
+                self,
+                "fallback_action",
+                parse_policy_fallback_action(self.fallback_action),
+            )
+        object.__setattr__(
+            self,
+            "required_data_refs",
+            _validate_unique_ids(self.required_data_refs, field_path="required_data_refs"),
+        )
         object.__setattr__(
             self,
             "input_fingerprint",
@@ -149,11 +163,11 @@ class CreditDecision:
                 code="credit_decision_approved_terms_required",
                 field_path="approved_terms",
             )
-        if self.outcome == PolicyOutcome.APPROVE_WITH_CHANGES.value:
+        if self.outcome == PolicyOutcome.APPROVE_WITH_CHANGES.value and self.approved_terms is None:
             raise PolicyValidationError(
-                "aprovação com alterações exige modelo explícito de termos ajustados",
-                code="credit_decision_approve_with_changes_not_supported",
-                field_path="outcome",
+                "aprovação com alterações exige termos ajustados",
+                code="credit_decision_adjusted_terms_required",
+                field_path="approved_terms",
             )
         expected_fingerprint = _compute_decision_fingerprint(self)
         if self.decision_fingerprint != expected_fingerprint:
@@ -209,17 +223,22 @@ class CreditDecision:
                 code="credit_decision_evaluation_mismatch",
                 field_path="evaluation_id",
             )
-        if evaluation.outcome == PolicyOutcome.APPROVE_WITH_CHANGES.value:
-            raise PolicyValidationError(
-                "aprovação com alterações exige modelo explícito de termos ajustados",
-                code="credit_decision_approve_with_changes_not_supported",
-                field_path="outcome",
-            )
         approved_terms = (
             CreditDecisionApprovedTerms.from_decision_input(decision_input)
             if evaluation.outcome == PolicyOutcome.APPROVE.value
             else None
         )
+        if evaluation.outcome == PolicyOutcome.APPROVE_WITH_CHANGES.value:
+            approved_terms = CreditDecisionApprovedTerms.adjusted_from_policy_limits(
+                decision_input,
+                policy.limits,
+            )
+            if approved_terms is None:
+                raise PolicyValidationError(
+                    "aprovação com alterações exige termos ajustados",
+                    code="credit_decision_adjusted_terms_required",
+                    field_path="approved_terms",
+                )
         if evaluation.outcome == PolicyOutcome.APPROVE.value and approved_terms is None:
             raise PolicyValidationError(
                 "aprovação exige termos aprovados completos",
@@ -251,6 +270,8 @@ class CreditDecision:
             input_fingerprint=input_fingerprint,
             correlation_id=validated_correlation_id,
             approved_terms=approved_terms,
+            fallback_action=evaluation.fallback_action,
+            required_data_refs=evaluation.required_data_refs,
             decision_fingerprint=_compute_decision_fingerprint_from_parts(
                 tenant_id=policy.tenant_id,
                 proposal_id=decision_input.proposal_id,
@@ -269,6 +290,8 @@ class CreditDecision:
                 integration_result_refs=decision_input.integration_result_refs,
                 input_fingerprint=input_fingerprint,
                 approved_terms=approved_terms,
+                fallback_action=evaluation.fallback_action,
+                required_data_refs=evaluation.required_data_refs,
             ),
         )
 
@@ -292,6 +315,8 @@ def _compute_decision_fingerprint(decision: CreditDecision) -> str:
         integration_result_refs=decision.integration_result_refs,
         input_fingerprint=decision.input_fingerprint,
         approved_terms=decision.approved_terms,
+        fallback_action=decision.fallback_action,
+        required_data_refs=decision.required_data_refs,
     )
 
 
@@ -314,6 +339,8 @@ def _compute_decision_fingerprint_from_parts(
     integration_result_refs: tuple[str, ...],
     input_fingerprint: str,
     approved_terms: CreditDecisionApprovedTerms | None,
+    fallback_action: str | None,
+    required_data_refs: tuple[str, ...],
 ) -> str:
     approved_terms_payload = None
     if approved_terms is not None:
@@ -336,10 +363,12 @@ def _compute_decision_fingerprint_from_parts(
         "reason_code_catalog_id": reason_code_catalog_id,
         "reason_code_catalog_version_id": reason_code_catalog_version_id,
         "reason_code_refs": sorted(reason_code_refs),
+        "required_data_refs": sorted(required_data_refs),
         "tenant_id": tenant_id,
         "triggered_rule_ids": sorted(triggered_rule_ids),
         "validation_issue_codes": sorted(issue.code for issue in validation_issues),
         "approved_terms": approved_terms_payload,
+        "fallback_action": fallback_action,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()

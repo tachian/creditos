@@ -83,6 +83,22 @@ A execução determinística de decisão adiciona o primeiro fluxo produtivo int
 
 Ficam fora desta etapa: API HTTP/gRPC real, NATS JetStream, outbox transacional, banco real, callbacks/webhooks, Reporting, consulta pública de decisão, IA consultiva e chamadas diretas ao Integration Service ou fornecedores externos.
 
+## Story 4.6
+
+O tratamento de propostas inconclusivas sem fila manual adiciona fallback governado e rastreável:
+
+- `fallback_action` passa a fazer parte da política versionada, com valores permitidos `request_more_data`, `unable_to_decide` e `reject_by_policy`;
+- `request_additional_data` do épico é representado internamente pelo outcome governado existente `request_more_data`, evitando duplicidade semântica;
+- políticas publicadas incluem o fallback no fingerprint governado, exigindo nova versão/revisão para mudança de comportamento;
+- tentativas de usar `manual_review`, fila manual, `human_override` ou aliases equivalentes são rejeitadas no MVP;
+- lacunas de dados, ausência de regra e conflitos geram outcome controlado, nunca aprovação implícita;
+- `reject_by_policy` só produz outcome `reject` quando há condição governada e reason code compatível no catálogo;
+- `approve_with_changes` passa a ser permitido somente com `approved_terms` completos, explicitamente derivados dos limites da política e diferentes dos `requested_terms`;
+- auditoria e logs incluem outcome, fallback, contagem/referências seguras de dados requeridos, policy/catalog refs, correlation ID e fingerprint, mantendo payload omitido;
+- os dados registrados preparam métricas futuras de funil por tenant, produto, canal, política, outcome e fallback sem expor PII.
+
+Ficam fora desta etapa: contrato público de resposta explicável, dashboards, Reporting Service, Automated Review Service, API HTTP/gRPC real, NATS JetStream, banco real, outbox e integrações externas reais.
+
 ## Arquitetura
 
 O serviço segue DDD + arquitetura hexagonal:

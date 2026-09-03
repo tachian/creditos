@@ -15,6 +15,7 @@ from creditos_decision.domain.value_objects.policy import (
     _validate_rule_value,
     _validate_safe_text,
     _validate_technical_id,
+    parse_policy_fallback_action,
     validate_correlation_id,
     validate_policy_id,
     validate_policy_version_id,
@@ -184,6 +185,8 @@ class PolicySimulationCaseResult:
     reason_code_refs: tuple[str, ...]
     factor_refs: tuple[str, ...]
     validation_issues: tuple[PolicyValidationIssue, ...] = ()
+    fallback_action: str | None = None
+    required_data_refs: tuple[str, ...] = ()
     simulation: bool = True
     non_production: bool = True
 
@@ -229,6 +232,20 @@ class PolicySimulationCaseResult:
             self,
             "factor_refs",
             _validate_unique_ids(self.factor_refs, field_path="case_results.factor_refs"),
+        )
+        if self.fallback_action is not None:
+            object.__setattr__(
+                self,
+                "fallback_action",
+                parse_policy_fallback_action(self.fallback_action),
+            )
+        object.__setattr__(
+            self,
+            "required_data_refs",
+            _validate_unique_ids(
+                self.required_data_refs,
+                field_path="case_results.required_data_refs",
+            ),
         )
         object.__setattr__(
             self,

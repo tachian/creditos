@@ -10,6 +10,7 @@ from creditos_decision.domain.value_objects import (
     PolicyApplicability,
     PolicyChangelogEntry,
     PolicyCriterion,
+    PolicyFallbackAction,
     PolicyLimit,
     PolicyRule,
 )
@@ -154,6 +155,48 @@ def test_published_policy_snapshot_is_immutable() -> None:
                 ),
             ),
         )
+
+
+def test_policy_fallback_action_is_governed_and_fingerprinted() -> None:
+    request_more_data = PolicyFallbackAction.create(action="request_more_data")
+    unable_to_decide = PolicyFallbackAction.create(action="unable_to_decide")
+
+    assert request_more_data.action == "request_more_data"
+    assert unable_to_decide.action == "unable_to_decide"
+
+    default_policy = _draft_policy()
+    explicit_same_policy = _draft_policy(fallback_action=request_more_data)
+    unable_policy = _draft_policy(fallback_action=unable_to_decide)
+
+    assert default_policy.fallback_action == request_more_data
+    assert explicit_same_policy._governed_fingerprint == default_policy._governed_fingerprint
+    assert unable_policy._governed_fingerprint != default_policy._governed_fingerprint
+
+
+@pytest.mark.parametrize(
+    "fallback_action",
+    [
+        "manual_review",
+        "human_override",
+        "manual_queue",
+        "request_additional_data",
+    ],
+)
+def test_policy_fallback_rejects_manual_review_override_and_aliases(
+    fallback_action: str,
+) -> None:
+    with pytest.raises(PolicyValidationError, match="IA pode atuar apenas"):
+        PolicyFallbackAction.create(action=fallback_action)
+
+
+def test_policy_fallback_rejects_reason_codes_for_non_reject_actions() -> None:
+    with pytest.raises(PolicyValidationError) as error:
+        PolicyFallbackAction.create(
+            action="request_more_data",
+            reason_code_refs=("rc_request_more_data",),
+        )
+
+    assert error.value.code == "unsupported_fallback_reason_code_ref"
 
 
 def test_policy_model_rejects_unsupported_product_and_sensitive_or_arbitrary_fields() -> None:
@@ -316,7 +359,10 @@ def test_operator_value_semantics_and_applicability_dates_are_validated() -> Non
         )
 
 
-def _draft_policy() -> CreditPolicy:
+def _draft_policy(
+    *,
+    fallback_action: PolicyFallbackAction | None = None,
+) -> CreditPolicy:
     return CreditPolicy.create_draft(
         policy_id="pol_personal_credit_default",
         policy_version_id="polver_personal_credit_default_v1",
@@ -329,6 +375,7 @@ def _draft_policy() -> CreditPolicy:
         rules=(_rule(),),
         criteria=(_criterion(),),
         limits=(_limit(),),
+        fallback_action=fallback_action,
         now=NOW,
         actor_subject_id="user_credit_manager",
         correlation_id="corr_1234567890abcdef",
