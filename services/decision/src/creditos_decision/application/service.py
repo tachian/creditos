@@ -46,6 +46,7 @@ from creditos_decision.domain.value_objects import (
     PolicyFallbackAction,
     PolicyLimit,
     PolicyRule,
+    PolicySimulationCaseResult,
     PolicySimulationInputCase,
     ReasonCode,
     validate_correlation_id,
@@ -817,31 +818,34 @@ class DecisionApplicationService:
 
             duration_ms = _duration_ms(started_at)
             repository.save(decision, before_commit=publish_audit_before_commit)
+            duration_ms = _duration_ms(started_at)
+            extra: dict[str, Any] = {
+                "channel": decision.channel,
+                "decision_id": decision.decision_id,
+                "proposal_id": decision.proposal_id,
+                "policy_id": decision.policy_id,
+                "policy_version_id": decision.policy_version_id,
+                "product_type": decision.product_type,
+                "reason_code_catalog_id": decision.reason_code_catalog_id,
+                "reason_code_catalog_version_id": decision.reason_code_catalog_version_id,
+                "reason_code_refs": tuple(sorted(decision.reason_code_refs)),
+                "required_data_count": len(decision.required_data_refs),
+                "required_data_refs": tuple(sorted(decision.required_data_refs)),
+                "outcome": decision.outcome,
+                "fingerprint": decision.decision_fingerprint,
+                "validation_issue_codes": tuple(
+                    sorted({issue.code for issue in decision.validation_issues})
+                ),
+            }
+            if decision.fallback_action is not None:
+                extra["fallback_action"] = decision.fallback_action
             log = self._log_operation(
                 context=context,
                 operation="credit_decision.execute",
                 status="accepted",
                 duration_ms=duration_ms,
                 payload=command,
-                extra={
-                    "channel": decision.channel,
-                    "decision_id": decision.decision_id,
-                    "fallback_action": decision.fallback_action,
-                    "proposal_id": decision.proposal_id,
-                    "policy_id": decision.policy_id,
-                    "policy_version_id": decision.policy_version_id,
-                    "product_type": decision.product_type,
-                    "reason_code_catalog_id": decision.reason_code_catalog_id,
-                    "reason_code_catalog_version_id": decision.reason_code_catalog_version_id,
-                    "reason_code_refs": tuple(sorted(decision.reason_code_refs)),
-                    "required_data_count": len(decision.required_data_refs),
-                    "required_data_refs": tuple(sorted(decision.required_data_refs)),
-                    "outcome": decision.outcome,
-                    "fingerprint": decision.decision_fingerprint,
-                    "validation_issue_codes": tuple(
-                        sorted({issue.code for issue in decision.validation_issues})
-                    ),
-                },
+                extra=extra,
             )
             return CreditDecisionApplicationResult(decision=decision, logs=(log,))
         except Exception as error:
@@ -1909,10 +1913,10 @@ def _duration_ms(started_at: float) -> float:
 def _policy_simulation_safe_details(
     simulation: PolicySimulationResult,
 ) -> dict[str, str]:
-    fallback_actions = tuple(
-        case_result.fallback_action
+    applied_fallback_actions = tuple(
+        applied_action
         for case_result in simulation.case_results
-        if case_result.fallback_action is not None
+        if (applied_action := _applied_fallback_action(case_result)) is not None
     )
     required_data_case_count = sum(
         1 for case_result in simulation.case_results if case_result.required_data_refs
@@ -1920,15 +1924,15 @@ def _policy_simulation_safe_details(
     return {
         "case_count": str(simulation.summary.total_cases),
         "fallback_action_request_more_data": str(
-            fallback_actions.count(PolicyFallbackActionType.REQUEST_MORE_DATA.value)
+            applied_fallback_actions.count(PolicyFallbackActionType.REQUEST_MORE_DATA.value)
         ),
         "fallback_action_reject_by_policy": str(
-            fallback_actions.count(PolicyFallbackActionType.REJECT_BY_POLICY.value)
+            applied_fallback_actions.count(PolicyFallbackActionType.REJECT_BY_POLICY.value)
         ),
         "fallback_action_unable_to_decide": str(
-            fallback_actions.count(PolicyFallbackActionType.UNABLE_TO_DECIDE.value)
+            applied_fallback_actions.count(PolicyFallbackActionType.UNABLE_TO_DECIDE.value)
         ),
-        "fallback_applied_count": str(len(fallback_actions)),
+        "fallback_applied_count": str(len(applied_fallback_actions)),
         "issue_count": str(simulation.summary.issue_count),
         "non_production": "true",
         "operation": "policy_simulation.run",
@@ -1940,6 +1944,27 @@ def _policy_simulation_safe_details(
         "required_data_case_count": str(required_data_case_count),
         "status": simulation.status,
     }
+
+
+def _applied_fallback_action(case_result: PolicySimulationCaseResult) -> str | None:
+    if case_result.fallback_action is None:
+        return None
+    if (
+        case_result.fallback_action == PolicyFallbackActionType.REQUEST_MORE_DATA.value
+        and case_result.outcome == "request_more_data"
+    ):
+        return case_result.fallback_action
+    if (
+        case_result.fallback_action == PolicyFallbackActionType.UNABLE_TO_DECIDE.value
+        and case_result.outcome == "unable_to_decide"
+    ):
+        return case_result.fallback_action
+    if (
+        case_result.fallback_action == PolicyFallbackActionType.REJECT_BY_POLICY.value
+        and case_result.outcome == "reject"
+    ):
+        return case_result.fallback_action
+    return None
 
 
 def _credit_decision_safe_details(

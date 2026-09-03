@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Protocol
 
 from creditos_decision.domain.entities.credit_policy import CreditPolicy
@@ -48,33 +48,18 @@ def evaluate_policy_case(
         field_values=field_values,
     )
     issues: list[PolicyEvaluationIssue] = []
-    if not _criteria_are_satisfied(
-        policy=policy,
-        evaluation_id=evaluation_id,
-        field_values=field_values,
-        issues=issues,
-    ):
-        return _fallback_result(
-            policy=policy,
-            catalog=catalog,
-            evaluation_id=evaluation_id,
-            issues=tuple(issues),
-            allow_reject_by_policy=False,
-        )
-    limits_are_satisfied = _limits_are_satisfied(
+    _criteria_are_satisfied(
         policy=policy,
         evaluation_id=evaluation_id,
         field_values=field_values,
         issues=issues,
     )
-    if not limits_are_satisfied and _has_missing_data_issue(issues):
-        return _fallback_result(
-            policy=policy,
-            catalog=catalog,
-            evaluation_id=evaluation_id,
-            issues=tuple(issues),
-            allow_reject_by_policy=_issues_allow_reject_by_policy(issues),
-        )
+    _limits_are_satisfied(
+        policy=policy,
+        evaluation_id=evaluation_id,
+        field_values=field_values,
+        issues=issues,
+    )
 
     triggered_rules = []
     for rule in policy.rules:
@@ -115,6 +100,15 @@ def evaluate_policy_case(
         )
 
     triggered_outcomes = _unique(rule.outcome for rule in triggered_rules)
+    if _has_missing_data_issue(issues):
+        return _fallback_result(
+            policy=policy,
+            catalog=catalog,
+            evaluation_id=evaluation_id,
+            issues=tuple(issues),
+            allow_reject_by_policy=False,
+            triggered_rules=tuple(triggered_rules),
+        )
     if len(triggered_outcomes) > 1:
         return _fallback_result(
             policy=policy,
@@ -136,7 +130,7 @@ def evaluate_policy_case(
         if (
             triggered_outcomes == (PolicyOutcome.APPROVE_WITH_CHANGES.value,)
             and _only_limit_issues(issues)
-            and _has_complete_approval_terms(field_values)
+            and _can_derive_safe_approved_terms(policy=policy, field_values=field_values)
         ):
             reason_code_refs = _unique(
                 reason_code_ref
@@ -160,6 +154,24 @@ def evaluate_policy_case(
             evaluation_id=evaluation_id,
             issues=tuple(issues),
             allow_reject_by_policy=_issues_allow_reject_by_policy(issues),
+            triggered_rules=tuple(triggered_rules),
+        )
+
+    if triggered_outcomes == (
+        PolicyOutcome.APPROVE_WITH_CHANGES.value,
+    ) and not _can_derive_safe_approved_terms(policy=policy, field_values=field_values):
+        return _fallback_result(
+            policy=policy,
+            catalog=catalog,
+            evaluation_id=evaluation_id,
+            issues=(
+                PolicyEvaluationIssue.create(
+                    code="approve_with_changes_adjustment_not_available",
+                    field_path=f"cases.{evaluation_id}.approved_terms",
+                    message="Aprovação com alterações exige termos ajustados pela política",
+                ),
+            ),
+            allow_reject_by_policy=False,
             triggered_rules=tuple(triggered_rules),
         )
 
@@ -441,6 +453,65 @@ def _has_complete_approval_terms(field_values: Sequence[PolicyFieldValue]) -> bo
     )
 
 
+def _can_derive_safe_approved_terms(
+    *,
+    policy: CreditPolicy,
+    field_values: Sequence[PolicyFieldValue],
+) -> bool:
+    requested_amount = _value_for(field_values, "requested_amount_units")
+    requested_installments = _value_for(field_values, "requested_installments")
+    requested_term_days = _value_for(field_values, "requested_term_days")
+    if requested_amount is None or requested_installments is None or requested_term_days is None:
+        return False
+    requested_terms = {
+        "requested_amount_units": requested_amount,
+        "requested_installments": requested_installments,
+        "requested_term_days": requested_term_days,
+    }
+    adjusted_terms = dict(requested_terms)
+    for policy_limit in policy.limits:
+        if policy_limit.limit_type == "max_amount_units":
+            adjusted_terms["requested_amount_units"] = min(
+                adjusted_terms["requested_amount_units"] or 0,
+                policy_limit.value,
+            )
+        elif policy_limit.limit_type == "max_installments":
+            adjusted_terms["requested_installments"] = min(
+                adjusted_terms["requested_installments"] or 0,
+                policy_limit.value,
+            )
+        elif policy_limit.limit_type == "max_term_days":
+            adjusted_terms["requested_term_days"] = min(
+                adjusted_terms["requested_term_days"] or 0,
+                policy_limit.value,
+            )
+    if adjusted_terms == requested_terms:
+        return False
+    return _approval_terms_satisfy_limits(policy=policy, adjusted_terms=adjusted_terms)
+
+
+def _approval_terms_satisfy_limits(
+    *,
+    policy: CreditPolicy,
+    adjusted_terms: Mapping[str, int],
+) -> bool:
+    for policy_limit in policy.limits:
+        mapped = _limit_field_and_operator(policy_limit.limit_type)
+        if mapped is None:
+            continue
+        field_name, operator = mapped
+        case_value = adjusted_terms.get(field_name)
+        if case_value is None:
+            return False
+        if not _matches_operator(
+            operator=operator,
+            case_value=case_value,
+            expected_value=policy_limit.value,
+        ):
+            return False
+    return True
+
+
 def _operator_requires_present_field(*, operator: str, expected_value: int | str | bool) -> bool:
     return operator != PolicyOperator.EXISTS.value or expected_value is True
 
@@ -471,7 +542,7 @@ def _required_data_refs_for(issues: Sequence[PolicyEvaluationIssue]) -> tuple[st
         field_ref = issue.field_path.rsplit(".", 1)[-1]
         if field_ref not in {"rules", "criteria", "limits"} and field_ref not in refs:
             refs.append(field_ref)
-    return tuple(refs)
+    return tuple(sorted(refs))
 
 
 def _value_for(field_values: Sequence[PolicyFieldValue], field_name: str) -> int | None:

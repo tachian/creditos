@@ -197,11 +197,46 @@ class CreditDecisionApprovedTerms:
         )
         if adjusted_terms == requested_terms:
             return None
+        if not _approved_terms_satisfy_policy_limits(adjusted_terms, limits):
+            return None
         return adjusted_terms
 
 
 def validate_decided_at(value: datetime) -> datetime:
     return _validate_aware_utc_datetime(value, field_path="decided_at")
+
+
+def _approved_terms_satisfy_policy_limits(
+    approved_terms: CreditDecisionApprovedTerms,
+    limits: tuple[PolicyLimit, ...],
+) -> bool:
+    for policy_limit in limits:
+        if (
+            policy_limit.limit_type == "max_amount_units"
+            and approved_terms.approved_amount_units > policy_limit.value
+        ):
+            return False
+        if (
+            policy_limit.limit_type == "min_amount_units"
+            and approved_terms.approved_amount_units < policy_limit.value
+        ):
+            return False
+        if (
+            policy_limit.limit_type == "max_installments"
+            and approved_terms.approved_installments > policy_limit.value
+        ):
+            return False
+        if (
+            policy_limit.limit_type == "max_term_days"
+            and approved_terms.approved_term_days > policy_limit.value
+        ):
+            return False
+        if (
+            policy_limit.limit_type == "min_term_days"
+            and approved_terms.approved_term_days < policy_limit.value
+        ):
+            return False
+    return True
 
 
 def input_fingerprint_for(field_values: tuple[CreditDecisionInputFieldValue, ...]) -> str:

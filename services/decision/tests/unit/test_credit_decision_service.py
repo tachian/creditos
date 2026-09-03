@@ -79,6 +79,7 @@ def test_execute_credit_decision_persists_productive_decision_with_minimized_aud
     assert result.decision.reason_code_refs == ("rc_min_income",)
     assert result.decision.factor_refs == ("factor_monthly_income",)
     assert result.logs[0]["payload"] == "[OMITIDO]"
+    assert "fallback_action" not in result.logs[0]["extra"]
     assert "300000" not in str(result.logs[0])
     event = audit.events[-1]
     assert isinstance(event, CreditDecisionAuditIntent)
@@ -91,6 +92,7 @@ def test_execute_credit_decision_persists_productive_decision_with_minimized_aud
     assert event.safe_details["channel"] == "api"
     assert event.safe_details["duration_ms"]
     assert event.safe_details["factor_count"] == "1"
+    assert "fallback_action" not in event.safe_details
     assert event.safe_details["fingerprint"] == result.decision.decision_fingerprint
     assert event.safe_details["operation"] == "credit_decision.execute"
     assert event.safe_details["outcome"] == "approve"
@@ -188,6 +190,7 @@ def test_execute_credit_decision_never_approves_missing_fields_or_conflicting_ru
     assert missing.decision.outcome == "request_more_data"
     assert missing.decision.fallback_action == "request_more_data"
     assert missing.decision.required_data_refs == (
+        "monthly_income_units",
         "requested_installments",
         "requested_term_days",
     )
@@ -198,21 +201,28 @@ def test_execute_credit_decision_never_approves_missing_fields_or_conflicting_ru
     assert missing_event.safe_details["fallback_action"] == "request_more_data"
     assert missing_event.safe_details["channel"] == "api"
     assert missing_event.safe_details["policy_id"] == "pol_personal_credit_default"
-    assert missing_event.safe_details["required_data_count"] == "2"
+    assert missing_event.safe_details["required_data_count"] == "3"
     assert missing_event.safe_details["required_data_refs"] == (
-        "requested_installments,requested_term_days"
+        "monthly_income_units,requested_installments,requested_term_days"
     )
-    assert missing_event.safe_details["validation_issue_codes"] == "missing_limit_field"
+    assert missing_event.safe_details["validation_issue_codes"] == (
+        "missing_limit_field,missing_rule_field,no_policy_rule_triggered"
+    )
     assert "700000" not in str(missing_event.safe_details)
     assert missing.logs[0]["payload"] == "[OMITIDO]"
     assert missing.logs[0]["extra"]["channel"] == "api"
     assert missing.logs[0]["extra"]["fallback_action"] == "request_more_data"
-    assert missing.logs[0]["extra"]["required_data_count"] == 2
+    assert missing.logs[0]["extra"]["required_data_count"] == 3
     assert missing.logs[0]["extra"]["required_data_refs"] == [
+        "monthly_income_units",
         "requested_installments",
         "requested_term_days",
     ]
-    assert missing.logs[0]["extra"]["validation_issue_codes"] == ["missing_limit_field"]
+    assert missing.logs[0]["extra"]["validation_issue_codes"] == [
+        "missing_limit_field",
+        "missing_rule_field",
+        "no_policy_rule_triggered",
+    ]
     assert "700000" not in str(missing.logs[0])
 
     conflict_repository = InMemoryCreditPolicyRepository()

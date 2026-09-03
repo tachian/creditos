@@ -149,6 +149,7 @@ def test_create_policy_validates_reject_by_policy_fallback_reason_codes() -> Non
         )
 
     assert error.value.code == "unknown_reason_code"
+    assert error.value.field_path == "fallback_action.reason_code_refs"
 
 
 def test_update_policy_draft_records_history_and_audit_intent() -> None:

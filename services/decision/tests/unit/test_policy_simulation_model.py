@@ -331,7 +331,7 @@ def test_policy_simulation_returns_fallback_when_any_rule_field_is_missing() -> 
 
 
 def test_policy_simulation_case_result_rejects_manual_fallback_alias() -> None:
-    with pytest.raises(PolicyValidationError, match="IA apenas consultiva"):
+    with pytest.raises(PolicyValidationError, match="IA pode atuar apenas"):
         PolicySimulationCaseResult(
             case_id="case_manual_fallback_alias",
             outcome="unable_to_decide",

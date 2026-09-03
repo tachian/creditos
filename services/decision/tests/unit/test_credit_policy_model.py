@@ -185,7 +185,7 @@ def test_policy_fallback_action_is_governed_and_fingerprinted() -> None:
 def test_policy_fallback_rejects_manual_review_override_and_aliases(
     fallback_action: str,
 ) -> None:
-    with pytest.raises(PolicyValidationError, match="IA apenas consultiva"):
+    with pytest.raises(PolicyValidationError, match="IA pode atuar apenas"):
         PolicyFallbackAction.create(action=fallback_action)
 
 

@@ -218,6 +218,8 @@ TBD
 - `.venv/bin/pytest` — executado também fora do sandbox; resultado: 509 passed, 1 failed por `uv: command not found` em `tests/test_local_harness.py::test_dev_script_harness_check_uses_documented_command`.
 - `.venv/bin/pytest services/decision/tests/unit/test_credit_decision_model.py services/decision/tests/unit/test_credit_decision_service.py services/decision/tests/unit/test_credit_policy_model.py services/decision/tests/unit/test_credit_policy_service.py services/decision/tests/unit/test_policy_simulation_model.py services/decision/tests/unit/test_policy_simulation_service.py` — 73 passed após patches de review.
 - `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/pyright` — passou após patches de review.
+- `.venv/bin/pytest services/decision/tests/unit/test_credit_decision_model.py services/decision/tests/unit/test_credit_decision_service.py services/decision/tests/unit/test_credit_policy_model.py services/decision/tests/unit/test_credit_policy_service.py services/decision/tests/unit/test_policy_simulation_model.py services/decision/tests/unit/test_policy_simulation_service.py` — 77 passed após correções do review GitHub do PR #43.
+- `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/pyright` — passou após correções do review GitHub do PR #43.
 
 ### Completion Notes List
 
@@ -227,6 +229,7 @@ TBD
 - Habilitado `approve_with_changes` somente com `approved_terms` ajustados por limites de política e diferentes dos termos solicitados.
 - Fortalecidos auditoria/logs com fallback, contagem/referências seguras de dados requeridos, policy/catalog refs e fingerprint sem payload bruto.
 - Corrigidos achados de code review: `reject_by_policy` agora exige regra de reprovação acionada e reason code compatível, `approve_with_changes` exige termos completos, ajustes nunca aumentam termos solicitados, `EXISTS=true` ausente vira lacuna, simulação preserva fallback/lacunas e restauração valida enum governado.
+- Corrigidos achados do review GitHub do PR #43: `fallback_action` vazio removido de logs, reason codes de fallback reportam `field_path` correto, mensagem de IA consultiva foi clarificada, `approve_with_changes` rebaixa quando não há ajuste seguro, regras de rejeição explícitas são avaliadas antes de fallback, lacunas de dados são agregadas, duração do log inclui persistência e métricas contam apenas fallback efetivamente aplicado.
 - Atualizado `services/decision/README.md` com comportamento, decisões e limites da Story 4.6.
 - Validações de Story 4.6 passaram no escopo afetado; suíte completa tem falha ambiental local por ausência de `uv` global no `scripts/dev`.
 
@@ -257,3 +260,4 @@ TBD
 
 - 2026-09-02 — Implementada Story 4.6 com fallback governado, tratamento de lacunas/inconclusão, `approve_with_changes` ajustado, auditoria/logs seguros, testes e documentação.
 - 2026-09-03 — Aplicados patches do `bmad-code-review` para corrigir rejeição por fallback sem regra explícita, paridade de simulação, auditoria/logs seguros e validação estrita de fallback.
+- 2026-09-03 — Corrigidos achados Codex/Copilot do PR #43 com regressões de execução determinística, fallback seguro, logs e simulação.

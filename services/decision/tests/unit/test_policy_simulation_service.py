@@ -30,6 +30,7 @@ from creditos_decision.domain.value_objects import (
     ExplainableFactor,
     PolicyApplicability,
     PolicyCriterion,
+    PolicyFallbackAction,
     PolicyLimit,
     PolicyRule,
     PolicySimulationInputCase,
@@ -108,6 +109,49 @@ def test_run_policy_simulation_persists_non_production_result_and_minimized_audi
     }
     assert result.logs[0]["payload"] == "[OMITIDO]"
     assert "200000" not in str(result.logs[0])
+
+
+def test_run_policy_simulation_counts_only_safely_applied_fallbacks() -> None:
+    audit = RecordingAuditPublisher()
+    service = _service(audit=audit)
+    created = service.create_policy_draft(
+        _create_policy_command(
+            fallback_action=PolicyFallbackAction.create(
+                action="reject_by_policy",
+                reason_code_refs=("rc_low_income",),
+            )
+        ),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(),
+    )
+
+    result = service.run_policy_simulation(
+        RunPolicySimulationCommand(
+            simulation_id="sim_reject_fallback_downgraded",
+            policy_id=created.policy.policy_id,
+            policy_version_id=created.policy.policy_version_id,
+            cases=(
+                PolicySimulationInputCase.create(
+                    case_id="case_missing_limit_for_reject_fallback",
+                    values={
+                        "monthly_income_units": 300_000,
+                        "requested_amount_units": 700_000,
+                    },
+                ),
+            ),
+        ),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(),
+    )
+
+    assert result.simulation.case_results[0].outcome == "unable_to_decide"
+    assert result.simulation.case_results[0].fallback_action == "reject_by_policy"
+    assert result.simulation.case_results[0].required_data_refs == ("requested_installments",)
+    assert isinstance(audit.events[-1], PolicySimulationAuditIntent)
+    assert audit.events[-1].safe_details["fallback_applied_count"] == "0"
+    assert audit.events[-1].safe_details["fallback_action_reject_by_policy"] == "0"
+    assert audit.events[-1].safe_details["outcome_unable_to_decide"] == "1"
+    assert audit.events[-1].safe_details["required_data_case_count"] == "1"
 
 
 def test_run_policy_simulation_rejects_empty_dataset_with_log_safe_audit() -> None:
@@ -312,7 +356,10 @@ def _safe_case() -> PolicySimulationInputCase:
     )
 
 
-def _create_policy_command() -> CreateCreditPolicyDraftCommand:
+def _create_policy_command(
+    *,
+    fallback_action: PolicyFallbackAction | None = None,
+) -> CreateCreditPolicyDraftCommand:
     return CreateCreditPolicyDraftCommand(
         policy_id="pol_personal_credit_default",
         policy_version_id="polver_personal_credit_default_v1",
@@ -358,6 +405,7 @@ def _create_policy_command() -> CreateCreditPolicyDraftCommand:
                 value=24,
             ),
         ),
+        fallback_action=fallback_action,
     )
 
 

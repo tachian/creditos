@@ -293,17 +293,22 @@ def test_credit_decision_blocks_approve_with_changes_without_real_adjustment() -
         field_values=decision_input.field_values,
     )
 
-    with pytest.raises(PolicyValidationError, match="termos ajustados"):
-        CreditDecision.create(
-            decision_id="decision_approve_with_changes_001",
-            policy=policy,
-            catalog=catalog,
-            decision_input=decision_input,
-            evaluation=evaluation,
-            channel="api",
-            correlation_id="corr_1234567890abcdef",
-            decided_at=NOW,
-        )
+    assert evaluation.outcome == "unable_to_decide"
+    assert evaluation.validation_issues[0].code == "approve_with_changes_adjustment_not_available"
+
+    decision = CreditDecision.create(
+        decision_id="decision_approve_with_changes_001",
+        policy=policy,
+        catalog=catalog,
+        decision_input=decision_input,
+        evaluation=evaluation,
+        channel="api",
+        correlation_id="corr_1234567890abcdef",
+        decided_at=NOW,
+    )
+
+    assert decision.outcome == "unable_to_decide"
+    assert decision.approved_terms is None
 
 
 def test_credit_decision_allows_approve_with_changes_with_governed_adjusted_terms() -> None:
@@ -388,6 +393,36 @@ def test_credit_decision_adjusted_terms_never_increase_requested_terms() -> None
                 limit_id="limit_min_term_days",
                 limit_type="min_term_days",
                 value=720,
+            ),
+        ),
+    )
+
+    assert adjusted_terms is None
+
+
+def test_credit_decision_adjusted_terms_rejects_remaining_minimum_limit_violation() -> None:
+    decision_input = CreditDecisionInput.create(
+        proposal_id="proposal_remaining_min_violation",
+        values={
+            "monthly_income_units": 300_000,
+            "requested_amount_units": 700_000,
+            "requested_installments": 12,
+            "requested_term_days": 360,
+        },
+    )
+
+    adjusted_terms = CreditDecisionApprovedTerms.adjusted_from_policy_limits(
+        decision_input,
+        (
+            PolicyLimit.create(
+                limit_id="limit_min_amount",
+                limit_type="min_amount_units",
+                value=800_000,
+            ),
+            PolicyLimit.create(
+                limit_id="limit_max_installments",
+                limit_type="max_installments",
+                value=10,
             ),
         ),
     )
@@ -486,7 +521,7 @@ def test_credit_decision_direct_construction_validates_internal_refs() -> None:
 
 
 def test_credit_decision_rejects_restored_manual_fallback_alias() -> None:
-    with pytest.raises(PolicyValidationError, match="IA apenas consultiva"):
+    with pytest.raises(PolicyValidationError, match="IA pode atuar apenas"):
         PolicyEvaluationResult(
             evaluation_id="proposal_manual_fallback_alias",
             outcome="unable_to_decide",
@@ -663,6 +698,83 @@ def test_policy_evaluator_reject_by_policy_rejects_governed_limit_failure() -> N
     assert result.required_data_refs == ()
 
 
+def test_policy_evaluator_reject_by_policy_honors_reject_rule_after_failed_criterion() -> None:
+    result = evaluate_policy_case(
+        policy=_published_policy(
+            rules=(
+                PolicyRule.create(
+                    rule_id="rule_requested_amount_reject",
+                    name="Valor solicitado acima da política",
+                    source_field="requested_amount_units",
+                    operator="gte",
+                    threshold_value=1_000_001,
+                    outcome="reject",
+                    reason_code_refs=("rc_reject_income",),
+                ),
+            ),
+            fallback_action=PolicyFallbackAction.create(
+                action="reject_by_policy",
+                reason_code_refs=("rc_reject_income",),
+            ),
+        ),
+        catalog=_published_catalog(include_reject=True),
+        evaluation_id="proposal_reject_after_criterion",
+        field_values=CreditDecisionInput.create(
+            proposal_id="proposal_reject_after_criterion",
+            values={
+                "requested_amount_units": 1_200_000,
+                "requested_installments": 12,
+                "requested_term_days": 360,
+            },
+        ).field_values,
+    )
+
+    assert result.outcome == "reject"
+    assert result.triggered_rule_ids == ("rule_requested_amount_reject",)
+    assert result.reason_code_refs == ("rc_reject_income",)
+    assert result.validation_issues[0].code == "policy_criterion_not_satisfied"
+
+
+def test_policy_evaluator_rejects_approve_with_changes_with_remaining_minimum_limit_violation() -> (
+    None
+):
+    result = evaluate_policy_case(
+        policy=_published_policy(
+            rules=(_outcome_rule(outcome="approve_with_changes"),),
+            limits=(
+                PolicyLimit.create(
+                    limit_id="limit_min_amount",
+                    limit_type="min_amount_units",
+                    value=800_000,
+                ),
+                PolicyLimit.create(
+                    limit_id="limit_max_installments",
+                    limit_type="max_installments",
+                    value=10,
+                ),
+            ),
+        ),
+        catalog=_published_catalog_for_outcome(
+            outcome="approve_with_changes",
+            reason_code_ref="rc_approve_with_changes",
+        ),
+        evaluation_id="proposal_awc_remaining_min_violation",
+        field_values=CreditDecisionInput.create(
+            proposal_id="proposal_awc_remaining_min_violation",
+            values={
+                "monthly_income_units": 300_000,
+                "requested_amount_units": 700_000,
+                "requested_installments": 12,
+                "requested_term_days": 360,
+            },
+        ).field_values,
+    )
+
+    assert result.outcome == "unable_to_decide"
+    assert result.reason_code_refs == ()
+    assert result.validation_issues[0].code == "policy_limit_not_satisfied"
+
+
 def test_policy_evaluator_reject_by_policy_does_not_reject_without_explicit_reject_rule() -> None:
     result = evaluate_policy_case(
         policy=_published_policy(
@@ -703,8 +815,17 @@ def test_policy_evaluator_supports_governed_outcomes(
     outcome: str,
     reason_code_ref: str,
 ) -> None:
+    policy_limits = None
+    if outcome == "approve_with_changes":
+        policy_limits = (
+            PolicyLimit.create(
+                limit_id="limit_max_installments",
+                limit_type="max_installments",
+                value=10,
+            ),
+        )
     result = evaluate_policy_case(
-        policy=_published_policy(rules=(_outcome_rule(outcome=outcome),)),
+        policy=_published_policy(rules=(_outcome_rule(outcome=outcome),), limits=policy_limits),
         catalog=_published_catalog_for_outcome(outcome=outcome, reason_code_ref=reason_code_ref),
         evaluation_id=f"proposal_{outcome}",
         field_values=CreditDecisionInput.create(

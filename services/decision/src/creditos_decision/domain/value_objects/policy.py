@@ -606,9 +606,10 @@ def parse_policy_fallback_action(value: str) -> str:
         code="unsupported_policy_fallback_action",
         field_path="fallback_action",
         message=(
-            "fallback de política não suportado; use request_more_data, unable_to_decide ou "
-            "reject_by_policy. Revisão manual/override humano não é suportado no MVP; "
-            "IA apenas consultiva e sem decisão final."
+            "fallback de política não suportado; valores aceitos: request_more_data, "
+            "unable_to_decide e reject_by_policy. Revisão manual, override humano e IA como valor "
+            "de fallback decisório não são suportados no MVP; IA pode atuar apenas como apoio "
+            "consultivo"
         ),
     )
 
