@@ -12,6 +12,7 @@ from creditos_decision.domain.value_objects import (
     PolicyEvaluationResult,
     PolicyLimit,
     PolicyRule,
+    PolicySimulationCaseResult,
     PolicySimulationInputCase,
     PolicySimulationResult,
     ReasonCode,
@@ -321,10 +322,24 @@ def test_policy_simulation_returns_fallback_when_any_rule_field_is_missing() -> 
     )
 
     assert result.status == "completed_with_issues"
-    assert result.case_results[0].outcome == "unable_to_decide"
-    assert result.case_results[0].triggered_rule_ids == ()
+    assert result.case_results[0].outcome == "request_more_data"
+    assert result.case_results[0].fallback_action == "request_more_data"
+    assert result.case_results[0].required_data_refs == ("age_years",)
+    assert result.case_results[0].triggered_rule_ids == ("rule_sufficient_income",)
     assert result.case_results[0].reason_code_refs == ()
     assert result.case_results[0].validation_issues[0].code == "missing_rule_field"
+
+
+def test_policy_simulation_case_result_rejects_manual_fallback_alias() -> None:
+    with pytest.raises(PolicyValidationError, match="IA apenas consultiva"):
+        PolicySimulationCaseResult(
+            case_id="case_manual_fallback_alias",
+            outcome="unable_to_decide",
+            triggered_rule_ids=(),
+            reason_code_refs=(),
+            factor_refs=(),
+            fallback_action="manual_review",
+        )
 
 
 def test_policy_simulation_evaluates_exists_false_for_missing_field() -> None:

@@ -181,6 +181,8 @@ def _evaluate_case(
         reason_code_refs=evaluation.reason_code_refs,
         factor_refs=evaluation.factor_refs,
         validation_issues=_to_policy_validation_issues(evaluation.validation_issues),
+        fallback_action=evaluation.fallback_action,
+        required_data_refs=evaluation.required_data_refs,
     )
 
 

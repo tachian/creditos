@@ -88,20 +88,25 @@ def test_execute_credit_decision_persists_productive_decision_with_minimized_aud
     assert event.proposal_id == "proposal_personal_credit_001"
     assert event.reason_code_catalog_id == "rcc_personal_credit_default"
     assert event.reason_code_catalog_version_id == "rccver_personal_credit_default_v1"
-    assert event.safe_details == {
-        "factor_count": "1",
-        "fingerprint": result.decision.decision_fingerprint,
-        "operation": "credit_decision.execute",
-        "outcome": "approve",
-        "policy_revision": str(published_policy.revision),
-        "product_type": "personal_credit",
-        "reason_code_catalog_id": "rcc_personal_credit_default",
-        "reason_code_catalog_version_id": "rccver_personal_credit_default_v1",
-        "reason_code_count": "1",
-        "status": "completed",
-        "triggered_rule_count": "1",
-        "validation_issue_count": "0",
-    }
+    assert event.safe_details["channel"] == "api"
+    assert event.safe_details["duration_ms"]
+    assert event.safe_details["factor_count"] == "1"
+    assert event.safe_details["fingerprint"] == result.decision.decision_fingerprint
+    assert event.safe_details["operation"] == "credit_decision.execute"
+    assert event.safe_details["outcome"] == "approve"
+    assert event.safe_details["policy_id"] == published_policy.policy_id
+    assert event.safe_details["policy_revision"] == str(published_policy.revision)
+    assert event.safe_details["policy_version_id"] == published_policy.policy_version_id
+    assert event.safe_details["product_type"] == "personal_credit"
+    assert event.safe_details["reason_code_catalog_id"] == "rcc_personal_credit_default"
+    assert (
+        event.safe_details["reason_code_catalog_version_id"] == "rccver_personal_credit_default_v1"
+    )
+    assert event.safe_details["reason_code_count"] == "1"
+    assert event.safe_details["reason_code_refs"] == "rc_min_income"
+    assert event.safe_details["status"] == "completed"
+    assert event.safe_details["triggered_rule_count"] == "1"
+    assert event.safe_details["validation_issue_count"] == "0"
 
 
 def test_execute_credit_decision_has_stable_fingerprint_and_controls_duplicate_proposal() -> None:
@@ -159,7 +164,8 @@ def test_execute_credit_decision_has_stable_fingerprint_and_controls_duplicate_p
 
 
 def test_execute_credit_decision_never_approves_missing_fields_or_conflicting_rules() -> None:
-    service = _service(audit=RecordingAuditPublisher())
+    audit = RecordingAuditPublisher()
+    service = _service(audit=audit)
     _create_and_publish_policy(service)
 
     missing = service.execute_credit_decision(
@@ -179,9 +185,35 @@ def test_execute_credit_decision_never_approves_missing_fields_or_conflicting_ru
         context=_context("tenant_alpha"),
         trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
     )
-    assert missing.decision.outcome == "unable_to_decide"
+    assert missing.decision.outcome == "request_more_data"
+    assert missing.decision.fallback_action == "request_more_data"
+    assert missing.decision.required_data_refs == (
+        "requested_installments",
+        "requested_term_days",
+    )
     assert missing.decision.reason_code_refs == ()
     assert missing.decision.validation_issues[0].code == "missing_limit_field"
+    missing_event = audit.events[-1]
+    assert isinstance(missing_event, CreditDecisionAuditIntent)
+    assert missing_event.safe_details["fallback_action"] == "request_more_data"
+    assert missing_event.safe_details["channel"] == "api"
+    assert missing_event.safe_details["policy_id"] == "pol_personal_credit_default"
+    assert missing_event.safe_details["required_data_count"] == "2"
+    assert missing_event.safe_details["required_data_refs"] == (
+        "requested_installments,requested_term_days"
+    )
+    assert missing_event.safe_details["validation_issue_codes"] == "missing_limit_field"
+    assert "700000" not in str(missing_event.safe_details)
+    assert missing.logs[0]["payload"] == "[OMITIDO]"
+    assert missing.logs[0]["extra"]["channel"] == "api"
+    assert missing.logs[0]["extra"]["fallback_action"] == "request_more_data"
+    assert missing.logs[0]["extra"]["required_data_count"] == 2
+    assert missing.logs[0]["extra"]["required_data_refs"] == [
+        "requested_installments",
+        "requested_term_days",
+    ]
+    assert missing.logs[0]["extra"]["validation_issue_codes"] == ["missing_limit_field"]
+    assert "700000" not in str(missing.logs[0])
 
     conflict_repository = InMemoryCreditPolicyRepository()
     conflict_service = _service(

@@ -9,6 +9,7 @@ from creditos_decision.domain.value_objects.policy import (
     PolicyApplicability,
     PolicyChangelogEntry,
     PolicyCriterion,
+    PolicyFallbackAction,
     PolicyLimit,
     PolicyRule,
     parse_policy_status,
@@ -40,6 +41,7 @@ class CreditPolicy:
     rules: tuple[PolicyRule, ...]
     criteria: tuple[PolicyCriterion, ...]
     limits: tuple[PolicyLimit, ...]
+    fallback_action: PolicyFallbackAction
     changelog: tuple[PolicyChangelogEntry, ...]
     created_at: datetime
     updated_at: datetime
@@ -63,6 +65,12 @@ class CreditPolicy:
                 "aplicabilidade inválida",
                 code="invalid_policy_applicability",
                 field_path="applicability",
+            )
+        if not isinstance(self.fallback_action, PolicyFallbackAction):
+            raise PolicyValidationError(
+                "fallback de política inválido",
+                code="invalid_policy_fallback_action",
+                field_path="fallback_action",
             )
         rules = tuple(self.rules)
         criteria = tuple(self.criteria)
@@ -99,6 +107,7 @@ class CreditPolicy:
             rules=rules,
             criteria=criteria,
             limits=limits,
+            fallback_action=self.fallback_action,
         )
         if parsed_status != "draft" and (
             not self._governed_fingerprint or self._governed_fingerprint != fingerprint
@@ -123,6 +132,7 @@ class CreditPolicy:
         object.__setattr__(self, "rules", rules)
         object.__setattr__(self, "criteria", criteria)
         object.__setattr__(self, "limits", limits)
+        object.__setattr__(self, "fallback_action", self.fallback_action)
         object.__setattr__(self, "changelog", changelog)
         object.__setattr__(self, "_governed_fingerprint", fingerprint)
 
@@ -146,6 +156,7 @@ class CreditPolicy:
         correlation_id: str,
         change_summary: str,
         version: int = 1,
+        fallback_action: PolicyFallbackAction | None = None,
     ) -> CreditPolicy:
         revision = 1
         changelog = (
@@ -174,6 +185,7 @@ class CreditPolicy:
             rules=rules,
             criteria=criteria,
             limits=limits,
+            fallback_action=fallback_action,
             changelog=changelog,
             created_at=now,
             updated_at=now,
@@ -200,6 +212,7 @@ class CreditPolicy:
         changelog: tuple[PolicyChangelogEntry, ...],
         created_at: datetime,
         updated_at: datetime,
+        fallback_action: PolicyFallbackAction | None = None,
     ) -> CreditPolicy:
         if version < 1:
             raise PolicyValidationError(
@@ -218,6 +231,13 @@ class CreditPolicy:
                 "aplicabilidade inválida",
                 code="invalid_policy_applicability",
                 field_path="applicability",
+            )
+        parsed_fallback_action = fallback_action or PolicyFallbackAction.create()
+        if not isinstance(parsed_fallback_action, PolicyFallbackAction):
+            raise PolicyValidationError(
+                "fallback de política inválido",
+                code="invalid_policy_fallback_action",
+                field_path="fallback_action",
             )
         _require_non_empty_tuple(rules, field_path="rules")
         _require_non_empty_tuple(criteria, field_path="criteria")
@@ -255,6 +275,7 @@ class CreditPolicy:
             rules=tuple(rules),
             criteria=tuple(criteria),
             limits=tuple(limits),
+            fallback_action=parsed_fallback_action,
             changelog=tuple(changelog),
             created_at=created_at,
             updated_at=updated_at,
@@ -268,6 +289,7 @@ class CreditPolicy:
                 rules=tuple(rules),
                 criteria=tuple(criteria),
                 limits=tuple(limits),
+                fallback_action=parsed_fallback_action,
             ),
         )
 
@@ -290,6 +312,7 @@ class CreditPolicy:
         reason_code_catalog_version_id: str,
         owner_subject_id: str | None = None,
         product_type: str | None = None,
+        fallback_action: PolicyFallbackAction | None = None,
     ) -> CreditPolicy:
         if self.status != "draft":
             raise PolicyImmutableError("política não pode ser alterada")
@@ -304,6 +327,13 @@ class CreditPolicy:
                 "aplicabilidade inválida",
                 code="invalid_policy_applicability",
                 field_path="applicability",
+            )
+        parsed_fallback_action = fallback_action or self.fallback_action
+        if not isinstance(parsed_fallback_action, PolicyFallbackAction):
+            raise PolicyValidationError(
+                "fallback de política inválido",
+                code="invalid_policy_fallback_action",
+                field_path="fallback_action",
             )
         _validate_aware_utc_datetime(now, field_path="updated_at")
         next_revision = self.revision + 1
@@ -327,6 +357,7 @@ class CreditPolicy:
             rules=tuple(rules),
             criteria=tuple(criteria),
             limits=tuple(limits),
+            fallback_action=parsed_fallback_action,
             changelog=(*self.changelog, changelog_entry),
             updated_at=now,
         )
@@ -379,6 +410,7 @@ class CreditPolicy:
             rules=self.rules,
             criteria=self.criteria,
             limits=self.limits,
+            fallback_action=self.fallback_action,
             changelog=(*self.changelog, changelog_entry),
             created_at=self.created_at,
             updated_at=now,
@@ -401,6 +433,7 @@ class CreditPolicy:
         change_summary: str,
         owner_subject_id: str | None = None,
         product_type: str | None = None,
+        fallback_action: PolicyFallbackAction | None = None,
     ) -> CreditPolicy:
         if self.status != "published":
             raise PolicyValidationError(
@@ -440,6 +473,7 @@ class CreditPolicy:
             rules=rules,
             criteria=criteria,
             limits=limits,
+            fallback_action=fallback_action or self.fallback_action,
             changelog=changelog,
             created_at=now,
             updated_at=now,
@@ -508,6 +542,7 @@ def _compute_governed_fingerprint(
     rules: tuple[PolicyRule, ...],
     criteria: tuple[PolicyCriterion, ...],
     limits: tuple[PolicyLimit, ...],
+    fallback_action: PolicyFallbackAction,
 ) -> str:
     governed_snapshot = repr(
         (
@@ -520,6 +555,7 @@ def _compute_governed_fingerprint(
             rules,
             criteria,
             limits,
+            fallback_action,
         )
     )
     return hashlib.sha256(governed_snapshot.encode("utf-8")).hexdigest()

@@ -43,6 +43,7 @@ from creditos_decision.domain.value_objects import (
     ExplainableFactor,
     PolicyApplicability,
     PolicyCriterion,
+    PolicyFallbackAction,
     PolicyLimit,
     PolicyRule,
     PolicySimulationInputCase,
@@ -56,7 +57,10 @@ from creditos_decision.domain.value_objects import (
     validate_reason_code_catalog_id,
     validate_reason_code_catalog_version_id,
 )
-from creditos_decision.domain.value_objects.policy import parse_product_type
+from creditos_decision.domain.value_objects.policy import (
+    PolicyFallbackActionType,
+    parse_product_type,
+)
 
 SERVICE_NAME = "decision"
 SERVICE_VERSION = "0.1.0"
@@ -77,6 +81,7 @@ class CreateCreditPolicyDraftCommand:
     limits: tuple[PolicyLimit, ...]
     reason_code_catalog_id: str
     reason_code_catalog_version_id: str
+    fallback_action: PolicyFallbackAction | None = None
     actor_subject_id: str = ""
 
 
@@ -91,6 +96,7 @@ class UpdateCreditPolicyDraftCommand:
     applicability: PolicyApplicability
     reason_code_catalog_id: str
     reason_code_catalog_version_id: str
+    fallback_action: PolicyFallbackAction | None = None
     owner_subject_id: str | None = None
     product_type: str | None = None
     actor_subject_id: str = ""
@@ -168,6 +174,7 @@ class CreateCreditPolicyVersionCommand:
     applicability: PolicyApplicability
     reason_code_catalog_id: str
     reason_code_catalog_version_id: str
+    fallback_action: PolicyFallbackAction | None = None
     owner_subject_id: str | None = None
     product_type: str | None = None
     actor_subject_id: str = ""
@@ -220,6 +227,12 @@ class CreditDecisionApplicationResult:
 class _PolicyOperationContext:
     tenant_id: str
     actor_subject_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PolicyReasonCodeReference:
+    outcome: str
+    reason_code_refs: tuple[str, ...]
 
 
 class DecisionApplicationService:
@@ -283,6 +296,7 @@ class DecisionApplicationService:
                     tenant_id=operation_context.tenant_id,
                     policy_id=command.policy_id,
                 ),
+                fallback_action=command.fallback_action,
             )
             self._validate_policy_reason_code_refs(
                 command=command,
@@ -378,6 +392,7 @@ class DecisionApplicationService:
                 reason_code_catalog_version_id=command.reason_code_catalog_version_id,
                 owner_subject_id=command.owner_subject_id,
                 product_type=command.product_type,
+                fallback_action=command.fallback_action,
             )
             self._validate_policy_reason_code_refs(
                 command=command,
@@ -614,6 +629,7 @@ class DecisionApplicationService:
                 change_summary=command.change_summary,
                 owner_subject_id=command.owner_subject_id,
                 product_type=command.product_type,
+                fallback_action=command.fallback_action,
             )
             self._validate_policy_reason_code_refs(
                 command=_VersionedPolicyReasonCodeValidationCommand(
@@ -795,24 +811,36 @@ class DecisionApplicationService:
                     event_type="credit_decision.completed",
                     actor_subject_id=operation_context.actor_subject_id,
                     correlation_id=context.correlation_id,
+                    duration_ms=duration_ms,
                 )
                 decision_audit_completed = True
 
+            duration_ms = _duration_ms(started_at)
             repository.save(decision, before_commit=publish_audit_before_commit)
             log = self._log_operation(
                 context=context,
                 operation="credit_decision.execute",
                 status="accepted",
-                duration_ms=_duration_ms(started_at),
+                duration_ms=duration_ms,
                 payload=command,
                 extra={
+                    "channel": decision.channel,
                     "decision_id": decision.decision_id,
+                    "fallback_action": decision.fallback_action or "",
                     "proposal_id": decision.proposal_id,
                     "policy_id": decision.policy_id,
                     "policy_version_id": decision.policy_version_id,
                     "product_type": decision.product_type,
+                    "reason_code_catalog_id": decision.reason_code_catalog_id,
+                    "reason_code_catalog_version_id": decision.reason_code_catalog_version_id,
+                    "reason_code_refs": tuple(sorted(decision.reason_code_refs)),
+                    "required_data_count": len(decision.required_data_refs),
+                    "required_data_refs": tuple(sorted(decision.required_data_refs)),
                     "outcome": decision.outcome,
                     "fingerprint": decision.decision_fingerprint,
+                    "validation_issue_codes": tuple(
+                        sorted({issue.code for issue in decision.validation_issues})
+                    ),
                 },
             )
             return CreditDecisionApplicationResult(decision=decision, logs=(log,))
@@ -1282,6 +1310,7 @@ class DecisionApplicationService:
         if catalog.product_type != policy.product_type:
             raise ReasonCodeCatalogNotFoundError()
         catalog.validate_policy_rules(policy.rules)
+        _validate_fallback_reason_code_refs(policy=policy, catalog=catalog)
 
     def _validate_policy_catalog_for_publication(
         self,
@@ -1303,6 +1332,7 @@ class DecisionApplicationService:
                 field_path="reason_code_catalog_version_id",
             )
         catalog.validate_policy_rules(policy.rules)
+        _validate_fallback_reason_code_refs(policy=policy, catalog=catalog)
 
     def _require_publication_simulation(
         self,
@@ -1472,6 +1502,7 @@ class DecisionApplicationService:
         event_type: str,
         actor_subject_id: str,
         correlation_id: str,
+        duration_ms: float | None = None,
     ) -> None:
         self._audit_publisher.publish(
             CreditDecisionAuditIntent(
@@ -1485,7 +1516,10 @@ class DecisionApplicationService:
                 reason_code_catalog_id=decision.reason_code_catalog_id,
                 reason_code_catalog_version_id=decision.reason_code_catalog_version_id,
                 correlation_id=correlation_id,
-                safe_details=_credit_decision_safe_details(decision),
+                safe_details=_credit_decision_safe_details(
+                    decision,
+                    duration_ms=duration_ms,
+                ),
             )
         )
 
@@ -1875,8 +1909,26 @@ def _duration_ms(started_at: float) -> float:
 def _policy_simulation_safe_details(
     simulation: PolicySimulationResult,
 ) -> dict[str, str]:
+    fallback_actions = tuple(
+        case_result.fallback_action
+        for case_result in simulation.case_results
+        if case_result.fallback_action is not None
+    )
+    required_data_case_count = sum(
+        1 for case_result in simulation.case_results if case_result.required_data_refs
+    )
     return {
         "case_count": str(simulation.summary.total_cases),
+        "fallback_action_request_more_data": str(
+            fallback_actions.count(PolicyFallbackActionType.REQUEST_MORE_DATA.value)
+        ),
+        "fallback_action_reject_by_policy": str(
+            fallback_actions.count(PolicyFallbackActionType.REJECT_BY_POLICY.value)
+        ),
+        "fallback_action_unable_to_decide": str(
+            fallback_actions.count(PolicyFallbackActionType.UNABLE_TO_DECIDE.value)
+        ),
+        "fallback_applied_count": str(len(fallback_actions)),
         "issue_count": str(simulation.summary.issue_count),
         "non_production": "true",
         "operation": "policy_simulation.run",
@@ -1885,25 +1937,64 @@ def _policy_simulation_safe_details(
         "outcome_reject": str(simulation.summary.count_for("reject")),
         "outcome_request_more_data": str(simulation.summary.count_for("request_more_data")),
         "outcome_unable_to_decide": str(simulation.summary.count_for("unable_to_decide")),
+        "required_data_case_count": str(required_data_case_count),
         "status": simulation.status,
     }
 
 
-def _credit_decision_safe_details(decision: CreditDecision) -> dict[str, str]:
-    return {
+def _credit_decision_safe_details(
+    decision: CreditDecision,
+    *,
+    duration_ms: float | None = None,
+) -> dict[str, str]:
+    details = {
+        "channel": decision.channel,
         "factor_count": str(len(decision.factor_refs)),
         "fingerprint": decision.decision_fingerprint,
         "operation": "credit_decision.execute",
         "outcome": decision.outcome,
+        "policy_id": decision.policy_id,
         "reason_code_catalog_id": decision.reason_code_catalog_id,
         "reason_code_catalog_version_id": decision.reason_code_catalog_version_id,
         "policy_revision": str(decision.policy_revision),
+        "policy_version_id": decision.policy_version_id,
         "product_type": decision.product_type,
         "reason_code_count": str(len(decision.reason_code_refs)),
         "status": "completed",
         "triggered_rule_count": str(len(decision.triggered_rule_ids)),
         "validation_issue_count": str(len(decision.validation_issues)),
     }
+    if duration_ms is not None:
+        details["duration_ms"] = str(duration_ms)
+    if decision.fallback_action is not None:
+        details["fallback_action"] = decision.fallback_action
+    if decision.reason_code_refs:
+        details["reason_code_refs"] = ",".join(sorted(decision.reason_code_refs))
+    if decision.required_data_refs:
+        details["required_data_count"] = str(len(decision.required_data_refs))
+        details["required_data_refs"] = ",".join(sorted(decision.required_data_refs))
+    if decision.validation_issues:
+        details["validation_issue_codes"] = ",".join(
+            sorted({issue.code for issue in decision.validation_issues})
+        )
+    return details
+
+
+def _validate_fallback_reason_code_refs(
+    *,
+    policy: CreditPolicy,
+    catalog: ReasonCodeCatalog,
+) -> None:
+    if policy.fallback_action.action != PolicyFallbackActionType.REJECT_BY_POLICY.value:
+        return
+    catalog.validate_policy_rules(
+        (
+            _PolicyReasonCodeReference(
+                outcome="reject",
+                reason_code_refs=policy.fallback_action.reason_code_refs,
+            ),
+        )
+    )
 
 
 def _safe_case_count(command: Any) -> str:

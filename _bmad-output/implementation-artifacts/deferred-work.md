@@ -17,3 +17,7 @@
 ## Deferred from: code review of 4-4-publicacao-imutavel-de-politica-aprovada (2026-08-28)
 
 - Verificação de fingerprint persistido em `CreditPolicy.restore`: o método recalcula o fingerprint a partir dos campos restaurados e não recebe/verifica um fingerprint previamente armazenado. É um endurecimento de persistência/auditoria para adapter real; no escopo atual in-memory não há serialização externa nem banco real.
+
+## Deferred from: code review of 4-6-tratamento-de-propostas-inconclusivas-sem-fila-manual (2026-09-02)
+
+- Fingerprint governado ainda usa serialização baseada em `repr`, criando risco futuro de reprodutibilidade entre refactors. É um endurecimento transversal e preexistente do modelo de política; a Story 4.6 apenas adicionou `fallback_action` ao fingerprint existente.

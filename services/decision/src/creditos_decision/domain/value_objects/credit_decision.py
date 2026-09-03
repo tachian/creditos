@@ -8,6 +8,7 @@ from datetime import datetime
 
 from creditos_decision.domain.errors import PolicyValidationError
 from creditos_decision.domain.value_objects.policy import (
+    PolicyLimit,
     _validate_aware_utc_datetime,
     _validate_policy_field,
     _validate_rule_value,
@@ -148,6 +149,55 @@ class CreditDecisionApprovedTerms:
             approved_installments=installments,
             approved_term_days=term_days,
         )
+
+    @classmethod
+    def adjusted_from_policy_limits(
+        cls,
+        decision_input: CreditDecisionInput,
+        limits: tuple[PolicyLimit, ...],
+    ) -> CreditDecisionApprovedTerms | None:
+        requested_terms = cls.from_decision_input(decision_input)
+        if requested_terms is None:
+            return None
+        amount = requested_terms.approved_amount_units
+        installments = requested_terms.approved_installments
+        term_days = requested_terms.approved_term_days
+        max_amount = None
+        max_installments = None
+        max_term_days = None
+        for policy_limit in limits:
+            if policy_limit.limit_type == "max_amount_units":
+                max_amount = (
+                    policy_limit.value
+                    if max_amount is None
+                    else min(max_amount, policy_limit.value)
+                )
+            elif policy_limit.limit_type == "max_installments":
+                max_installments = (
+                    policy_limit.value
+                    if max_installments is None
+                    else min(max_installments, policy_limit.value)
+                )
+            elif policy_limit.limit_type == "max_term_days":
+                max_term_days = (
+                    policy_limit.value
+                    if max_term_days is None
+                    else min(max_term_days, policy_limit.value)
+                )
+        if max_amount is not None:
+            amount = min(amount, max_amount)
+        if max_installments is not None:
+            installments = min(installments, max_installments)
+        if max_term_days is not None:
+            term_days = min(term_days, max_term_days)
+        adjusted_terms = cls(
+            approved_amount_units=amount,
+            approved_installments=installments,
+            approved_term_days=term_days,
+        )
+        if adjusted_terms == requested_terms:
+            return None
+        return adjusted_terms
 
 
 def validate_decided_at(value: datetime) -> datetime:

@@ -6,7 +6,12 @@ from typing import Protocol
 from creditos_decision.domain.entities.credit_policy import CreditPolicy
 from creditos_decision.domain.entities.reason_code_catalog import ReasonCodeCatalog
 from creditos_decision.domain.errors import PolicyValidationError
-from creditos_decision.domain.value_objects.policy import PolicyOperator, PolicyOutcome
+from creditos_decision.domain.value_objects.policy import (
+    PolicyFallbackActionType,
+    PolicyOperator,
+    PolicyOutcome,
+    PolicyRule,
+)
 from creditos_decision.domain.value_objects.policy_evaluation import (
     PolicyEvaluationIssue,
     PolicyEvaluationResult,
@@ -49,19 +54,35 @@ def evaluate_policy_case(
         field_values=field_values,
         issues=issues,
     ):
-        return _unable_to_decide_result(evaluation_id=evaluation_id, issues=tuple(issues))
-    if not _limits_are_satisfied(
+        return _fallback_result(
+            policy=policy,
+            catalog=catalog,
+            evaluation_id=evaluation_id,
+            issues=tuple(issues),
+            allow_reject_by_policy=False,
+        )
+    limits_are_satisfied = _limits_are_satisfied(
         policy=policy,
         evaluation_id=evaluation_id,
         field_values=field_values,
         issues=issues,
-    ):
-        return _unable_to_decide_result(evaluation_id=evaluation_id, issues=tuple(issues))
+    )
+    if not limits_are_satisfied and _has_missing_data_issue(issues):
+        return _fallback_result(
+            policy=policy,
+            catalog=catalog,
+            evaluation_id=evaluation_id,
+            issues=tuple(issues),
+            allow_reject_by_policy=_issues_allow_reject_by_policy(issues),
+        )
 
     triggered_rules = []
     for rule in policy.rules:
         case_value = _value_for(field_values, rule.source_field)
-        if case_value is None and rule.operator != PolicyOperator.EXISTS.value:
+        if case_value is None and _operator_requires_present_field(
+            operator=rule.operator,
+            expected_value=rule.threshold_value,
+        ):
             issues.append(
                 PolicyEvaluationIssue.create(
                     code="missing_rule_field",
@@ -77,11 +98,10 @@ def evaluate_policy_case(
         ):
             triggered_rules.append(rule)
 
-    if issues:
-        return _unable_to_decide_result(evaluation_id=evaluation_id, issues=tuple(issues))
-
     if not triggered_rules:
-        return _unable_to_decide_result(
+        return _fallback_result(
+            policy=policy,
+            catalog=catalog,
             evaluation_id=evaluation_id,
             issues=(
                 *issues,
@@ -91,17 +111,16 @@ def evaluate_policy_case(
                     message="Nenhuma regra acionada para o caso",
                 ),
             ),
+            allow_reject_by_policy=False,
         )
 
     triggered_outcomes = _unique(rule.outcome for rule in triggered_rules)
     if len(triggered_outcomes) > 1:
-        return PolicyEvaluationResult(
+        return _fallback_result(
+            policy=policy,
+            catalog=catalog,
             evaluation_id=evaluation_id,
-            outcome=PolicyOutcome.UNABLE_TO_DECIDE.value,
-            triggered_rule_ids=tuple(rule.rule_id for rule in triggered_rules),
-            reason_code_refs=(),
-            factor_refs=(),
-            validation_issues=(
+            issues=(
                 *issues,
                 PolicyEvaluationIssue.create(
                     code="conflicting_policy_rule_outcomes",
@@ -109,6 +128,39 @@ def evaluate_policy_case(
                     message="Regras acionadas possuem outcomes conflitantes",
                 ),
             ),
+            triggered_rules=tuple(triggered_rules),
+            allow_reject_by_policy=False,
+        )
+
+    if issues:
+        if (
+            triggered_outcomes == (PolicyOutcome.APPROVE_WITH_CHANGES.value,)
+            and _only_limit_issues(issues)
+            and _has_complete_approval_terms(field_values)
+        ):
+            reason_code_refs = _unique(
+                reason_code_ref
+                for rule in triggered_rules
+                for reason_code_ref in rule.reason_code_refs
+            )
+            return PolicyEvaluationResult(
+                evaluation_id=evaluation_id,
+                outcome=PolicyOutcome.APPROVE_WITH_CHANGES.value,
+                triggered_rule_ids=tuple(rule.rule_id for rule in triggered_rules),
+                reason_code_refs=reason_code_refs,
+                factor_refs=_factor_refs_for_reason_codes(
+                    catalog=catalog,
+                    reason_code_refs=reason_code_refs,
+                ),
+                validation_issues=tuple(issues),
+            )
+        return _fallback_result(
+            policy=policy,
+            catalog=catalog,
+            evaluation_id=evaluation_id,
+            issues=tuple(issues),
+            allow_reject_by_policy=_issues_allow_reject_by_policy(issues),
+            triggered_rules=tuple(triggered_rules),
         )
 
     reason_code_refs = _unique(
@@ -193,7 +245,10 @@ def _criteria_are_satisfied(
     satisfied = True
     for criterion in policy.criteria:
         case_value = _value_for(field_values, criterion.field)
-        if case_value is None and criterion.operator != PolicyOperator.EXISTS.value:
+        if case_value is None and _operator_requires_present_field(
+            operator=criterion.operator,
+            expected_value=criterion.value,
+        ):
             issues.append(
                 PolicyEvaluationIssue.create(
                     code="missing_criterion_field",
@@ -311,18 +366,44 @@ def _policy_evaluation_allowed_fields(policy: CreditPolicy) -> set[str]:
     return fields
 
 
-def _unable_to_decide_result(
+def _fallback_result(
     *,
+    policy: CreditPolicy,
+    catalog: ReasonCodeCatalog,
     evaluation_id: str,
     issues: tuple[PolicyEvaluationIssue, ...],
+    allow_reject_by_policy: bool,
+    triggered_rules: tuple[PolicyRule, ...] = (),
 ) -> PolicyEvaluationResult:
+    fallback_action = policy.fallback_action.action
+    required_data_refs = _required_data_refs_for(issues)
+    reject_reason_code_refs = _fallback_reject_reason_code_refs(
+        policy=policy,
+        triggered_rules=triggered_rules,
+    )
+    if fallback_action == PolicyFallbackActionType.REQUEST_MORE_DATA.value and required_data_refs:
+        outcome = PolicyOutcome.REQUEST_MORE_DATA.value
+    elif (
+        fallback_action == PolicyFallbackActionType.REJECT_BY_POLICY.value
+        and allow_reject_by_policy
+        and not _has_missing_data_issue(issues)
+        and reject_reason_code_refs
+    ):
+        outcome = PolicyOutcome.REJECT.value
+    else:
+        outcome = PolicyOutcome.UNABLE_TO_DECIDE.value
+    reason_code_refs = reject_reason_code_refs if outcome == PolicyOutcome.REJECT.value else ()
     return PolicyEvaluationResult(
         evaluation_id=evaluation_id,
-        outcome=PolicyOutcome.UNABLE_TO_DECIDE.value,
-        triggered_rule_ids=(),
-        reason_code_refs=(),
-        factor_refs=(),
+        outcome=outcome,
+        triggered_rule_ids=tuple(rule.rule_id for rule in triggered_rules),
+        reason_code_refs=reason_code_refs,
+        factor_refs=_factor_refs_for_reason_codes(
+            catalog=catalog, reason_code_refs=reason_code_refs
+        ),
         validation_issues=issues,
+        fallback_action=fallback_action,
+        required_data_refs=required_data_refs,
     )
 
 
@@ -337,6 +418,60 @@ def _factor_refs_for_reason_codes(
         for reason_code_ref in reason_code_refs
         for factor_ref in by_code[reason_code_ref].factor_refs
     )
+
+
+def _issues_allow_reject_by_policy(issues: Sequence[PolicyEvaluationIssue]) -> bool:
+    return any(
+        issue.code in {"policy_criterion_not_satisfied", "policy_limit_not_satisfied"}
+        for issue in issues
+    )
+
+
+def _has_missing_data_issue(issues: Sequence[PolicyEvaluationIssue]) -> bool:
+    return any(issue.code.startswith("missing_") for issue in issues)
+
+
+def _only_limit_issues(issues: Sequence[PolicyEvaluationIssue]) -> bool:
+    return all(issue.code == "policy_limit_not_satisfied" for issue in issues)
+
+
+def _has_complete_approval_terms(field_values: Sequence[PolicyFieldValue]) -> bool:
+    return all(
+        _value_for(field_values, field_name) is not None for field_name in APPROVAL_TERM_FIELDS
+    )
+
+
+def _operator_requires_present_field(*, operator: str, expected_value: int | str | bool) -> bool:
+    return operator != PolicyOperator.EXISTS.value or expected_value is True
+
+
+def _fallback_reject_reason_code_refs(
+    *,
+    policy: CreditPolicy,
+    triggered_rules: tuple[PolicyRule, ...],
+) -> tuple[str, ...]:
+    triggered_reject_reason_refs = {
+        reason_code_ref
+        for rule in triggered_rules
+        if rule.outcome == PolicyOutcome.REJECT.value
+        for reason_code_ref in rule.reason_code_refs
+    }
+    return tuple(
+        reason_code_ref
+        for reason_code_ref in policy.fallback_action.reason_code_refs
+        if reason_code_ref in triggered_reject_reason_refs
+    )
+
+
+def _required_data_refs_for(issues: Sequence[PolicyEvaluationIssue]) -> tuple[str, ...]:
+    refs: list[str] = []
+    for issue in issues:
+        if not issue.code.startswith("missing_"):
+            continue
+        field_ref = issue.field_path.rsplit(".", 1)[-1]
+        if field_ref not in {"rules", "criteria", "limits"} and field_ref not in refs:
+            refs.append(field_ref)
+    return tuple(refs)
 
 
 def _value_for(field_values: Sequence[PolicyFieldValue], field_name: str) -> int | None:

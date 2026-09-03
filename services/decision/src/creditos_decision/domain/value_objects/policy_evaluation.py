@@ -8,6 +8,7 @@ from creditos_decision.domain.value_objects.policy import (
     _parse_enum,
     _validate_safe_text,
     _validate_technical_id,
+    parse_policy_fallback_action,
 )
 
 
@@ -61,6 +62,8 @@ class PolicyEvaluationResult:
     reason_code_refs: tuple[str, ...]
     factor_refs: tuple[str, ...]
     validation_issues: tuple[PolicyEvaluationIssue, ...] = ()
+    fallback_action: str | None = None
+    required_data_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -101,6 +104,17 @@ class PolicyEvaluationResult:
                     field_path="validation_issues",
                 )
         object.__setattr__(self, "validation_issues", tuple(self.validation_issues))
+        if self.fallback_action is not None:
+            object.__setattr__(
+                self,
+                "fallback_action",
+                parse_policy_fallback_action(self.fallback_action),
+            )
+        object.__setattr__(
+            self,
+            "required_data_refs",
+            _validate_unique_ids(self.required_data_refs, field_path="required_data_refs"),
+        )
 
 
 def _validate_unique_ids(values: tuple[str, ...], *, field_path: str) -> tuple[str, ...]:

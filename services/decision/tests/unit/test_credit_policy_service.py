@@ -21,11 +21,13 @@ from creditos_decision.domain.errors import (
     PolicyConcurrencyError,
     PolicyNotFoundError,
     PolicyTenantContextError,
+    PolicyValidationError,
 )
 from creditos_decision.domain.value_objects import (
     ExplainableFactor,
     PolicyApplicability,
     PolicyCriterion,
+    PolicyFallbackAction,
     PolicyLimit,
     PolicyRule,
     ReasonCode,
@@ -123,6 +125,30 @@ def test_policy_queries_and_updates_reject_cross_tenant_without_revealing_policy
 
     assert audit.events[-1].event_type == "credit_policy.rejected"
     assert audit.events[-1].safe_details["rejection_reason"] == "credit_policy_not_found"
+
+
+def test_create_policy_validates_reject_by_policy_fallback_reason_codes() -> None:
+    service = DecisionApplicationService(
+        repository=InMemoryCreditPolicyRepository(),
+        reason_code_catalog_repository=_reason_code_catalog_repository(),
+        audit_publisher=RecordingAuditPublisher(),
+        environment="test",
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(PolicyValidationError) as error:
+        service.create_policy_draft(
+            _create_command(
+                fallback_action=PolicyFallbackAction.create(
+                    action="reject_by_policy",
+                    reason_code_refs=("rc_unknown_fallback",),
+                )
+            ),
+            context=_context("tenant_alpha"),
+            trusted_context=_trusted_context(),
+        )
+
+    assert error.value.code == "unknown_reason_code"
 
 
 def test_update_policy_draft_records_history_and_audit_intent() -> None:
@@ -504,6 +530,7 @@ def test_repository_rejects_stale_updates_with_expected_revision() -> None:
 def _create_command(
     actor_subject_id: str = "user_credit_manager",
     policy_version_id: str = "polver_personal_credit_default_v1",
+    fallback_action: PolicyFallbackAction | None = None,
 ) -> CreateCreditPolicyDraftCommand:
     return CreateCreditPolicyDraftCommand(
         policy_id="pol_personal_credit_default",
@@ -541,6 +568,7 @@ def _create_command(
                 value=24,
             ),
         ),
+        fallback_action=fallback_action,
     )
 
 

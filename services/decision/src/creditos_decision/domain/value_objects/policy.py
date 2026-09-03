@@ -45,6 +45,12 @@ class PolicyOutcome(StrEnum):
     UNABLE_TO_DECIDE = "unable_to_decide"
 
 
+class PolicyFallbackActionType(StrEnum):
+    REQUEST_MORE_DATA = "request_more_data"
+    UNABLE_TO_DECIDE = "unable_to_decide"
+    REJECT_BY_POLICY = "reject_by_policy"
+
+
 _TECHNICAL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,160}$")
 _CORRELATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{8,160}$")
 _SAFE_TEXT_PATTERN = re.compile(r"^[A-Za-zÀ-ÿ0-9 .,;:_/()+\\-]{1,240}$")
@@ -209,6 +215,33 @@ class PolicyRule:
             outcome=cast("str", parsed["outcome"]),
             reason_code_refs=cast("tuple[str, ...]", parsed["reason_code_refs"]),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyFallbackAction:
+    action: str = PolicyFallbackActionType.REQUEST_MORE_DATA.value
+    reason_code_refs: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        parsed_action, parsed_reason_code_refs = _normalize_fallback_action(
+            action=self.action,
+            reason_code_refs=tuple(self.reason_code_refs),
+        )
+        object.__setattr__(self, "action", parsed_action)
+        object.__setattr__(self, "reason_code_refs", parsed_reason_code_refs)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        action: str = PolicyFallbackActionType.REQUEST_MORE_DATA.value,
+        reason_code_refs: tuple[str, ...] = (),
+    ) -> PolicyFallbackAction:
+        parsed_action, parsed_reason_code_refs = _normalize_fallback_action(
+            action=action,
+            reason_code_refs=reason_code_refs,
+        )
+        return cls(action=parsed_action, reason_code_refs=parsed_reason_code_refs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,6 +451,40 @@ def _normalize_rule(
     }
 
 
+def _normalize_fallback_action(
+    *,
+    action: str,
+    reason_code_refs: tuple[str, ...],
+) -> tuple[str, tuple[str, ...]]:
+    parsed_action = parse_policy_fallback_action(action)
+    parsed_reason_code_refs = tuple(
+        _validate_technical_id(reference, field_path="fallback_action.reason_code_refs")
+        for reference in reason_code_refs
+    )
+    if len(set(parsed_reason_code_refs)) != len(parsed_reason_code_refs):
+        raise PolicyValidationError(
+            "reason code duplicado",
+            code="duplicate_fallback_reason_code_ref",
+            field_path="fallback_action.reason_code_refs",
+        )
+    if (
+        parsed_action == PolicyFallbackActionType.REJECT_BY_POLICY.value
+        and not parsed_reason_code_refs
+    ):
+        raise PolicyValidationError(
+            "reason code obrigatório para reprovação por política",
+            code="missing_fallback_reason_code_ref",
+            field_path="fallback_action.reason_code_refs",
+        )
+    if parsed_action != PolicyFallbackActionType.REJECT_BY_POLICY.value and parsed_reason_code_refs:
+        raise PolicyValidationError(
+            "reason code permitido apenas para reprovação por política",
+            code="unsupported_fallback_reason_code_ref",
+            field_path="fallback_action.reason_code_refs",
+        )
+    return parsed_action, parsed_reason_code_refs
+
+
 def _normalize_criterion(
     *,
     criterion_id: str,
@@ -529,6 +596,19 @@ def parse_policy_status(value: str) -> str:
         value,
         code="unsupported_policy_status",
         field_path="status",
+    )
+
+
+def parse_policy_fallback_action(value: str) -> str:
+    return _parse_enum(
+        PolicyFallbackActionType,
+        value,
+        code="unsupported_policy_fallback_action",
+        field_path="fallback_action",
+        message=(
+            "fallback de política não suportado; use request_more_data, "
+            "unable_to_decide, reject_by_policy ou IA apenas consultiva sem decisão final"
+        ),
     )
 
 

@@ -91,6 +91,10 @@ def test_run_policy_simulation_persists_non_production_result_and_minimized_audi
     assert audit.events[-1].event_type == "policy_simulation.completed"
     assert audit.events[-1].safe_details == {
         "case_count": "1",
+        "fallback_action_request_more_data": "0",
+        "fallback_action_reject_by_policy": "0",
+        "fallback_action_unable_to_decide": "0",
+        "fallback_applied_count": "0",
         "issue_count": "0",
         "non_production": "true",
         "operation": "policy_simulation.run",
@@ -99,6 +103,7 @@ def test_run_policy_simulation_persists_non_production_result_and_minimized_audi
         "outcome_reject": "1",
         "outcome_request_more_data": "0",
         "outcome_unable_to_decide": "0",
+        "required_data_case_count": "0",
         "status": "completed",
     }
     assert result.logs[0]["payload"] == "[OMITIDO]"
