@@ -1987,14 +1987,22 @@ def _validate_fallback_reason_code_refs(
 ) -> None:
     if policy.fallback_action.action != PolicyFallbackActionType.REJECT_BY_POLICY.value:
         return
-    catalog.validate_policy_rules(
-        (
-            _PolicyReasonCodeReference(
-                outcome="reject",
-                reason_code_refs=policy.fallback_action.reason_code_refs,
-            ),
+    try:
+        catalog.validate_policy_rules(
+            (
+                _PolicyReasonCodeReference(
+                    outcome="reject",
+                    reason_code_refs=policy.fallback_action.reason_code_refs,
+                ),
+            )
         )
-    )
+    except PolicyValidationError as error:
+        raise PolicyValidationError(
+            error.message,
+            code=error.code,
+            field_path="fallback_action.reason_code_refs",
+            details=dict(error.details),
+        ) from error
 
 
 def _safe_case_count(command: Any) -> str:
