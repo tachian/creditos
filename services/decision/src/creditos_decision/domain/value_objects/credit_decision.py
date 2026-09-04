@@ -346,7 +346,7 @@ class CreditDecisionExplanationResponse:
     decision_fingerprint: str
 
     def __post_init__(self) -> None:
-        if self.policy_revision < 1:
+        if not isinstance(self.policy_revision, int) or self.policy_revision < 1:
             raise PolicyValidationError(
                 "revisão de política inválida",
                 code="invalid_explanation_policy_revision",
