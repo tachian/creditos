@@ -2,17 +2,33 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 
 from creditos_decision.domain.errors import PolicyValidationError
 from creditos_decision.domain.value_objects.policy import (
     PolicyLimit,
+    PolicyOutcome,
+    _parse_enum,
     _validate_aware_utc_datetime,
     _validate_policy_field,
     _validate_rule_value,
+    _validate_safe_text,
     _validate_technical_id,
+    parse_policy_fallback_action,
+    parse_product_type,
+    validate_correlation_id,
+    validate_policy_id,
+    validate_policy_version_id,
+    validate_tenant_id,
+)
+from creditos_decision.domain.value_objects.reason_codes import (
+    ReasonCodeAudience,
+    validate_reason_code_catalog_id,
+    validate_reason_code_catalog_version_id,
 )
 
 
@@ -202,6 +218,275 @@ class CreditDecisionApprovedTerms:
         return adjusted_terms
 
 
+class CreditDecisionExplanationAudience(StrEnum):
+    CUSTOMER = "customer"
+    INTERNAL = "internal"
+
+
+class CreditDecisionExplanationStatus(StrEnum):
+    COMPLETED = "completed"
+    REQUIRES_INPUT = "requires_input"
+    UNABLE_TO_DECIDE = "unable_to_decide"
+
+
+@dataclass(frozen=True, slots=True)
+class CreditDecisionExplanationReasonCode:
+    code: str
+    title: str
+    description: str
+    severity: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "code",
+            _validate_technical_id(self.code, field_path="reason_codes.code"),
+        )
+        object.__setattr__(
+            self,
+            "title",
+            _validate_explanation_text(self.title, field_path="reason_codes.title"),
+        )
+        object.__setattr__(
+            self,
+            "description",
+            _validate_explanation_text(
+                self.description,
+                field_path="reason_codes.description",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "severity",
+            _validate_technical_id(self.severity, field_path="reason_codes.severity"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CreditDecisionExplanationFactor:
+    factor_id: str
+    field: str
+    title: str
+    description: str
+    required: bool
+
+    def __post_init__(self) -> None:
+        if type(self.required) is not bool:
+            raise PolicyValidationError(
+                "obrigatoriedade inválida",
+                code="invalid_credit_decision_explanation_factor_required",
+                field_path="factors.required",
+            )
+        object.__setattr__(
+            self,
+            "factor_id",
+            _validate_technical_id(self.factor_id, field_path="factors.factor_id"),
+        )
+        object.__setattr__(
+            self, "field", _validate_policy_field(self.field, field_path="factors.field")
+        )
+        object.__setattr__(
+            self, "title", _validate_explanation_text(self.title, field_path="factors.title")
+        )
+        object.__setattr__(
+            self,
+            "description",
+            _validate_explanation_text(self.description, field_path="factors.description"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CreditDecisionExplanationIssue:
+    code: str
+    field_path: str
+    message: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "code",
+            _validate_technical_id(self.code, field_path="validation_issues.code"),
+        )
+        object.__setattr__(
+            self,
+            "field_path",
+            _validate_safe_text(self.field_path, field_path="validation_issues.field_path"),
+        )
+        object.__setattr__(
+            self,
+            "message",
+            _validate_explanation_text(self.message, field_path="validation_issues.message"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CreditDecisionExplanationResponse:
+    decision_id: str
+    proposal_id: str
+    tenant_id: str
+    product_type: str
+    channel: str
+    status: str
+    outcome: str
+    decided_at: datetime
+    correlation_id: str
+    policy_id: str
+    policy_version_id: str
+    policy_revision: int
+    reason_code_catalog_id: str
+    reason_code_catalog_version_id: str
+    triggered_rule_ids: tuple[str, ...]
+    reason_codes: tuple[CreditDecisionExplanationReasonCode, ...]
+    factors: tuple[CreditDecisionExplanationFactor, ...]
+    fallback_action: str | None
+    required_data_refs: tuple[str, ...]
+    validation_issue_codes: tuple[str, ...]
+    validation_issues: tuple[CreditDecisionExplanationIssue, ...]
+    approved_terms: CreditDecisionApprovedTerms | None
+    decision_fingerprint: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.policy_revision, int) or self.policy_revision < 1:
+            raise PolicyValidationError(
+                "revisão de política inválida",
+                code="invalid_explanation_policy_revision",
+                field_path="policy_revision",
+            )
+        for reason_code in self.reason_codes:
+            if not isinstance(reason_code, CreditDecisionExplanationReasonCode):
+                raise PolicyValidationError(
+                    "reason code explicável inválido",
+                    code="invalid_explanation_reason_code",
+                    field_path="reason_codes",
+                )
+        for factor in self.factors:
+            if not isinstance(factor, CreditDecisionExplanationFactor):
+                raise PolicyValidationError(
+                    "fator explicável inválido",
+                    code="invalid_explanation_factor",
+                    field_path="factors",
+                )
+        for issue in self.validation_issues:
+            if not isinstance(issue, CreditDecisionExplanationIssue):
+                raise PolicyValidationError(
+                    "issue explicável inválida",
+                    code="invalid_explanation_issue",
+                    field_path="validation_issues",
+                )
+        object.__setattr__(self, "decision_id", validate_credit_decision_id(self.decision_id))
+        object.__setattr__(self, "proposal_id", validate_proposal_id(self.proposal_id))
+        object.__setattr__(self, "tenant_id", validate_tenant_id(self.tenant_id))
+        object.__setattr__(self, "product_type", parse_product_type(self.product_type))
+        object.__setattr__(
+            self,
+            "channel",
+            _validate_technical_id(self.channel, field_path="channel"),
+        )
+        object.__setattr__(
+            self,
+            "status",
+            _parse_enum(
+                CreditDecisionExplanationStatus,
+                self.status,
+                code="unsupported_explanation_status",
+                field_path="status",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "outcome",
+            _parse_enum(
+                PolicyOutcome,
+                self.outcome,
+                code="unsupported_explanation_outcome",
+                field_path="outcome",
+            ),
+        )
+        object.__setattr__(self, "decided_at", validate_decided_at(self.decided_at))
+        object.__setattr__(self, "correlation_id", validate_correlation_id(self.correlation_id))
+        object.__setattr__(self, "policy_id", validate_policy_id(self.policy_id))
+        object.__setattr__(
+            self,
+            "policy_version_id",
+            validate_policy_version_id(self.policy_version_id),
+        )
+        object.__setattr__(
+            self,
+            "reason_code_catalog_id",
+            validate_reason_code_catalog_id(self.reason_code_catalog_id),
+        )
+        object.__setattr__(
+            self,
+            "reason_code_catalog_version_id",
+            validate_reason_code_catalog_version_id(self.reason_code_catalog_version_id),
+        )
+        object.__setattr__(
+            self,
+            "triggered_rule_ids",
+            _validate_unique_technical_ids(
+                self.triggered_rule_ids,
+                field_path="triggered_rule_ids",
+            ),
+        )
+        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
+        object.__setattr__(self, "factors", tuple(self.factors))
+        if self.fallback_action is not None:
+            object.__setattr__(
+                self,
+                "fallback_action",
+                parse_policy_fallback_action(self.fallback_action),
+            )
+        object.__setattr__(
+            self,
+            "required_data_refs",
+            _validate_unique_technical_ids(
+                self.required_data_refs,
+                field_path="required_data_refs",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "validation_issue_codes",
+            _validate_unique_technical_ids(
+                self.validation_issue_codes,
+                field_path="validation_issue_codes",
+            ),
+        )
+        object.__setattr__(self, "validation_issues", tuple(self.validation_issues))
+        object.__setattr__(
+            self,
+            "decision_fingerprint",
+            _validate_hex_fingerprint(self.decision_fingerprint),
+        )
+
+
+def parse_credit_decision_explanation_audience(value: str) -> str:
+    return _parse_enum(
+        CreditDecisionExplanationAudience,
+        value,
+        code="unsupported_credit_decision_explanation_audience",
+        field_path="audience",
+    )
+
+
+def parse_credit_decision_explanation_status(value: str) -> str:
+    return _parse_enum(
+        CreditDecisionExplanationStatus,
+        value,
+        code="unsupported_explanation_status",
+        field_path="status",
+    )
+
+
+def reason_code_visible_for_audience(*, reason_code_audience: str, audience: str) -> bool:
+    if audience == CreditDecisionExplanationAudience.INTERNAL.value:
+        return True
+    return reason_code_audience in {
+        ReasonCodeAudience.CUSTOMER.value,
+        ReasonCodeAudience.BOTH.value,
+    }
+
+
 def validate_decided_at(value: datetime) -> datetime:
     return _validate_aware_utc_datetime(value, field_path="decided_at")
 
@@ -246,3 +531,38 @@ def input_fingerprint_for(field_values: tuple[CreditDecisionInputFieldValue, ...
     )
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+_DETAILED_NUMERIC_VALUE_PATTERN = re.compile(r"\d[\d_.-]{3,}")
+
+
+def _validate_explanation_text(value: str, *, field_path: str) -> str:
+    parsed = _validate_safe_text(value, field_path=field_path)
+    if _DETAILED_NUMERIC_VALUE_PATTERN.search(parsed):
+        raise PolicyValidationError(
+            "texto explicável não pode conter valor numérico detalhado",
+            code="explanation_text_contains_detailed_numeric_value",
+            field_path=field_path,
+        )
+    return parsed
+
+
+def _validate_unique_technical_ids(values: tuple[str, ...], *, field_path: str) -> tuple[str, ...]:
+    parsed = tuple(_validate_technical_id(value, field_path=field_path) for value in values)
+    if len(set(parsed)) != len(parsed):
+        raise PolicyValidationError(
+            "identificador duplicado",
+            code="duplicate_credit_decision_explanation_identifier",
+            field_path=field_path,
+        )
+    return parsed
+
+
+def _validate_hex_fingerprint(value: str) -> str:
+    if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+        raise PolicyValidationError(
+            "fingerprint inválido",
+            code="invalid_credit_decision_explanation_fingerprint",
+            field_path="decision_fingerprint",
+        )
+    return value

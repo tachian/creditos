@@ -45,6 +45,11 @@ class PolicyNotFoundError(DecisionDomainError):
     safe_message = "política não encontrada"
 
 
+class CreditDecisionNotFoundError(DecisionDomainError):
+    code = "credit_decision_not_found"
+    safe_message = "decisão de crédito não encontrada"
+
+
 class PolicySimulationNotFoundError(DecisionDomainError):
     code = "policy_simulation_not_found"
     safe_message = "simulação de política não encontrada"

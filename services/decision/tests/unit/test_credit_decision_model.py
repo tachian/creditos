@@ -8,6 +8,7 @@ from creditos_decision.domain.errors import PolicyValidationError
 from creditos_decision.domain.services.policy_evaluator import evaluate_policy_case
 from creditos_decision.domain.value_objects import (
     CreditDecisionApprovedTerms,
+    CreditDecisionExplanationResponse,
     CreditDecisionInput,
     CreditDecisionInputFieldValue,
     ExplainableFactor,
@@ -239,6 +240,258 @@ def test_credit_decision_allows_approval_terms_even_when_policy_does_not_referen
     assert decision.approved_terms.approved_term_days == 360
 
 
+def test_credit_decision_builds_customer_safe_explainable_response() -> None:
+    policy = _published_policy()
+    catalog = _published_catalog()
+    decision_input = CreditDecisionInput.create(
+        proposal_id="proposal_personal_credit_001",
+        values={
+            "monthly_income_units": 300_000,
+            "requested_amount_units": 700_000,
+            "requested_installments": 12,
+            "requested_term_days": 360,
+        },
+    )
+    evaluation = evaluate_policy_case(
+        policy=policy,
+        catalog=catalog,
+        evaluation_id=decision_input.proposal_id,
+        field_values=decision_input.field_values,
+    )
+    decision = CreditDecision.create(
+        decision_id="decision_personal_credit_001",
+        policy=policy,
+        catalog=catalog,
+        decision_input=decision_input,
+        evaluation=evaluation,
+        channel="api",
+        correlation_id="corr_1234567890abcdef",
+        decided_at=NOW,
+    )
+
+    explanation = decision.to_explainable_response(catalog=catalog, audience="customer")
+
+    assert explanation.decision_id == "decision_personal_credit_001"
+    assert explanation.proposal_id == "proposal_personal_credit_001"
+    assert explanation.tenant_id == "tenant_alpha"
+    assert explanation.status == "completed"
+    assert explanation.outcome == "approve"
+    assert explanation.policy_id == policy.policy_id
+    assert explanation.policy_version_id == policy.policy_version_id
+    assert explanation.reason_code_catalog_version_id == catalog.catalog_version_id
+    assert explanation.triggered_rule_ids == ("rule_approval_income",)
+    assert explanation.reason_codes[0].code == "rc_min_income"
+    assert explanation.reason_codes[0].description == "Renda declarada compatível com aprovação"
+    assert "atende a política" not in str(explanation)
+    assert explanation.factors[0].factor_id == "factor_monthly_income"
+    assert explanation.factors[0].description == "Renda declarada informada para análise"
+    assert explanation.approved_terms is not None
+    assert explanation.decision_fingerprint == decision.decision_fingerprint
+    assert "300000" not in str(explanation)
+    assert "field_values" not in str(explanation)
+
+
+def test_credit_decision_blocks_final_outcome_without_customer_visible_reason_code() -> None:
+    policy = _published_policy()
+    catalog = _published_catalog(reason_code_audience="internal")
+    decision_input = CreditDecisionInput.create(
+        proposal_id="proposal_internal_reason_only",
+        values={
+            "monthly_income_units": 300_000,
+            "requested_amount_units": 700_000,
+            "requested_installments": 12,
+            "requested_term_days": 360,
+        },
+    )
+    evaluation = evaluate_policy_case(
+        policy=policy,
+        catalog=catalog,
+        evaluation_id=decision_input.proposal_id,
+        field_values=decision_input.field_values,
+    )
+    decision = CreditDecision.create(
+        decision_id="decision_internal_reason_only",
+        policy=policy,
+        catalog=catalog,
+        decision_input=decision_input,
+        evaluation=evaluation,
+        channel="api",
+        correlation_id="corr_1234567890abcdef",
+        decided_at=NOW,
+    )
+
+    with pytest.raises(PolicyValidationError, match="justificativa governada"):
+        decision.to_explainable_response(catalog=catalog, audience="customer")
+
+
+def test_credit_decision_blocks_final_outcome_without_governed_justification() -> None:
+    policy = _published_policy()
+    catalog = _published_catalog()
+    decision_input = CreditDecisionInput.create(
+        proposal_id="proposal_missing_justification",
+        values={
+            "monthly_income_units": 300_000,
+            "requested_amount_units": 700_000,
+            "requested_installments": 12,
+            "requested_term_days": 360,
+        },
+    )
+    evaluation = PolicyEvaluationResult(
+        evaluation_id=decision_input.proposal_id,
+        outcome="approve",
+        triggered_rule_ids=("rule_approval_income",),
+        reason_code_refs=(),
+        factor_refs=(),
+    )
+
+    with pytest.raises(PolicyValidationError, match="justificativa governada"):
+        CreditDecision.create(
+            decision_id="decision_missing_justification",
+            policy=policy,
+            catalog=catalog,
+            decision_input=decision_input,
+            evaluation=evaluation,
+            channel="api",
+            correlation_id="corr_1234567890abcdef",
+            decided_at=NOW,
+        )
+
+
+def test_credit_decision_allows_controlled_state_with_equivalent_justification() -> None:
+    policy = _published_policy()
+    catalog = _published_catalog()
+    decision_input = CreditDecisionInput.create(
+        proposal_id="proposal_request_more_data",
+        values={
+            "monthly_income_units": 300_000,
+            "requested_amount_units": 700_000,
+            "requested_term_days": 360,
+        },
+    )
+    evaluation = evaluate_policy_case(
+        policy=policy,
+        catalog=catalog,
+        evaluation_id=decision_input.proposal_id,
+        field_values=decision_input.field_values,
+    )
+    decision = CreditDecision.create(
+        decision_id="decision_request_more_data",
+        policy=policy,
+        catalog=catalog,
+        decision_input=decision_input,
+        evaluation=evaluation,
+        channel="api",
+        correlation_id="corr_1234567890abcdef",
+        decided_at=NOW,
+    )
+
+    explanation = decision.to_explainable_response(catalog=catalog, audience="customer")
+
+    assert explanation.status == "requires_input"
+    assert explanation.outcome == "request_more_data"
+    assert explanation.reason_codes == ()
+    assert explanation.required_data_refs == ("requested_installments",)
+    assert explanation.validation_issue_codes == ("missing_limit_field",)
+    assert explanation.fallback_action == "request_more_data"
+
+
+def test_credit_decision_blocks_controlled_state_without_visible_equivalent_justification() -> None:
+    policy = _published_policy()
+    catalog = _published_catalog_for_outcome(
+        outcome="request_more_data",
+        reason_code_ref="rc_request_more_data",
+        reason_code_audience="internal",
+    )
+    decision_input = CreditDecisionInput.create(
+        proposal_id="proposal_hidden_controlled_reason",
+        values={
+            "monthly_income_units": 300_000,
+            "requested_amount_units": 700_000,
+            "requested_installments": 12,
+            "requested_term_days": 360,
+        },
+    )
+    evaluation = PolicyEvaluationResult(
+        evaluation_id=decision_input.proposal_id,
+        outcome="request_more_data",
+        triggered_rule_ids=("rule_request_more_data",),
+        reason_code_refs=("rc_request_more_data",),
+        factor_refs=("factor_monthly_income",),
+    )
+    decision = CreditDecision.create(
+        decision_id="decision_hidden_controlled_reason",
+        policy=policy,
+        catalog=catalog,
+        decision_input=decision_input,
+        evaluation=evaluation,
+        channel="api",
+        correlation_id="corr_1234567890abcdef",
+        decided_at=NOW,
+    )
+
+    with pytest.raises(PolicyValidationError, match="justificativa equivalente"):
+        decision.to_explainable_response(catalog=catalog, audience="customer")
+
+
+def test_credit_decision_explanation_rejects_invalid_status_and_detailed_numeric_text() -> None:
+    with pytest.raises(PolicyValidationError, match="valor não suportado"):
+        CreditDecisionExplanationResponse(
+            decision_id="decision_invalid_status",
+            proposal_id="proposal_invalid_status",
+            tenant_id="tenant_alpha",
+            product_type="personal_credit",
+            channel="api",
+            status="completed_but_wrong",
+            outcome="approve",
+            decided_at=NOW,
+            correlation_id="corr_1234567890abcdef",
+            policy_id="pol_personal_credit_default",
+            policy_version_id="polver_personal_credit_default_v1",
+            policy_revision=1,
+            reason_code_catalog_id="rcc_personal_credit_default",
+            reason_code_catalog_version_id="rccver_personal_credit_default_v1",
+            triggered_rule_ids=("rule_approval_income",),
+            reason_codes=(),
+            factors=(),
+            fallback_action=None,
+            required_data_refs=(),
+            validation_issue_codes=(),
+            validation_issues=(),
+            approved_terms=None,
+            decision_fingerprint="a" * 64,
+        )
+
+    catalog = _published_catalog(external_description="Renda 300000 compatível")
+    decision_input = CreditDecisionInput.create(
+        proposal_id="proposal_numeric_description",
+        values={
+            "monthly_income_units": 300_000,
+            "requested_amount_units": 700_000,
+            "requested_installments": 12,
+            "requested_term_days": 360,
+        },
+    )
+    evaluation = evaluate_policy_case(
+        policy=_published_policy(),
+        catalog=catalog,
+        evaluation_id=decision_input.proposal_id,
+        field_values=decision_input.field_values,
+    )
+    decision = CreditDecision.create(
+        decision_id="decision_numeric_description",
+        policy=_published_policy(),
+        catalog=catalog,
+        decision_input=decision_input,
+        evaluation=evaluation,
+        channel="api",
+        correlation_id="corr_1234567890abcdef",
+        decided_at=NOW,
+    )
+
+    with pytest.raises(PolicyValidationError, match="valor numérico detalhado"):
+        decision.to_explainable_response(catalog=catalog, audience="customer")
+
+
 def test_credit_decision_rejects_approvals_without_complete_terms() -> None:
     policy = _published_policy()
     catalog = _published_catalog()
@@ -368,6 +621,106 @@ def test_credit_decision_allows_approve_with_changes_with_governed_adjusted_term
     assert decision.approved_terms.approved_amount_units == 600_000
     assert decision.approved_terms.approved_installments == 10
     assert decision.approved_terms.approved_term_days == 300
+
+
+@pytest.mark.parametrize(
+    ("outcome", "reason_code_ref", "expected_status"),
+    (
+        ("reject", "rc_reject", "completed"),
+        ("approve_with_changes", "rc_approve_with_changes", "completed"),
+    ),
+)
+def test_credit_decision_explanation_supports_final_governed_outcomes(
+    outcome: str,
+    reason_code_ref: str,
+    expected_status: str,
+) -> None:
+    policy_limits = None
+    if outcome == "approve_with_changes":
+        policy_limits = (
+            PolicyLimit.create(
+                limit_id="limit_max_installments",
+                limit_type="max_installments",
+                value=10,
+            ),
+        )
+    policy = _published_policy(
+        rules=(_outcome_rule(outcome=outcome),),
+        limits=policy_limits,
+    )
+    catalog = _published_catalog_for_outcome(outcome=outcome, reason_code_ref=reason_code_ref)
+    decision_input = CreditDecisionInput.create(
+        proposal_id=f"proposal_{outcome}_explanation",
+        values={
+            "monthly_income_units": 300_000,
+            "requested_amount_units": 700_000,
+            "requested_installments": 12,
+            "requested_term_days": 360,
+        },
+    )
+    evaluation = evaluate_policy_case(
+        policy=policy,
+        catalog=catalog,
+        evaluation_id=decision_input.proposal_id,
+        field_values=decision_input.field_values,
+    )
+    decision = CreditDecision.create(
+        decision_id=f"decision_{outcome}_explanation",
+        policy=policy,
+        catalog=catalog,
+        decision_input=decision_input,
+        evaluation=evaluation,
+        channel="api",
+        correlation_id="corr_1234567890abcdef",
+        decided_at=NOW,
+    )
+
+    explanation = decision.to_explainable_response(catalog=catalog)
+
+    assert explanation.status == expected_status
+    assert explanation.outcome == outcome
+    assert explanation.reason_codes[0].code == reason_code_ref
+    assert explanation.factors[0].factor_id == "factor_monthly_income"
+    assert "300000" not in str(explanation)
+    assert "payload" not in str(explanation).lower()
+
+
+def test_credit_decision_explanation_supports_unable_to_decide_with_safe_fallback() -> None:
+    policy = _published_policy(
+        fallback_action=PolicyFallbackAction.create(action="unable_to_decide")
+    )
+    catalog = _published_catalog()
+    decision_input = CreditDecisionInput.create(
+        proposal_id="proposal_unable_to_decide_explanation",
+        values={
+            "monthly_income_units": 300_000,
+            "requested_amount_units": 700_000,
+            "requested_term_days": 360,
+        },
+    )
+    evaluation = evaluate_policy_case(
+        policy=policy,
+        catalog=catalog,
+        evaluation_id=decision_input.proposal_id,
+        field_values=decision_input.field_values,
+    )
+    decision = CreditDecision.create(
+        decision_id="decision_unable_to_decide_explanation",
+        policy=policy,
+        catalog=catalog,
+        decision_input=decision_input,
+        evaluation=evaluation,
+        channel="api",
+        correlation_id="corr_1234567890abcdef",
+        decided_at=NOW,
+    )
+
+    explanation = decision.to_explainable_response(catalog=catalog)
+
+    assert explanation.status == "unable_to_decide"
+    assert explanation.reason_codes == ()
+    assert explanation.fallback_action == "unable_to_decide"
+    assert explanation.validation_issue_codes == ("missing_limit_field",)
 
 
 def test_credit_decision_adjusted_terms_never_increase_requested_terms() -> None:
@@ -925,7 +1278,12 @@ def _outcome_rule(*, outcome: str) -> PolicyRule:
     )
 
 
-def _published_catalog_for_outcome(*, outcome: str, reason_code_ref: str) -> ReasonCodeCatalog:
+def _published_catalog_for_outcome(
+    *,
+    outcome: str,
+    reason_code_ref: str,
+    reason_code_audience: str = "both",
+) -> ReasonCodeCatalog:
     return ReasonCodeCatalog.create_draft(
         catalog_id="rcc_personal_credit_default",
         catalog_version_id="rccver_personal_credit_default_v1",
@@ -941,6 +1299,7 @@ def _published_catalog_for_outcome(*, outcome: str, reason_code_ref: str) -> Rea
                 internal_description="Resultado determinístico governado",
                 external_description="Resultado da política de crédito",
                 factor_refs=("factor_monthly_income",),
+                audience=reason_code_audience,
             ),
         ),
         explainable_factors=(
@@ -970,6 +1329,8 @@ def _published_catalog(
     include_reject: bool = False,
     catalog_id: str = "rcc_personal_credit_default",
     catalog_version_id: str = "rccver_personal_credit_default_v1",
+    external_description: str = "Renda declarada compatível com aprovação",
+    reason_code_audience: str = "both",
 ) -> ReasonCodeCatalog:
     reason_codes = [
         ReasonCode.create(
@@ -978,8 +1339,9 @@ def _published_catalog(
             outcome="approve",
             title="Renda mínima",
             internal_description="Renda declarada atende a política",
-            external_description="Renda declarada compatível com aprovação",
+            external_description=external_description,
             factor_refs=("factor_monthly_income",),
+            audience=reason_code_audience,
         )
     ]
     if include_reject:

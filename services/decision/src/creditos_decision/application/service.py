@@ -30,6 +30,7 @@ from creditos_decision.domain.entities import (
     ReasonCodeCatalog,
 )
 from creditos_decision.domain.errors import (
+    CreditDecisionNotFoundError,
     PolicyNotFoundError,
     PolicySimulationNotFoundError,
     PolicyTenantContextError,
@@ -38,6 +39,7 @@ from creditos_decision.domain.errors import (
 )
 from creditos_decision.domain.services.policy_evaluator import evaluate_policy_case
 from creditos_decision.domain.value_objects import (
+    CreditDecisionExplanationResponse,
     CreditDecisionInput,
     CreditDecisionInputFieldValue,
     ExplainableFactor,
@@ -49,6 +51,7 @@ from creditos_decision.domain.value_objects import (
     PolicySimulationCaseResult,
     PolicySimulationInputCase,
     ReasonCode,
+    parse_credit_decision_explanation_audience,
     validate_correlation_id,
     validate_credit_decision_id,
     validate_policy_id,
@@ -201,6 +204,18 @@ class ExecuteCreditDecisionCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class GetCreditDecisionCommand:
+    decision_id: str
+    audience: str = "customer"
+
+
+@dataclass(frozen=True, slots=True)
+class GetCreditDecisionByProposalCommand:
+    proposal_id: str
+    audience: str = "customer"
+
+
+@dataclass(frozen=True, slots=True)
 class CreditPolicyApplicationResult:
     policy: CreditPolicy
     logs: tuple[dict[str, Any], ...]
@@ -221,6 +236,13 @@ class PolicySimulationApplicationResult:
 @dataclass(frozen=True, slots=True)
 class CreditDecisionApplicationResult:
     decision: CreditDecision
+    explanation: CreditDecisionExplanationResponse
+    logs: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CreditDecisionExplanationApplicationResult:
+    explanation: CreditDecisionExplanationResponse
     logs: tuple[dict[str, Any], ...]
 
 
@@ -817,6 +839,7 @@ class DecisionApplicationService:
                 decision_audit_completed = True
 
             duration_ms = _duration_ms(started_at)
+            explanation = decision.to_explainable_response(catalog=catalog)
             repository.save(decision, before_commit=publish_audit_before_commit)
             duration_ms = _duration_ms(started_at)
             extra: dict[str, Any] = {
@@ -847,7 +870,11 @@ class DecisionApplicationService:
                 payload=command,
                 extra=extra,
             )
-            return CreditDecisionApplicationResult(decision=decision, logs=(log,))
+            return CreditDecisionApplicationResult(
+                decision=decision,
+                explanation=explanation,
+                logs=(log,),
+            )
         except Exception as error:
             skip_decision_id = (
                 decision.decision_id if decision_audit_completed and decision is not None else None
@@ -860,6 +887,7 @@ class DecisionApplicationService:
                 error=error,
                 skip_decision_id=skip_decision_id,
                 fallback_decision_id=generated_decision_id,
+                decision=decision,
             )
             self._log_operation(
                 context=context,
@@ -868,7 +896,127 @@ class DecisionApplicationService:
                 duration_ms=_duration_ms(started_at),
                 payload=command,
                 error_type=type(error).__name__,
-                extra={"error_code": getattr(error, "code", type(error).__name__)},
+                extra=_credit_decision_rejection_log_extra(
+                    command=command,
+                    error=error,
+                    decision=decision,
+                ),
+            )
+            raise
+
+    def get_credit_decision(
+        self,
+        command: GetCreditDecisionCommand,
+        *,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+    ) -> CreditDecisionExplanationApplicationResult:
+        started_at = perf_counter()
+        decision: CreditDecision | None = None
+        try:
+            operation_context = _require_policy_context(
+                context=context,
+                trusted_context=trusted_context,
+                required_scope="decision:read",
+            )
+            audience = _require_explanation_audience(
+                command.audience,
+                trusted_context=trusted_context,
+            )
+            decision_id = validate_credit_decision_id(command.decision_id)
+            decision = self._require_credit_decision_repository().get(
+                tenant_id=operation_context.tenant_id,
+                decision_id=decision_id,
+            )
+            if decision is None:
+                raise CreditDecisionNotFoundError()
+            return self._build_credit_decision_explanation_result(
+                decision=decision,
+                audience=audience,
+                context=context,
+                operation_context=operation_context,
+                started_at=started_at,
+                command=command,
+            )
+        except Exception as error:
+            self._publish_credit_decision_rejection_intent(
+                operation="credit_decision.explanation.get",
+                command=command,
+                context=context,
+                trusted_context=trusted_context,
+                error=error,
+                decision=decision,
+            )
+            self._log_operation(
+                context=context,
+                operation="credit_decision.explanation.get",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                error_type=type(error).__name__,
+                extra=_credit_decision_rejection_log_extra(
+                    command=command,
+                    error=error,
+                    decision=decision,
+                ),
+            )
+            raise
+
+    def get_credit_decision_by_proposal(
+        self,
+        command: GetCreditDecisionByProposalCommand,
+        *,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+    ) -> CreditDecisionExplanationApplicationResult:
+        started_at = perf_counter()
+        decision: CreditDecision | None = None
+        try:
+            operation_context = _require_policy_context(
+                context=context,
+                trusted_context=trusted_context,
+                required_scope="decision:read",
+            )
+            audience = _require_explanation_audience(
+                command.audience,
+                trusted_context=trusted_context,
+            )
+            proposal_id = validate_proposal_id(command.proposal_id)
+            decision = self._require_credit_decision_repository().get_by_proposal(
+                tenant_id=operation_context.tenant_id,
+                proposal_id=proposal_id,
+            )
+            if decision is None:
+                raise CreditDecisionNotFoundError()
+            return self._build_credit_decision_explanation_result(
+                decision=decision,
+                audience=audience,
+                context=context,
+                operation_context=operation_context,
+                started_at=started_at,
+                command=command,
+            )
+        except Exception as error:
+            self._publish_credit_decision_rejection_intent(
+                operation="credit_decision.explanation.get",
+                command=command,
+                context=context,
+                trusted_context=trusted_context,
+                error=error,
+                decision=decision,
+            )
+            self._log_operation(
+                context=context,
+                operation="credit_decision.explanation.get",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                error_type=type(error).__name__,
+                extra=_credit_decision_rejection_log_extra(
+                    command=command,
+                    error=error,
+                    decision=decision,
+                ),
             )
             raise
 
@@ -1293,6 +1441,48 @@ class DecisionApplicationService:
             )
             raise
 
+    def _build_credit_decision_explanation_result(
+        self,
+        *,
+        decision: CreditDecision,
+        audience: str,
+        context: ObservabilityContext,
+        operation_context: _PolicyOperationContext,
+        started_at: float,
+        command: object,
+    ) -> CreditDecisionExplanationApplicationResult:
+        catalog = self._require_reason_code_catalog_repository().get(
+            tenant_id=operation_context.tenant_id,
+            catalog_id=decision.reason_code_catalog_id,
+            catalog_version_id=decision.reason_code_catalog_version_id,
+        )
+        if catalog is None or catalog.product_type != decision.product_type:
+            raise ReasonCodeCatalogNotFoundError()
+        explanation = decision.to_explainable_response(catalog=catalog, audience=audience)
+        duration_ms = _duration_ms(started_at)
+        self._publish_credit_decision_audit_intent(
+            decision=decision,
+            event_type="credit_decision.explanation_retrieved",
+            actor_subject_id=operation_context.actor_subject_id,
+            correlation_id=context.correlation_id,
+            duration_ms=duration_ms,
+            operation="credit_decision.explanation.get",
+            safe_details=_credit_decision_explanation_safe_details(
+                explanation,
+                audience=audience,
+                duration_ms=duration_ms,
+            ),
+        )
+        log = self._log_operation(
+            context=context,
+            operation="credit_decision.explanation.get",
+            status="accepted",
+            duration_ms=duration_ms,
+            payload=command,
+            extra=_credit_decision_explanation_log_extra(explanation, audience=audience),
+        )
+        return CreditDecisionExplanationApplicationResult(explanation=explanation, logs=(log,))
+
     def _validate_policy_reason_code_refs(
         self,
         *,
@@ -1507,6 +1697,8 @@ class DecisionApplicationService:
         actor_subject_id: str,
         correlation_id: str,
         duration_ms: float | None = None,
+        operation: str = "credit_decision.execute",
+        safe_details: dict[str, str] | None = None,
     ) -> None:
         self._audit_publisher.publish(
             CreditDecisionAuditIntent(
@@ -1520,9 +1712,14 @@ class DecisionApplicationService:
                 reason_code_catalog_id=decision.reason_code_catalog_id,
                 reason_code_catalog_version_id=decision.reason_code_catalog_version_id,
                 correlation_id=correlation_id,
-                safe_details=_credit_decision_safe_details(
-                    decision,
-                    duration_ms=duration_ms,
+                safe_details=(
+                    safe_details
+                    if safe_details is not None
+                    else _credit_decision_safe_details(
+                        decision,
+                        duration_ms=duration_ms,
+                        operation=operation,
+                    )
                 ),
             )
         )
@@ -1636,9 +1833,14 @@ class DecisionApplicationService:
         error: Exception,
         skip_decision_id: str | None = None,
         fallback_decision_id: str | None = None,
+        decision: CreditDecision | None = None,
     ) -> None:
         decision_id = _safe_credit_decision_identifier(
-            getattr(command, "decision_id", None) or fallback_decision_id,
+            (
+                decision.decision_id
+                if decision is not None
+                else getattr(command, "decision_id", None) or fallback_decision_id
+            ),
             fallback="unknown_credit_decision",
         )
         if skip_decision_id is not None and decision_id == skip_decision_id:
@@ -1656,23 +1858,37 @@ class DecisionApplicationService:
                     tenant_id=tenant_id,
                     actor_subject_id=actor_subject_id,
                     decision_id=decision_id,
-                    proposal_id=_safe_proposal_identifier(
-                        getattr(command, "proposal_id", None),
-                        fallback="unknown_proposal",
+                    proposal_id=(
+                        decision.proposal_id
+                        if decision is not None
+                        else _safe_proposal_identifier(
+                            getattr(command, "proposal_id", None),
+                            fallback="unknown_proposal",
+                        )
                     ),
-                    policy_id="unknown_policy",
-                    policy_version_id="unknown_policy_version",
-                    reason_code_catalog_id="unknown_reason_code_catalog",
-                    reason_code_catalog_version_id="unknown_reason_code_catalog_version",
+                    policy_id=decision.policy_id if decision is not None else "unknown_policy",
+                    policy_version_id=(
+                        decision.policy_version_id
+                        if decision is not None
+                        else "unknown_policy_version"
+                    ),
+                    reason_code_catalog_id=(
+                        decision.reason_code_catalog_id
+                        if decision is not None
+                        else "unknown_reason_code_catalog"
+                    ),
+                    reason_code_catalog_version_id=(
+                        decision.reason_code_catalog_version_id
+                        if decision is not None
+                        else "unknown_reason_code_catalog_version"
+                    ),
                     correlation_id=correlation_id,
-                    safe_details={
-                        "operation": operation,
-                        "product_type": _safe_product_type_value(
-                            getattr(command, "product_type", None),
-                        ),
-                        "rejection_reason": getattr(error, "code", type(error).__name__),
-                        "status": "rejected",
-                    },
+                    safe_details=_credit_decision_rejection_safe_details(
+                        operation=operation,
+                        command=command,
+                        error=error,
+                        decision=decision,
+                    ),
                 )
             )
         except Exception:
@@ -1774,6 +1990,22 @@ class _ReasonCodeCatalogLookupCommand:
 class _VersionedPolicyReasonCodeValidationCommand:
     reason_code_catalog_id: str
     reason_code_catalog_version_id: str
+
+
+def _require_explanation_audience(
+    audience: str,
+    *,
+    trusted_context: PropagatedContext,
+) -> str:
+    parsed_audience = parse_credit_decision_explanation_audience(audience)
+    if parsed_audience == "internal" and (
+        "decision:explain:internal" not in set(trusted_context.trusted.scopes)
+    ):
+        raise PolicyTenantContextError(
+            "escopo obrigatório ausente",
+            code="missing_policy_scope",
+        )
+    return parsed_audience
 
 
 def _require_policy_context(
@@ -1971,12 +2203,13 @@ def _credit_decision_safe_details(
     decision: CreditDecision,
     *,
     duration_ms: float | None = None,
+    operation: str = "credit_decision.execute",
 ) -> dict[str, str]:
     details = {
         "channel": decision.channel,
         "factor_count": str(len(decision.factor_refs)),
         "fingerprint": decision.decision_fingerprint,
-        "operation": "credit_decision.execute",
+        "operation": operation,
         "outcome": decision.outcome,
         "policy_id": decision.policy_id,
         "reason_code_catalog_id": decision.reason_code_catalog_id,
@@ -2003,6 +2236,160 @@ def _credit_decision_safe_details(
             sorted({issue.code for issue in decision.validation_issues})
         )
     return details
+
+
+def _credit_decision_explanation_safe_details(
+    explanation: CreditDecisionExplanationResponse,
+    *,
+    audience: str,
+    duration_ms: float | None = None,
+) -> dict[str, str]:
+    details = {
+        "audience": audience,
+        "channel": explanation.channel,
+        "decision_id": explanation.decision_id,
+        "factor_count": str(len(explanation.factors)),
+        "fingerprint": explanation.decision_fingerprint,
+        "operation": "credit_decision.explanation.get",
+        "outcome": explanation.outcome,
+        "policy_id": explanation.policy_id,
+        "policy_revision": str(explanation.policy_revision),
+        "policy_version_id": explanation.policy_version_id,
+        "product_type": explanation.product_type,
+        "proposal_id": explanation.proposal_id,
+        "reason_code_catalog_id": explanation.reason_code_catalog_id,
+        "reason_code_catalog_version_id": explanation.reason_code_catalog_version_id,
+        "reason_code_count": str(len(explanation.reason_codes)),
+        "status": explanation.status,
+        "triggered_rule_count": str(len(explanation.triggered_rule_ids)),
+        "validation_issue_count": str(len(explanation.validation_issues)),
+    }
+    if duration_ms is not None:
+        details["duration_ms"] = str(duration_ms)
+    if explanation.fallback_action is not None:
+        details["fallback_action"] = explanation.fallback_action
+    if explanation.required_data_refs:
+        details["required_data_count"] = str(len(explanation.required_data_refs))
+        details["required_data_refs"] = ",".join(sorted(explanation.required_data_refs))
+    if explanation.validation_issue_codes:
+        details["validation_issue_codes"] = ",".join(sorted(explanation.validation_issue_codes))
+    return details
+
+
+def _credit_decision_explanation_log_extra(
+    explanation: CreditDecisionExplanationResponse,
+    *,
+    audience: str,
+) -> dict[str, Any]:
+    extra: dict[str, Any] = {
+        "audience": audience,
+        "channel": explanation.channel,
+        "decision_id": explanation.decision_id,
+        "factor_count": len(explanation.factors),
+        "fingerprint": explanation.decision_fingerprint,
+        "outcome": explanation.outcome,
+        "policy_id": explanation.policy_id,
+        "policy_revision": explanation.policy_revision,
+        "policy_version_id": explanation.policy_version_id,
+        "product_type": explanation.product_type,
+        "proposal_id": explanation.proposal_id,
+        "reason_code_catalog_id": explanation.reason_code_catalog_id,
+        "reason_code_catalog_version_id": explanation.reason_code_catalog_version_id,
+        "reason_code_count": len(explanation.reason_codes),
+        "status": explanation.status,
+        "triggered_rule_count": len(explanation.triggered_rule_ids),
+        "validation_issue_count": len(explanation.validation_issues),
+    }
+    if explanation.fallback_action is not None:
+        extra["fallback_action"] = explanation.fallback_action
+    if explanation.required_data_refs:
+        extra["required_data_count"] = len(explanation.required_data_refs)
+        extra["required_data_refs"] = tuple(sorted(explanation.required_data_refs))
+    if explanation.validation_issue_codes:
+        extra["validation_issue_codes"] = tuple(sorted(explanation.validation_issue_codes))
+    return extra
+
+
+def _credit_decision_rejection_safe_details(
+    *,
+    operation: str,
+    command: Any,
+    error: Exception,
+    decision: CreditDecision | None,
+) -> dict[str, str]:
+    if decision is not None:
+        details = _credit_decision_safe_details(decision, operation=operation)
+        details["status"] = "rejected"
+    else:
+        details = {
+            "decision_id": _safe_credit_decision_identifier(
+                getattr(command, "decision_id", None),
+                fallback="unknown_credit_decision",
+            ),
+            "operation": operation,
+            "product_type": _safe_product_type_value(getattr(command, "product_type", None)),
+            "proposal_id": _safe_proposal_identifier(
+                getattr(command, "proposal_id", None),
+                fallback="unknown_proposal",
+            ),
+            "status": "rejected",
+        }
+    if hasattr(command, "audience"):
+        details["audience"] = _safe_explanation_audience(getattr(command, "audience", None))
+    details["rejection_reason"] = getattr(error, "code", type(error).__name__)
+    return details
+
+
+def _credit_decision_rejection_log_extra(
+    *,
+    command: Any,
+    error: Exception,
+    decision: CreditDecision | None,
+) -> dict[str, Any]:
+    if decision is not None:
+        extra: dict[str, Any] = {
+            "channel": decision.channel,
+            "decision_id": decision.decision_id,
+            "error_code": getattr(error, "code", type(error).__name__),
+            "factor_count": len(decision.factor_refs),
+            "fingerprint": decision.decision_fingerprint,
+            "outcome": decision.outcome,
+            "policy_id": decision.policy_id,
+            "policy_revision": decision.policy_revision,
+            "policy_version_id": decision.policy_version_id,
+            "product_type": decision.product_type,
+            "proposal_id": decision.proposal_id,
+            "reason_code_catalog_id": decision.reason_code_catalog_id,
+            "reason_code_catalog_version_id": decision.reason_code_catalog_version_id,
+            "reason_code_count": len(decision.reason_code_refs),
+            "triggered_rule_count": len(decision.triggered_rule_ids),
+            "validation_issue_count": len(decision.validation_issues),
+        }
+    else:
+        extra = {
+            "decision_id": _safe_credit_decision_identifier(
+                getattr(command, "decision_id", None),
+                fallback="unknown_credit_decision",
+            ),
+            "error_code": getattr(error, "code", type(error).__name__),
+            "product_type": _safe_product_type_value(getattr(command, "product_type", None)),
+            "proposal_id": _safe_proposal_identifier(
+                getattr(command, "proposal_id", None),
+                fallback="unknown_proposal",
+            ),
+        }
+    if hasattr(command, "audience"):
+        extra["audience"] = _safe_explanation_audience(getattr(command, "audience", None))
+    return extra
+
+
+def _safe_explanation_audience(value: object) -> str:
+    if not isinstance(value, str):
+        return "customer"
+    try:
+        return parse_credit_decision_explanation_audience(value)
+    except Exception:
+        return "unknown_audience"
 
 
 def _validate_fallback_reason_code_refs(

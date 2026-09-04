@@ -18,11 +18,19 @@ from creditos_decision.application.service import (
     CreateCreditPolicyDraftCommand,
     DecisionApplicationService,
     ExecuteCreditDecisionCommand,
+    GetCreditDecisionByProposalCommand,
+    GetCreditDecisionCommand,
     PublishCreditPolicyCommand,
     RunPolicySimulationCommand,
 )
 from creditos_decision.domain.entities import CreditPolicy, ReasonCodeCatalog
-from creditos_decision.domain.errors import PolicyNotFoundError, PolicyTenantContextError
+from creditos_decision.domain.errors import (
+    CreditDecisionNotFoundError,
+    PolicyNotFoundError,
+    PolicyTenantContextError,
+    PolicyValidationError,
+    ReasonCodeCatalogNotFoundError,
+)
 from creditos_decision.domain.value_objects import (
     CreditDecisionInputFieldValue,
     ExplainableFactor,
@@ -76,6 +84,15 @@ def test_execute_credit_decision_persists_productive_decision_with_minimized_aud
     assert result.decision.policy_version_id == published_policy.policy_version_id
     assert result.decision.policy_revision == published_policy.revision
     assert result.decision.outcome == "approve"
+    assert result.explanation.decision_id == result.decision.decision_id
+    assert result.explanation.status == "completed"
+    assert result.explanation.reason_codes[0].description == (
+        "Renda declarada compatível com aprovação"
+    )
+    assert result.explanation.factors[0].description == "Renda declarada informada para análise"
+    assert result.explanation.policy_version_id == published_policy.policy_version_id
+    assert result.explanation.decision_fingerprint == result.decision.decision_fingerprint
+    assert "300000" not in str(result.explanation)
     assert result.decision.reason_code_refs == ("rc_min_income",)
     assert result.decision.factor_refs == ("factor_monthly_income",)
     assert result.logs[0]["payload"] == "[OMITIDO]"
@@ -109,6 +126,198 @@ def test_execute_credit_decision_persists_productive_decision_with_minimized_aud
     assert event.safe_details["status"] == "completed"
     assert event.safe_details["triggered_rule_count"] == "1"
     assert event.safe_details["validation_issue_count"] == "0"
+
+
+def test_get_credit_decision_returns_explainable_response_by_id_and_proposal() -> None:
+    audit = RecordingAuditPublisher()
+    decision_repository = InMemoryCreditDecisionRepository()
+    service = _service(audit=audit, decision_repository=decision_repository)
+    _create_and_publish_policy(service)
+    executed = service.execute_credit_decision(
+        _execute_command(),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+    )
+
+    by_id = service.get_credit_decision(
+        GetCreditDecisionCommand(decision_id=executed.decision.decision_id),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:read",)),
+    )
+    by_proposal = service.get_credit_decision_by_proposal(
+        GetCreditDecisionByProposalCommand(proposal_id=executed.decision.proposal_id),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:read",)),
+    )
+
+    assert by_id.explanation == by_proposal.explanation
+    assert by_id.explanation.decision_id == "decision_personal_credit_001"
+    assert by_id.explanation.proposal_id == "proposal_personal_credit_001"
+    assert by_id.explanation.reason_codes[0].code == "rc_min_income"
+    assert by_id.explanation.triggered_rule_ids == ("rule_min_income",)
+    assert by_id.logs[0]["operation"] == "credit_decision.explanation.get"
+    assert by_id.logs[0]["payload"] == "[OMITIDO]"
+    assert by_id.logs[0]["extra"]["reason_code_count"] == 1
+    assert "300000" not in str(by_id.logs[0])
+    assert isinstance(audit.events[-1], CreditDecisionAuditIntent)
+    assert audit.events[-1].event_type == "credit_decision.explanation_retrieved"
+    assert audit.events[-1].safe_details["operation"] == "credit_decision.explanation.get"
+    assert audit.events[-1].safe_details["audience"] == "customer"
+    assert audit.events[-1].safe_details["reason_code_count"] == "1"
+    assert audit.events[-1].safe_details["factor_count"] == "1"
+
+
+def test_get_credit_decision_requires_read_scope_and_hides_cross_tenant_decisions() -> None:
+    audit = RecordingAuditPublisher()
+    decision_repository = InMemoryCreditDecisionRepository()
+    service = _service(audit=audit, decision_repository=decision_repository)
+    _create_and_publish_policy(service)
+    service.execute_credit_decision(
+        _execute_command(),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+    )
+
+    with pytest.raises(PolicyTenantContextError, match="escopo obrigatório ausente"):
+        service.get_credit_decision(
+            GetCreditDecisionCommand(decision_id="decision_personal_credit_001"),
+            context=_context("tenant_alpha"),
+            trusted_context=_trusted_context(scopes=("policy:read",)),
+        )
+
+    with pytest.raises(CreditDecisionNotFoundError):
+        service.get_credit_decision(
+            GetCreditDecisionCommand(decision_id="decision_personal_credit_001"),
+            context=_context("tenant_beta"),
+            trusted_context=_trusted_context(
+                tenant_id="tenant_beta",
+                scopes=("decision:read",),
+            ),
+        )
+    assert service.logged_events[-1]["extra"]["decision_id"] == "decision_personal_credit_001"
+
+    with pytest.raises(CreditDecisionNotFoundError):
+        service.get_credit_decision_by_proposal(
+            GetCreditDecisionByProposalCommand(proposal_id="proposal_personal_credit_001"),
+            context=_context("tenant_beta"),
+            trusted_context=_trusted_context(
+                tenant_id="tenant_beta",
+                scopes=("decision:read",),
+            ),
+        )
+    assert service.logged_events[-1]["extra"]["proposal_id"] == "proposal_personal_credit_001"
+
+    with pytest.raises(PolicyTenantContextError, match="tier de tenant não suportado"):
+        service.get_credit_decision(
+            GetCreditDecisionCommand(decision_id="decision_personal_credit_001"),
+            context=_context("tenant_alpha", tenant_isolation_tier="silo"),
+            trusted_context=_trusted_context(
+                scopes=("decision:read",),
+                tenant_isolation_tier="silo",
+            ),
+        )
+
+
+def test_get_credit_decision_blocks_internal_explanation_without_explicit_scope() -> None:
+    audit = RecordingAuditPublisher()
+    service = _service(audit=audit)
+    _create_and_publish_policy(service)
+    service.execute_credit_decision(
+        _execute_command(),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+    )
+
+    with pytest.raises(PolicyTenantContextError, match="escopo obrigatório ausente"):
+        service.get_credit_decision(
+            GetCreditDecisionCommand(
+                decision_id="decision_personal_credit_001",
+                audience="internal",
+            ),
+            context=_context("tenant_alpha"),
+            trusted_context=_trusted_context(scopes=("decision:read",)),
+        )
+
+    result = service.get_credit_decision(
+        GetCreditDecisionCommand(
+            decision_id="decision_personal_credit_001",
+            audience="internal",
+        ),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(
+            scopes=("decision:read", "decision:explain:internal"),
+        ),
+    )
+
+    assert result.explanation.reason_codes[0].description == "Renda declarada atende a política"
+    assert result.logs[0]["extra"]["audience"] == "internal"
+    assert audit.events[-1].safe_details["audience"] == "internal"
+
+
+def test_execute_credit_decision_does_not_persist_without_customer_visible_explanation() -> None:
+    audit = RecordingAuditPublisher()
+    decision_repository = InMemoryCreditDecisionRepository()
+    service = _service(
+        audit=audit,
+        decision_repository=decision_repository,
+        catalog_repository=_published_catalog_repository(reason_code_audience="internal"),
+    )
+    _create_and_publish_policy(service)
+
+    with pytest.raises(PolicyValidationError, match="justificativa governada"):
+        service.execute_credit_decision(
+            _execute_command(),
+            context=_context("tenant_alpha"),
+            trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+        )
+
+    assert (
+        decision_repository.get(
+            tenant_id="tenant_alpha",
+            decision_id="decision_personal_credit_001",
+        )
+        is None
+    )
+    assert audit.events[-1].event_type == "credit_decision.rejected"
+
+
+def test_get_credit_decision_rejection_after_lookup_keeps_known_safe_metadata() -> None:
+    audit = RecordingAuditPublisher()
+    decision_repository = InMemoryCreditDecisionRepository()
+    bootstrap_service = _service(
+        audit=audit,
+        decision_repository=decision_repository,
+    )
+    _create_and_publish_policy(bootstrap_service)
+    bootstrap_service.execute_credit_decision(
+        _execute_command(),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+    )
+    broken_service = _service(
+        audit=audit,
+        decision_repository=decision_repository,
+        catalog_repository=InMemoryReasonCodeCatalogRepository(),
+    )
+
+    with pytest.raises(ReasonCodeCatalogNotFoundError):
+        broken_service.get_credit_decision(
+            GetCreditDecisionCommand(decision_id="decision_personal_credit_001"),
+            context=_context("tenant_alpha"),
+            trusted_context=_trusted_context(scopes=("decision:read",)),
+        )
+
+    event = audit.events[-1]
+    assert isinstance(event, CreditDecisionAuditIntent)
+    assert event.event_type == "credit_decision.rejected"
+    assert event.policy_id == "pol_personal_credit_default"
+    assert event.reason_code_catalog_id == "rcc_personal_credit_default"
+    assert event.safe_details["outcome"] == "approve"
+    assert event.safe_details["reason_code_count"] == "1"
+    assert broken_service.logged_events[-1]["extra"]["decision_id"] == (
+        "decision_personal_credit_001"
+    )
+    assert broken_service.logged_events[-1]["extra"]["policy_id"] == "pol_personal_credit_default"
 
 
 def test_execute_credit_decision_has_stable_fingerprint_and_controls_duplicate_proposal() -> None:
@@ -511,6 +720,7 @@ def _rule(*, rule_id: str, outcome: str) -> PolicyRule:
 def _published_catalog_repository(
     *,
     include_reject: bool = False,
+    reason_code_audience: str = "both",
 ) -> InMemoryReasonCodeCatalogRepository:
     repository = InMemoryReasonCodeCatalogRepository()
     draft = ReasonCodeCatalog.create_draft(
@@ -519,7 +729,10 @@ def _published_catalog_repository(
         tenant_id="tenant_alpha",
         owner_subject_id="user_credit_manager",
         product_type="personal_credit",
-        reason_codes=_reason_codes(include_reject=include_reject),
+        reason_codes=_reason_codes(
+            include_reject=include_reject,
+            reason_code_audience=reason_code_audience,
+        ),
         explainable_factors=(
             ExplainableFactor.create(
                 factor_id="factor_monthly_income",
@@ -546,7 +759,11 @@ def _published_catalog_repository(
     return repository
 
 
-def _reason_codes(*, include_reject: bool) -> tuple[ReasonCode, ...]:
+def _reason_codes(
+    *,
+    include_reject: bool,
+    reason_code_audience: str = "both",
+) -> tuple[ReasonCode, ...]:
     reason_codes = [
         ReasonCode.create(
             reason_code_id="reason_min_income",
@@ -556,6 +773,7 @@ def _reason_codes(*, include_reject: bool) -> tuple[ReasonCode, ...]:
             internal_description="Renda declarada atende a política",
             external_description="Renda declarada compatível com aprovação",
             factor_refs=("factor_monthly_income",),
+            audience=reason_code_audience,
         )
     ]
     if include_reject:
@@ -573,26 +791,31 @@ def _reason_codes(*, include_reject: bool) -> tuple[ReasonCode, ...]:
     return tuple(reason_codes)
 
 
-def _context(tenant_id: str | None) -> ObservabilityContext:
+def _context(
+    tenant_id: str | None,
+    *,
+    tenant_isolation_tier: str = "bridge",
+) -> ObservabilityContext:
     return ObservabilityContext.new(
         correlation_id="corr_1234567890abcdef",
         request_id="req_1234567890abcdef",
         trace_id="1234567890abcdef1234567890abcdef",
         tenant_id=tenant_id,
-        tenant_isolation_tier="bridge",
+        tenant_isolation_tier=tenant_isolation_tier,
     )
 
 
 def _trusted_context(
     *,
     tenant_id: str = "tenant_alpha",
+    tenant_isolation_tier: str = "bridge",
     subject_id: str = "user_credit_manager",
     scopes: tuple[str, ...] = ("decision:execute", "policy:read"),
 ) -> PropagatedContext:
     return PropagatedContext(
         trusted=TrustedContext(
             tenant_id=tenant_id,
-            tenant_isolation_tier="bridge",
+            tenant_isolation_tier=tenant_isolation_tier,
             subject_id=subject_id,
             scopes=scopes,
             roles=("credit-manager",),
