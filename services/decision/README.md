@@ -99,6 +99,24 @@ O tratamento de propostas inconclusivas sem fila manual adiciona fallback govern
 
 Ficam fora desta etapa: contrato público de resposta explicável, dashboards, Reporting Service, Automated Review Service, API HTTP/gRPC real, NATS JetStream, banco real, outbox e integrações externas reais.
 
+## Story 4.7
+
+A resposta explicável de decisão adiciona uma projeção segura e governada para decisões produtivas:
+
+- resposta `CreditDecisionExplanationResponse` derivada da decisão persistida e do catálogo versionado publicado;
+- campos técnicos para rastreabilidade: decisão, proposta, tenant, produto, canal, outcome, status, data, correlação, política, catálogo, regras acionadas e fingerprint;
+- reason codes e fatores filtrados por audiência, usando descrições externas por padrão e descrições internas somente com scope explícito;
+- consultas internas por `decision_id` e `proposal_id` com scope `decision:read`, contexto confiável e tenant isolation `bridge`;
+- cross-tenant continua indistinguível de decisão inexistente;
+- execução produtiva passa a retornar `decision` e `explanation`, mantendo compatibilidade com consumidores que usam `result.decision`;
+- decisões finais `approve`, `reject` e `approve_with_changes` exigem reason code ativo e coerente com o catálogo;
+- estados controlados `request_more_data` e `unable_to_decide` exigem justificativa equivalente por lacunas, issues, fallback ou reason code;
+- logs e auditoria de leitura/explicação registram apenas metadados seguros, contagens e referências técnicas, com payload omitido.
+
+A resposta explicável não expõe `field_values`, `requested_terms`, CPF, CNPJ, e-mail, nome, telefone, endereço, headers sensíveis, tokens, secrets, payload bruto ou resposta bruta de fornecedor.
+
+Ficam fora desta etapa: API pública HTTP, contrato OpenAPI externo, gRPC real, NATS JetStream, webhooks, dashboards, Reporting Service, banco real e integração com IA.
+
 ## Arquitetura
 
 O serviço segue DDD + arquitetura hexagonal:

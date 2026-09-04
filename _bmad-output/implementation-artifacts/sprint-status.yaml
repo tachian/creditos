@@ -86,7 +86,7 @@ development_status:
   4-4-publicacao-imutavel-de-politica-aprovada: done
   4-5-execucao-deterministica-de-decisao: done
   4-6-tratamento-de-propostas-inconclusivas-sem-fila-manual: done
-  4-7-resposta-explicavel-de-decisao: backlog
+  4-7-resposta-explicavel-de-decisao: done
   4-8-gates-de-decisao-politica-e-explicabilidade: backlog
   epic-4-retrospective: optional
   epic-5: backlog

@@ -21,3 +21,7 @@
 ## Deferred from: code review of 4-6-tratamento-de-propostas-inconclusivas-sem-fila-manual (2026-09-02)
 
 - Fingerprint governado ainda usa serialização baseada em `repr`, criando risco futuro de reprodutibilidade entre refactors. É um endurecimento transversal e preexistente do modelo de política; a Story 4.6 apenas adicionou `fallback_action` ao fingerprint existente.
+
+## Deferred from: code review of 4-7-resposta-explicavel-de-decisao (2026-09-04)
+
+- Suíte completa depende de `uv` disponível no ambiente local: a regressão completa fora do sandbox passou em 528 testes e falhou apenas em `tests/test_local_harness.py:120` por `scripts/dev: line 47: uv: command not found`, condição ambiental preexistente ao código da Story 4.7.

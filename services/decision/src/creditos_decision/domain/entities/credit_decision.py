@@ -10,8 +10,14 @@ from creditos_decision.domain.entities.reason_code_catalog import ReasonCodeCata
 from creditos_decision.domain.errors import PolicyValidationError
 from creditos_decision.domain.value_objects.credit_decision import (
     CreditDecisionApprovedTerms,
+    CreditDecisionExplanationFactor,
+    CreditDecisionExplanationIssue,
+    CreditDecisionExplanationReasonCode,
+    CreditDecisionExplanationResponse,
     CreditDecisionInput,
     input_fingerprint_for,
+    parse_credit_decision_explanation_audience,
+    reason_code_visible_for_audience,
     validate_credit_decision_id,
     validate_decided_at,
     validate_proposal_id,
@@ -33,6 +39,8 @@ from creditos_decision.domain.value_objects.policy_evaluation import (
     PolicyEvaluationResult,
 )
 from creditos_decision.domain.value_objects.reason_codes import (
+    ReasonCodeAudience,
+    ReasonCodeStatus,
     validate_reason_code_catalog_id,
     validate_reason_code_catalog_version_id,
 )
@@ -143,6 +151,13 @@ class CreditDecision:
             "required_data_refs",
             _validate_unique_ids(self.required_data_refs, field_path="required_data_refs"),
         )
+        _validate_governed_justification(
+            outcome=self.outcome,
+            reason_code_refs=self.reason_code_refs,
+            required_data_refs=self.required_data_refs,
+            validation_issues=self.validation_issues,
+            fallback_action=self.fallback_action,
+        )
         object.__setattr__(
             self,
             "input_fingerprint",
@@ -223,6 +238,11 @@ class CreditDecision:
                 code="credit_decision_evaluation_mismatch",
                 field_path="evaluation_id",
             )
+        _validate_decision_reason_codes_against_catalog(
+            catalog=catalog,
+            outcome=evaluation.outcome,
+            reason_code_refs=evaluation.reason_code_refs,
+        )
         approved_terms = (
             CreditDecisionApprovedTerms.from_decision_input(decision_input)
             if evaluation.outcome == PolicyOutcome.APPROVE.value
@@ -294,6 +314,294 @@ class CreditDecision:
                 required_data_refs=evaluation.required_data_refs,
             ),
         )
+
+    def to_explainable_response(
+        self,
+        *,
+        catalog: ReasonCodeCatalog,
+        audience: str = "customer",
+    ) -> CreditDecisionExplanationResponse:
+        _validate_decision_catalog(self, catalog)
+        parsed_audience = parse_credit_decision_explanation_audience(audience)
+        reason_codes = _explainable_reason_codes(
+            outcome=self.outcome,
+            reason_code_refs=self.reason_code_refs,
+            catalog=catalog,
+            audience=parsed_audience,
+        )
+        factors = _explainable_factors(
+            factor_refs=_visible_factor_refs(
+                factor_refs=self.factor_refs,
+                reason_code_refs=self.reason_code_refs,
+                catalog=catalog,
+                audience=parsed_audience,
+            ),
+            catalog=catalog,
+            audience=parsed_audience,
+        )
+        validation_issues = tuple(
+            CreditDecisionExplanationIssue(
+                code=issue.code,
+                field_path=issue.field_path,
+                message=issue.message,
+            )
+            for issue in self.validation_issues
+        )
+        _validate_visible_equivalent_justification(
+            outcome=self.outcome,
+            visible_reason_codes=reason_codes,
+            required_data_refs=self.required_data_refs,
+            validation_issues=validation_issues,
+            fallback_action=self.fallback_action,
+        )
+        return CreditDecisionExplanationResponse(
+            decision_id=self.decision_id,
+            proposal_id=self.proposal_id,
+            tenant_id=self.tenant_id,
+            product_type=self.product_type,
+            channel=self.channel,
+            status=_decision_explanation_status(self.outcome),
+            outcome=self.outcome,
+            decided_at=self.decided_at,
+            correlation_id=self.correlation_id,
+            policy_id=self.policy_id,
+            policy_version_id=self.policy_version_id,
+            policy_revision=self.policy_revision,
+            reason_code_catalog_id=self.reason_code_catalog_id,
+            reason_code_catalog_version_id=self.reason_code_catalog_version_id,
+            triggered_rule_ids=self.triggered_rule_ids,
+            reason_codes=reason_codes,
+            factors=factors,
+            fallback_action=self.fallback_action,
+            required_data_refs=self.required_data_refs,
+            validation_issue_codes=tuple(sorted({issue.code for issue in self.validation_issues})),
+            validation_issues=validation_issues,
+            approved_terms=self.approved_terms,
+            decision_fingerprint=self.decision_fingerprint,
+        )
+
+
+_FINAL_OUTCOMES = frozenset(
+    {
+        PolicyOutcome.APPROVE.value,
+        PolicyOutcome.REJECT.value,
+        PolicyOutcome.APPROVE_WITH_CHANGES.value,
+    }
+)
+_CONTROLLED_OUTCOMES = frozenset(
+    {
+        PolicyOutcome.REQUEST_MORE_DATA.value,
+        PolicyOutcome.UNABLE_TO_DECIDE.value,
+    }
+)
+
+
+def _validate_governed_justification(
+    *,
+    outcome: str,
+    reason_code_refs: tuple[str, ...],
+    required_data_refs: tuple[str, ...],
+    validation_issues: tuple[PolicyEvaluationIssue, ...],
+    fallback_action: str | None,
+) -> None:
+    if outcome in _FINAL_OUTCOMES and not reason_code_refs:
+        raise PolicyValidationError(
+            "decisão final exige justificativa governada",
+            code="credit_decision_requires_governed_justification",
+            field_path="reason_code_refs",
+        )
+    if outcome in _CONTROLLED_OUTCOMES and not (
+        reason_code_refs or required_data_refs or validation_issues or fallback_action
+    ):
+        raise PolicyValidationError(
+            "decisão controlada exige justificativa equivalente governada",
+            code="credit_decision_requires_equivalent_justification",
+            field_path="required_data_refs",
+        )
+
+
+def _validate_decision_reason_codes_against_catalog(
+    *,
+    catalog: ReasonCodeCatalog,
+    outcome: str,
+    reason_code_refs: tuple[str, ...],
+) -> None:
+    by_code = {reason_code.code: reason_code for reason_code in catalog.reason_codes}
+    for reason_code_ref in reason_code_refs:
+        reason_code = by_code.get(reason_code_ref)
+        if reason_code is None:
+            raise PolicyValidationError(
+                "reason code inexistente",
+                code="unknown_reason_code",
+                field_path="reason_code_refs",
+            )
+        if reason_code.status != ReasonCodeStatus.ACTIVE.value:
+            raise PolicyValidationError(
+                "reason code não ativo",
+                code="inactive_reason_code",
+                field_path="reason_code_refs",
+            )
+        if reason_code.outcome != outcome:
+            raise PolicyValidationError(
+                "reason code incompatível",
+                code="reason_code_outcome_mismatch",
+                field_path="reason_code_refs",
+            )
+
+
+def _validate_decision_catalog(
+    decision: CreditDecision,
+    catalog: ReasonCodeCatalog,
+) -> None:
+    if (
+        catalog.tenant_id != decision.tenant_id
+        or catalog.product_type != decision.product_type
+        or catalog.catalog_id != decision.reason_code_catalog_id
+        or catalog.catalog_version_id != decision.reason_code_catalog_version_id
+    ):
+        raise PolicyValidationError(
+            "catálogo incompatível com decisão",
+            code="credit_decision_catalog_mismatch",
+            field_path="reason_code_catalog_version_id",
+        )
+    if not catalog.is_referenceable_for_final_decisions:
+        raise PolicyValidationError(
+            "decisão exige catálogo publicado",
+            code="credit_decision_requires_published_catalog",
+            field_path="reason_code_catalog_version_id",
+        )
+    _validate_decision_reason_codes_against_catalog(
+        catalog=catalog,
+        outcome=decision.outcome,
+        reason_code_refs=decision.reason_code_refs,
+    )
+
+
+def _explainable_reason_codes(
+    *,
+    outcome: str,
+    reason_code_refs: tuple[str, ...],
+    catalog: ReasonCodeCatalog,
+    audience: str,
+) -> tuple[CreditDecisionExplanationReasonCode, ...]:
+    by_code = {reason_code.code: reason_code for reason_code in catalog.reason_codes}
+    reason_codes = []
+    for reason_code_ref in reason_code_refs:
+        reason_code = by_code[reason_code_ref]
+        if not reason_code_visible_for_audience(
+            reason_code_audience=reason_code.audience,
+            audience=audience,
+        ):
+            continue
+        description = (
+            reason_code.internal_description
+            if audience == ReasonCodeAudience.INTERNAL.value
+            else reason_code.external_description
+        )
+        reason_codes.append(
+            CreditDecisionExplanationReasonCode(
+                code=reason_code.code,
+                title=reason_code.title,
+                description=description,
+                severity=reason_code.severity,
+            )
+        )
+    if outcome in _FINAL_OUTCOMES and not reason_codes:
+        raise PolicyValidationError(
+            "decisão final exige justificativa governada",
+            code="credit_decision_requires_governed_justification",
+            field_path="reason_code_refs",
+        )
+    return tuple(reason_codes)
+
+
+def _explainable_factors(
+    *,
+    factor_refs: tuple[str, ...],
+    catalog: ReasonCodeCatalog,
+    audience: str,
+) -> tuple[CreditDecisionExplanationFactor, ...]:
+    by_factor = {factor.factor_id: factor for factor in catalog.explainable_factors}
+    factors = []
+    for factor_ref in factor_refs:
+        factor = by_factor.get(factor_ref)
+        if factor is None:
+            raise PolicyValidationError(
+                "fator explicável inexistente",
+                code="unknown_explainable_factor",
+                field_path="factor_refs",
+            )
+        if not reason_code_visible_for_audience(
+            reason_code_audience=factor.audience,
+            audience=audience,
+        ):
+            continue
+        description = (
+            factor.internal_description
+            if audience == ReasonCodeAudience.INTERNAL.value
+            else factor.external_description
+        )
+        factors.append(
+            CreditDecisionExplanationFactor(
+                factor_id=factor.factor_id,
+                field=factor.field,
+                title=factor.title,
+                description=description,
+                required=factor.required,
+            )
+        )
+    return tuple(factors)
+
+
+def _visible_factor_refs(
+    *,
+    factor_refs: tuple[str, ...],
+    reason_code_refs: tuple[str, ...],
+    catalog: ReasonCodeCatalog,
+    audience: str,
+) -> tuple[str, ...]:
+    if not reason_code_refs:
+        return factor_refs
+    by_code = {reason_code.code: reason_code for reason_code in catalog.reason_codes}
+    visible_refs = []
+    for reason_code_ref in reason_code_refs:
+        reason_code = by_code[reason_code_ref]
+        if not reason_code_visible_for_audience(
+            reason_code_audience=reason_code.audience,
+            audience=audience,
+        ):
+            continue
+        visible_refs.extend(
+            factor_ref for factor_ref in reason_code.factor_refs if factor_ref in factor_refs
+        )
+    return tuple(dict.fromkeys(visible_refs))
+
+
+def _validate_visible_equivalent_justification(
+    *,
+    outcome: str,
+    visible_reason_codes: tuple[CreditDecisionExplanationReasonCode, ...],
+    required_data_refs: tuple[str, ...],
+    validation_issues: tuple[CreditDecisionExplanationIssue, ...],
+    fallback_action: str | None,
+) -> None:
+    if outcome not in _CONTROLLED_OUTCOMES:
+        return
+    if visible_reason_codes or required_data_refs or validation_issues or fallback_action:
+        return
+    raise PolicyValidationError(
+        "decisão controlada exige justificativa equivalente governada",
+        code="credit_decision_requires_equivalent_justification",
+        field_path="required_data_refs",
+    )
+
+
+def _decision_explanation_status(outcome: str) -> str:
+    if outcome in _FINAL_OUTCOMES:
+        return "completed"
+    if outcome == PolicyOutcome.REQUEST_MORE_DATA.value:
+        return "requires_input"
+    return "unable_to_decide"
 
 
 def _compute_decision_fingerprint(decision: CreditDecision) -> str:
