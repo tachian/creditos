@@ -117,6 +117,21 @@ A resposta explicável não expõe `field_values`, `requested_terms`, CPF, CNPJ,
 
 Ficam fora desta etapa: API pública HTTP, contrato OpenAPI externo, gRPC real, NATS JetStream, webhooks, dashboards, Reporting Service, banco real e integração com IA.
 
+## Story 4.8
+
+Os gates de decisão, política e explicabilidade consolidam regressões para encerrar o Epic 4:
+
+- cobertura transversal do ciclo de política: criação, catálogo de reason codes, simulação, publicação, execução, inconclusão e resposta explicável;
+- validação de que decisões finais sempre carregam refs de política, versão/revisão, catálogo versionado e reason codes governados quando aplicável;
+- verificação de determinismo com fingerprint decisório estável para a mesma entrada canônica, sem depender de `decision_id`, timestamp ou `correlation_id`;
+- proteção contra IA, integração externa, provider payload ou resultado proprietário como decisor final direto;
+- preservação de `CreditDecision`/`Decision Service` como fonte única transacional da decisão final no MVP;
+- regressões para justificativa visível em decisões finais e justificativa equivalente segura em estados controlados;
+- gates de privacidade para impedir CPF, CNPJ, e-mail, nome, telefone, endereço, tokens, secrets, headers sensíveis, payload bruto ou renda detalhada em respostas, logs e auditoria;
+- testes de autorização, `tenant_isolation_tier=bridge`, cross-tenant indistinguível de not found e auditoria/logs minimizados.
+
+Esta etapa não adiciona tecnologia, dependência, endpoint público, OpenAPI externo, gRPC real, NATS, banco real, IA real, serviço novo ou outbox. Lacunas estruturais descobertas pelos gates devem ser registradas como trabalho futuro, não resolvidas com overbuild local.
+
 ## Arquitetura
 
 O serviço segue DDD + arquitetura hexagonal:
