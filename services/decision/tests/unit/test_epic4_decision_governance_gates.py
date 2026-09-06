@@ -193,7 +193,7 @@ def test_epic4_explainability_gate_requires_visible_justification_and_safe_outpu
 
     with pytest.raises(PolicyValidationError) as customer_error:
         decision.to_explainable_response(catalog=internal_only_catalog, audience="customer")
-    assert customer_error.value.code == "credit_decision_requires_customer_visible_reason_code"
+    assert customer_error.value.code == "credit_decision_requires_audience_visible_reason_code"
 
     internal_explanation = decision.to_explainable_response(
         catalog=internal_only_catalog,

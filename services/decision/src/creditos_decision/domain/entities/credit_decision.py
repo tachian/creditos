@@ -509,7 +509,7 @@ def _explainable_reason_codes(
     if outcome in _FINAL_OUTCOMES and not reason_codes:
         raise PolicyValidationError(
             "decisão final exige justificativa governada visível para a audiência autorizada",
-            code="credit_decision_requires_customer_visible_reason_code",
+            code="credit_decision_requires_audience_visible_reason_code",
             field_path="reason_code_refs",
         )
     return tuple(reason_codes)
