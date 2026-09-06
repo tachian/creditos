@@ -25,3 +25,7 @@
 ## Deferred from: code review of 4-7-resposta-explicavel-de-decisao (2026-09-04)
 
 - Suíte completa depende de `uv` disponível no ambiente local: a regressão completa fora do sandbox passou em 528 testes e falhou apenas em `tests/test_local_harness.py:120` por `scripts/dev: line 47: uv: command not found`, condição ambiental preexistente ao código da Story 4.7.
+
+## Deferred from: dev-story of 4-8-gates-de-decisao-politica-e-explicabilidade (2026-09-04)
+
+- Suíte completa ainda depende de `uv` disponível no ambiente local: a regressão completa fora do sandbox passou em 539 testes e falhou apenas em `tests/test_local_harness.py:120` por `scripts/dev: line 47: uv: command not found`, condição ambiental preexistente e fora do escopo dos gates do `Decision Service`.
