@@ -288,8 +288,7 @@ def test_review_agent_application_publishes_after_audit_and_rolls_back_on_audit_
     assert persisted_after_update_audit_failure is not None
     assert persisted_after_update_audit_failure.status == "draft"
     assert (
-        persisted_after_update_audit_failure.revision
-        == created_for_update_failure.config.revision
+        persisted_after_update_audit_failure.revision == created_for_update_failure.config.revision
     )
 
     class FailingPublishAudit(RecordingAuditPublisher):

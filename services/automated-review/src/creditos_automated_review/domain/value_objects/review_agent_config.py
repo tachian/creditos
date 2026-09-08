@@ -469,6 +469,7 @@ def validate_subject_id(value: str) -> str:
 def validate_agent_version(value: str, *, field_path: str = "agent_version") -> str:
     return _validate_non_sensitive_technical_ref(value, field_path=field_path)
 
+
 def validate_correlation_id(value: str) -> str:
     return _validate_technical_id(value, field_path="correlation_id")
 
