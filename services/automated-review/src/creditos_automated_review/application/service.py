@@ -136,8 +136,15 @@ class AutomatedReviewApplicationService:
             change_summary=command.change_summary,
             now=self._clock(),
         )
-        self._publish_audit("automated_review.config.created", config, context, actor_subject_id)
-        self._repository.create(config)
+        self._repository.create(
+            config,
+            before_commit=lambda: self._publish_audit(
+                "automated_review.config.created",
+                config,
+                context,
+                actor_subject_id,
+            ),
+        )
         log = self._log_operation(
             context=context,
             operation="automated_review.config.create",
@@ -172,16 +179,16 @@ class AutomatedReviewApplicationService:
             change_summary=command.change_summary,
             now=self._clock(),
         )
-        self._publish_audit(
-            "automated_review.config.updated",
-            updated,
-            context,
-            trusted_context.trusted.subject_id,
-        )
         self._repository.save_existing(
             updated,
             expected_revision=config.revision,
             expected_status=config.status,
+            before_commit=lambda: self._publish_audit(
+                "automated_review.config.updated",
+                updated,
+                context,
+                trusted_context.trusted.subject_id,
+            ),
         )
         log = self._log_operation(
             context=context,
@@ -212,16 +219,16 @@ class AutomatedReviewApplicationService:
             approval_reference=approval_reference,
             now=self._clock(),
         )
-        self._publish_audit(
-            "automated_review.config.published",
-            published,
-            context,
-            trusted_context.trusted.subject_id,
-        )
         self._repository.save_existing(
             published,
             expected_revision=config.revision,
             expected_status=config.status,
+            before_commit=lambda: self._publish_audit(
+                "automated_review.config.published",
+                published,
+                context,
+                trusted_context.trusted.subject_id,
+            ),
         )
         log = self._log_operation(
             context=context,

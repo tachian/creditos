@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from threading import RLock
 
 from creditos_automated_review.domain.entities import ReviewAgentConfiguration
@@ -14,7 +15,12 @@ class InMemoryReviewAgentConfigRepository:
         self._configs: dict[tuple[str, str, str], ReviewAgentConfiguration] = {}
         self._lock = RLock()
 
-    def create(self, config: ReviewAgentConfiguration) -> None:
+    def create(
+        self,
+        config: ReviewAgentConfiguration,
+        *,
+        before_commit: Callable[[], None] | None = None,
+    ) -> None:
         with self._lock:
             key = self._key(config)
             if key in self._configs:
@@ -23,6 +29,8 @@ class InMemoryReviewAgentConfigRepository:
                     code="automated_review_config_version_exists",
                     field_path="review_agent_config_version_id",
                 )
+            if before_commit is not None:
+                before_commit()
             self._configs[key] = config
 
     def save_existing(
@@ -31,6 +39,7 @@ class InMemoryReviewAgentConfigRepository:
         *,
         expected_revision: int,
         expected_status: str,
+        before_commit: Callable[[], None] | None = None,
     ) -> None:
         with self._lock:
             key = self._key(config)
@@ -43,6 +52,8 @@ class InMemoryReviewAgentConfigRepository:
                     code="automated_review_config_revision_conflict",
                     field_path="revision",
                 )
+            if before_commit is not None:
+                before_commit()
             self._configs[key] = config
 
     def get(

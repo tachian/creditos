@@ -221,6 +221,77 @@ def test_review_agent_application_publishes_after_audit_and_rolls_back_on_audit_
     assert "Avalie lacunas" not in str(audit.events)
     assert published.logs[0]["payload"] == "[OMITIDO]"
 
+    class FailingCreateAudit(RecordingAuditPublisher):
+        def publish(self, event: AutomatedReviewAuditIntent) -> None:
+            if event.event_type == "automated_review.config.created":
+                raise RuntimeError("audit sink unavailable")
+            super().publish(event)
+
+    failing_create_repository = InMemoryReviewAgentConfigRepository()
+    failing_create_service = _service(
+        repository=failing_create_repository,
+        audit=FailingCreateAudit(),
+    )
+
+    with pytest.raises(RuntimeError, match="audit sink unavailable"):
+        failing_create_service.create_config(
+            _create_command(review_agent_config_id="rac_create_failure_case"),
+            context=_context(),
+            trusted_context=_trusted_context(scopes=("automated_review:write",)),
+        )
+
+    assert (
+        failing_create_repository.get(
+            tenant_id="tenant_alpha",
+            review_agent_config_id="rac_create_failure_case",
+            review_agent_config_version_id="rac_create_failure_case_v1",
+        )
+        is None
+    )
+
+    class FailingUpdateAudit(RecordingAuditPublisher):
+        def publish(self, event: AutomatedReviewAuditIntent) -> None:
+            if event.event_type == "automated_review.config.updated":
+                raise RuntimeError("audit sink unavailable")
+            super().publish(event)
+
+    failing_update_repository = InMemoryReviewAgentConfigRepository()
+    failing_update_service = _service(
+        repository=failing_update_repository,
+        audit=FailingUpdateAudit(),
+    )
+    created_for_update_failure = failing_update_service.create_config(
+        _create_command(review_agent_config_id="rac_update_failure_case"),
+        context=_context(),
+        trusted_context=_trusted_context(scopes=("automated_review:write",)),
+    )
+
+    with pytest.raises(RuntimeError, match="audit sink unavailable"):
+        failing_update_service.update_config(
+            UpdateReviewAgentConfigCommand(
+                review_agent_config_id=created_for_update_failure.config.review_agent_config_id,
+                review_agent_config_version_id=(
+                    created_for_update_failure.config.review_agent_config_version_id
+                ),
+                prompt=_prompt(instructions="Avalie inconsistências e lacunas consultivas"),
+                change_summary="Atualização deve preservar atomicidade",
+            ),
+            context=_context(),
+            trusted_context=_trusted_context(scopes=("automated_review:write",)),
+        )
+
+    persisted_after_update_audit_failure = failing_update_repository.get(
+        tenant_id="tenant_alpha",
+        review_agent_config_id=created_for_update_failure.config.review_agent_config_id,
+        review_agent_config_version_id=created_for_update_failure.config.review_agent_config_version_id,
+    )
+    assert persisted_after_update_audit_failure is not None
+    assert persisted_after_update_audit_failure.status == "draft"
+    assert (
+        persisted_after_update_audit_failure.revision
+        == created_for_update_failure.config.revision
+    )
+
     class FailingPublishAudit(RecordingAuditPublisher):
         def publish(self, event: AutomatedReviewAuditIntent) -> None:
             if event.event_type == "automated_review.config.published":
