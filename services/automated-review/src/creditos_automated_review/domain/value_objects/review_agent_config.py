@@ -47,7 +47,6 @@ _FORBIDDEN_TECHNICAL_PARTS = (
     "api_key",
     "authorization",
     "credential",
-    "key",
     "password",
     "private",
     "payload",
