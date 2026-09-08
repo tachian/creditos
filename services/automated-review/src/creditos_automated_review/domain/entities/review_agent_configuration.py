@@ -90,10 +90,10 @@ class ReviewAgentConfiguration:
             )
         if self.approval_reference is not None:
             object.__setattr__(
-                self,
-                "approval_reference",
-                validate_agent_version(self.approval_reference),
-            )
+            self,
+            "approval_reference",
+            validate_agent_version(self.approval_reference, field_path="approval_reference"),
+        )
         status = self.status.strip() if isinstance(self.status, str) else ""
         if status not in {item.value for item in ReviewAgentStatus}:
             raise AutomatedReviewValidationError(
