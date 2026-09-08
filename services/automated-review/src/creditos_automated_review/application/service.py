@@ -210,8 +210,9 @@ class AutomatedReviewApplicationService:
         started = monotonic()
         self._require_scope(trusted_context, "automated_review:publish")
         self._require_context_matches_trusted(context, trusted_context)
-        approval_reference = validate_agent_version(command.approval_reference)
-        config = self._get_existing(command, trusted_context)
+        approval_reference = validate_agent_version(
+            command.approval_reference, field_path="approval_reference"
+        )
         published = config.publish(
             actor_subject_id=trusted_context.trusted.subject_id,
             correlation_id=context.correlation_id,
