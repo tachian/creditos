@@ -39,8 +39,12 @@ class AutomatedReviewExecutionRequest:
         object.__setattr__(
             self,
             "execution_id",
-            validate_agent_version(self.execution_id, field_path="execution_id"),
+            validate_non_sensitive_execution_reference(
+                validate_agent_version(self.execution_id, field_path="execution_id"),
+                field_path="execution_id",
+            ),
         )
+        object.__setattr__(
             self,
             "proposal_id",
             validate_non_sensitive_execution_reference(
@@ -158,7 +162,14 @@ class AutomatedReviewExecutionResult:
     external_actions: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "execution_id", validate_agent_version(self.execution_id))
+        object.__setattr__(
+            self,
+            "execution_id",
+            validate_non_sensitive_execution_reference(
+                validate_agent_version(self.execution_id, field_path="execution_id"),
+                field_path="execution_id",
+            ),
+        )
         object.__setattr__(self, "tenant_id", validate_tenant_id(self.tenant_id))
         object.__setattr__(
             self,

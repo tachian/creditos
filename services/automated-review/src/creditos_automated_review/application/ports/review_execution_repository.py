@@ -7,6 +7,13 @@ from creditos_automated_review.domain.entities import AutomatedReviewExecutionRe
 
 
 class ReviewExecutionRepository(Protocol):
+    def reserve(
+        self,
+        *,
+        tenant_id: str,
+        execution_id: str,
+    ) -> None: ...
+
     def create(
         self,
         execution: AutomatedReviewExecutionResult,

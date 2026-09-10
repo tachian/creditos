@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import pytest
@@ -59,6 +60,31 @@ class FailingConsultativeReviewExecutor:
     def execute(self, command: ConsultativeReviewExecutionInput) -> ConsultativeReviewOutput:
         self.calls.append(command)
         raise RuntimeError("erro sintético do executor")
+
+
+class InvalidOutputConsultativeReviewExecutor:
+    def __init__(self) -> None:
+        self.calls: list[ConsultativeReviewExecutionInput] = []
+
+    def execute(self, command: ConsultativeReviewExecutionInput) -> ConsultativeReviewOutput:
+        self.calls.append(command)
+        return ConsultativeReviewOutput(status="approved")
+
+
+class ReentrantConsultativeReviewExecutor:
+    def __init__(self) -> None:
+        self.calls: list[ConsultativeReviewExecutionInput] = []
+        self.reentrant_call: Callable[[], None] | None = None
+
+    def execute(self, command: ConsultativeReviewExecutionInput) -> ConsultativeReviewOutput:
+        self.calls.append(command)
+        if self.reentrant_call is not None:
+            self.reentrant_call()
+        return ConsultativeReviewOutput(
+            status="completed",
+            finding_refs=("finding_missing_data_review",),
+            limitation_refs=("limitation_mock_executor",),
+        )
 
 
 def test_execution_request_builds_minimized_plan_without_raw_sensitive_payload() -> None:
@@ -239,6 +265,33 @@ def test_application_checks_idempotency_before_executor_call() -> None:
     assert len(executor.calls) == 1
 
 
+def test_application_reserves_execution_id_before_executor_call() -> None:
+    executor = ReentrantConsultativeReviewExecutor()
+    service = _service(executor=executor)
+    _publish_default_config(service)
+    nested_errors: list[AutomatedReviewConflictError] = []
+
+    def call_same_execution_again() -> None:
+        with pytest.raises(AutomatedReviewConflictError) as error:
+            service.execute_consultative_review(
+                _execute_command(),
+                context=_context(),
+                trusted_context=_trusted_context(scopes=("automated_review:execute",)),
+            )
+        nested_errors.append(error.value)
+
+    executor.reentrant_call = call_same_execution_again
+
+    service.execute_consultative_review(
+        _execute_command(),
+        context=_context(),
+        trusted_context=_trusted_context(scopes=("automated_review:execute",)),
+    )
+
+    assert len(executor.calls) == 1
+    assert nested_errors[0].code == "automated_review_execution_exists"
+
+
 def test_application_converts_executor_failure_to_auditable_fallback() -> None:
     execution_audit = RecordingExecutionAuditPublisher()
     executor = FailingConsultativeReviewExecutor()
@@ -253,6 +306,24 @@ def test_application_converts_executor_failure_to_auditable_fallback() -> None:
 
     assert result.execution.status == "fallback"
     assert result.execution.limitation_refs == ("limitation_executor_failure",)
+    assert result.logs[0]["status"] == "fallback"
+    assert execution_audit.events[0].event_type == "automated_review.execution.fallback"
+
+
+def test_application_converts_invalid_executor_output_to_auditable_fallback() -> None:
+    execution_audit = RecordingExecutionAuditPublisher()
+    executor = InvalidOutputConsultativeReviewExecutor()
+    service = _service(execution_audit=execution_audit, executor=executor)
+    _publish_default_config(service)
+
+    result = service.execute_consultative_review(
+        _execute_command(),
+        context=_context(),
+        trusted_context=_trusted_context(scopes=("automated_review:execute",)),
+    )
+
+    assert result.execution.status == "fallback"
+    assert result.execution.limitation_refs == ("limitation_invalid_executor_output",)
     assert result.logs[0]["status"] == "fallback"
     assert execution_audit.events[0].event_type == "automated_review.execution.fallback"
 
@@ -368,6 +439,21 @@ def test_execution_request_rejects_sensitive_proposal_reference() -> None:
     assert error.value.code == "automated_review_sensitive_execution_reference"
 
 
+def test_execution_request_rejects_sensitive_execution_reference() -> None:
+    with pytest.raises(AutomatedReviewValidationError) as error:
+        AutomatedReviewExecutionRequest.create(
+            execution_id="12345678909",
+            proposal_id="proposal_001",
+            product_type="personal_credit",
+            channel="api",
+            review_purpose="missing_data",
+            candidate_inputs=(ReviewInputCandidate.create("requested_amount_units", 150000),),
+        )
+
+    assert error.value.code == "automated_review_sensitive_execution_reference"
+    assert error.value.field_path == "execution_id"
+
+
 def test_application_rejects_unpublished_scope_cross_tenant_and_non_bridge_execution() -> None:
     draft_only_service = _service()
     draft_only_service.create_config(
@@ -426,7 +512,13 @@ def _service(
     config_repository: InMemoryReviewAgentConfigRepository | None = None,
     execution_repository: InMemoryReviewExecutionRepository | None = None,
     execution_audit: AutomatedReviewExecutionAuditPublisher | None = None,
-    executor: MockConsultativeReviewExecutor | FailingConsultativeReviewExecutor | None = None,
+    executor: (
+        MockConsultativeReviewExecutor
+        | FailingConsultativeReviewExecutor
+        | InvalidOutputConsultativeReviewExecutor
+        | ReentrantConsultativeReviewExecutor
+        | None
+    ) = None,
 ) -> AutomatedReviewApplicationService:
     return AutomatedReviewApplicationService(
         repository=config_repository or InMemoryReviewAgentConfigRepository(),

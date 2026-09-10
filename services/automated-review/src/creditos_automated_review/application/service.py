@@ -17,7 +17,6 @@ from creditos_automated_review.application.ports import (
     AutomatedReviewExecutionAuditPublisher,
     ConsultativeReviewExecutionInput,
     ConsultativeReviewExecutor,
-    ConsultativeReviewOutput,
     ReviewAgentConfigRepository,
     ReviewExecutionRepository,
 )
@@ -30,8 +29,10 @@ from creditos_automated_review.domain.errors import (
     AutomatedReviewConfigNotFoundError,
     AutomatedReviewConflictError,
     AutomatedReviewTenantContextError,
+    AutomatedReviewValidationError,
 )
 from creditos_automated_review.domain.value_objects import (
+    InputMinimizationPlan,
     ReviewAgentCapabilities,
     ReviewAgentGuardrails,
     ReviewAgentPrompt,
@@ -373,17 +374,9 @@ class AutomatedReviewApplicationService:
             candidate_inputs=command.candidate_inputs,
         )
         execution_repository = self._require_execution_repository()
-        if (
-            execution_repository.get(tenant_id=tenant_id, execution_id=request.execution_id)
-            is not None
-        ):
-            raise AutomatedReviewConflictError(
-                "execução consultiva já existe",
-                code="automated_review_execution_exists",
-                field_path="execution_id",
-            )
         config = self._resolve_referenceable_config(command, tenant_id)
         plan = request.build_minimization_plan(config)
+        execution_repository.reserve(tenant_id=tenant_id, execution_id=request.execution_id)
         execution_input = ConsultativeReviewExecutionInput(
             tenant_id=tenant_id,
             execution_id=request.execution_id,
@@ -418,48 +411,20 @@ class AutomatedReviewApplicationService:
                 limitation_refs=output.limitation_refs,
             )
         except AutomatedReviewValidationError:
-            output = ConsultativeReviewOutput(
-                status="fallback",
-                limitation_refs=("limitation_invalid_executor_output",),
-            )
-            execution = AutomatedReviewExecutionResult(
-                execution_id=request.execution_id,
-                tenant_id=tenant_id,
-                proposal_id=request.proposal_id,
-                review_agent_config_id=config.review_agent_config_id,
-                review_agent_config_version_id=config.review_agent_config_version_id,
-                product_type=request.product_type,
-                channel=request.channel,
-                review_purpose=request.review_purpose,
-                minimization_policy_ref=plan.policy_ref,
-                prompt_fingerprint=plan.prompt_fingerprint,
-                input_fields=plan.fields,
+            execution = _fallback_execution_result(
+                request=request,
+                config=config,
+                plan=plan,
                 occurred_at=self._clock(),
-                status=output.status,
-                finding_refs=(),
-                limitation_refs=output.limitation_refs,
+                limitation_ref="limitation_invalid_executor_output",
             )
         except Exception:
-            output = ConsultativeReviewOutput(
-                status="fallback",
-                limitation_refs=("limitation_executor_failure",),
-            )
-            execution = AutomatedReviewExecutionResult(
-                execution_id=request.execution_id,
-                tenant_id=tenant_id,
-                proposal_id=request.proposal_id,
-                review_agent_config_id=config.review_agent_config_id,
-                review_agent_config_version_id=config.review_agent_config_version_id,
-                product_type=request.product_type,
-                channel=request.channel,
-                review_purpose=request.review_purpose,
-                minimization_policy_ref=plan.policy_ref,
-                prompt_fingerprint=plan.prompt_fingerprint,
-                input_fields=plan.fields,
+            execution = _fallback_execution_result(
+                request=request,
+                config=config,
+                plan=plan,
                 occurred_at=self._clock(),
-                status=output.status,
-                finding_refs=(),
-                limitation_refs=output.limitation_refs,
+                limitation_ref="limitation_executor_failure",
             )
         execution_repository.create(
             execution,
@@ -673,6 +638,32 @@ class AutomatedReviewApplicationService:
         if self._consultative_executor is None:
             raise RuntimeError("consultative_executor não configurado")
         return self._consultative_executor
+
+
+def _fallback_execution_result(
+    *,
+    request: AutomatedReviewExecutionRequest,
+    config: ReviewAgentConfiguration,
+    plan: InputMinimizationPlan,
+    occurred_at: datetime,
+    limitation_ref: str,
+) -> AutomatedReviewExecutionResult:
+    return AutomatedReviewExecutionResult(
+        execution_id=request.execution_id,
+        tenant_id=config.tenant_id,
+        proposal_id=request.proposal_id,
+        review_agent_config_id=config.review_agent_config_id,
+        review_agent_config_version_id=config.review_agent_config_version_id,
+        product_type=request.product_type,
+        channel=request.channel,
+        review_purpose=request.review_purpose,
+        minimization_policy_ref=plan.policy_ref,
+        prompt_fingerprint=plan.prompt_fingerprint,
+        input_fields=plan.fields,
+        occurred_at=occurred_at,
+        status="fallback",
+        limitation_refs=(limitation_ref,),
+    )
 
 
 def _safe_config_details(config: ReviewAgentConfiguration) -> dict[str, str]:
