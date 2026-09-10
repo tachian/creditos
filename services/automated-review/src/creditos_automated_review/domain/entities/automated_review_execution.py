@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
+from types import MappingProxyType
 
 from creditos_automated_review.domain.entities.review_agent_configuration import (
     ReviewAgentConfiguration,
@@ -157,6 +159,13 @@ class AutomatedReviewExecutionResult:
     status: str = "completed"
     finding_refs: tuple[str, ...] = ()
     limitation_refs: tuple[str, ...] = ()
+    output_validation_status: str = "accepted"
+    accepted_output_counts_by_type: Mapping[str, int] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    blocked_output_counts_by_reason: Mapping[str, int] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     final_decision: str | None = None
     approved_terms: str | None = None
     external_actions: tuple[str, ...] = ()
@@ -253,6 +262,37 @@ class AutomatedReviewExecutionResult:
             "limitation_refs",
             tuple(validate_subject_id(item) for item in self.limitation_refs),
         )
+        output_validation_status = validate_review_technical_token(
+            self.output_validation_status,
+            field_path="output_validation_status",
+        )
+        if output_validation_status not in {"accepted", "blocked"}:
+            raise AutomatedReviewValidationError(
+                "status de validação de saída inválido",
+                code="automated_review_invalid_output_validation_status",
+                field_path="output_validation_status",
+            )
+        object.__setattr__(self, "output_validation_status", output_validation_status)
+        object.__setattr__(
+            self,
+            "accepted_output_counts_by_type",
+            MappingProxyType(
+                _validate_output_counts(
+                    self.accepted_output_counts_by_type,
+                    field_path="accepted_output_counts_by_type",
+                )
+            ),
+        )
+        object.__setattr__(
+            self,
+            "blocked_output_counts_by_reason",
+            MappingProxyType(
+                _validate_output_counts(
+                    self.blocked_output_counts_by_reason,
+                    field_path="blocked_output_counts_by_reason",
+                )
+            ),
+        )
 
 
 def _persistable_input_field(field: MinimizedReviewInputField) -> MinimizedReviewInputField:
@@ -262,3 +302,17 @@ def _persistable_input_field(field: MinimizedReviewInputField) -> MinimizedRevie
         safe_value=None,
         reason=field.reason,
     )
+
+
+def _validate_output_counts(value: Mapping[str, int], *, field_path: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for key, count in value.items():
+        normalized_key = validate_review_technical_token(key, field_path=f"{field_path}.{key}")
+        if type(count) is not int or count < 0:
+            raise AutomatedReviewValidationError(
+                "contagem de saída consultiva inválida",
+                code="automated_review_invalid_output_count",
+                field_path=f"{field_path}.{normalized_key}",
+            )
+        counts[normalized_key] = count
+    return counts

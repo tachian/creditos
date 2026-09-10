@@ -13,6 +13,10 @@ from creditos_automated_review.domain.value_objects.review_execution import (
     ReviewInputAction,
     ReviewInputCandidate,
 )
+from creditos_automated_review.domain.value_objects.review_output import (
+    ReviewOutputItem,
+    ReviewOutputValidationResult,
+)
 
 __all__ = [
     "InputMinimizationPlan",
@@ -26,4 +30,6 @@ __all__ = [
     "ReviewInputAction",
     "ReviewInputCandidate",
     "ReviewModelRef",
+    "ReviewOutputItem",
+    "ReviewOutputValidationResult",
 ]

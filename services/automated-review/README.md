@@ -42,6 +42,17 @@ A Story 5.2 cria o núcleo de execução consultiva com entradas minimizadas:
 - `ConsultativeReviewExecutor` isola a execução consultiva atrás de uma porta, com adapter mockado no MVP;
 - `InMemoryReviewExecutionRepository` persiste apenas snapshot minimizado e metadados seguros.
 
+## Story 5.3
+
+A Story 5.3 trata saídas de IA como não confiáveis antes de qualquer persistência, log ou auditoria:
+
+- `ReviewOutputItem` define um contrato fechado para achados consultivos, com `item_ref`, `item_type`, `severity`, `reason_ref`, `confidence`, `evidence_refs` e `safe_summary` opcional;
+- `ReviewOutputValidationResult` consolida itens aceitos, motivos bloqueados e contagens seguras por classificação/motivo;
+- `ConsultativeReviewOutput` passa a carregar `output_items` governados; refs legadas não devem ser usadas como contrato principal;
+- `AutomatedReviewExecutionResult` persiste somente referências técnicas, status de validação e contagens seguras de saída;
+- saídas com schema inválido, campo desconhecido, confiança fora de faixa, referência sensível, prompt injection, tool use, callback, ação externa ou semântica de decisão final viram `fallback`;
+- logs e auditoria registram `output_validation_status`, contagens por tipo e `raw_output_persisted=false`, sem output bruto.
+
 ## Segurança e privacidade
 
 - `tenant_id` e `tenant_isolation_tier` vêm do `PropagatedContext` confiável.
@@ -50,6 +61,8 @@ A Story 5.2 cria o núcleo de execução consultiva com entradas minimizadas:
 - Eventos auditáveis carregam somente detalhes seguros, como IDs técnicos, versão e fingerprint de prompt.
 - Prompt, payload bruto, CPF, CNPJ, e-mail, telefone, endereço, token, segredo, header sensível e dado financeiro detalhado não devem aparecer em logs, auditoria ou erros.
 - Execuções consultivas registram contagens por classificação de minimização, política aplicada e referências técnicas, sem entrada bruta.
+- Saídas consultivas registram apenas classificações permitidas (`missing_data`, `inconsistency`, `explainability_factor`, `limitation`), referências técnicas e contagens seguras.
+- Nenhuma saída consultiva pode aprovar, reprovar, alterar termos, chamar ferramentas, executar callbacks ou acionar integrações.
 
 ## Comandos locais
 
@@ -67,4 +80,3 @@ A Story 5.2 cria o núcleo de execução consultiva com entradas minimizadas:
 - Banco real, migration, outbox/inbox ou secret manager.
 - Evidência consultiva final vinculada à proposta.
 - Dashboard, métrica de negócio ou seleção nominal de fornecedor/modelo.
-- Validação profunda de saída de IA e guardrails de resposta, que ficam para a Story 5.3.
