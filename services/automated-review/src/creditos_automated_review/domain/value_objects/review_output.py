@@ -282,10 +282,13 @@ class ReviewOutputValidationResult:
         reason_refs: tuple[str, ...],
         blocked_counts_by_reason: Mapping[str, int],
     ) -> ReviewOutputValidationResult:
+        counts = dict(blocked_counts_by_reason)
+        for reason_ref in reason_refs:
+            counts.setdefault(reason_ref, 0)
         return cls(
             status="blocked",
             limitation_refs=reason_refs,
-            blocked_counts_by_reason=MappingProxyType(dict(blocked_counts_by_reason)),
+            blocked_counts_by_reason=MappingProxyType(counts),
         )
 
     @property
