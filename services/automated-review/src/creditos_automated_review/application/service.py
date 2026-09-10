@@ -446,7 +446,7 @@ class AutomatedReviewApplicationService:
                 limitation_ref="limitation_executor_failure",
                 output_validation=ReviewOutputValidationResult.blocked(
                     reason_refs=("reason_executor_failure",),
-                    blocked_counts_by_reason={},
+                    blocked_counts_by_reason={"reason_executor_failure": 0},
                 ),
             )
         execution_repository.create(
