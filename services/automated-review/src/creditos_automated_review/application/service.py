@@ -400,28 +400,67 @@ class AutomatedReviewApplicationService:
         executor = self._require_consultative_executor()
         try:
             output = executor.execute(execution_input)
+            execution = AutomatedReviewExecutionResult(
+                execution_id=request.execution_id,
+                tenant_id=tenant_id,
+                proposal_id=request.proposal_id,
+                review_agent_config_id=config.review_agent_config_id,
+                review_agent_config_version_id=config.review_agent_config_version_id,
+                product_type=request.product_type,
+                channel=request.channel,
+                review_purpose=request.review_purpose,
+                minimization_policy_ref=plan.policy_ref,
+                prompt_fingerprint=plan.prompt_fingerprint,
+                input_fields=plan.fields,
+                occurred_at=self._clock(),
+                status=output.status,
+                finding_refs=output.finding_refs,
+                limitation_refs=output.limitation_refs,
+            )
+        except AutomatedReviewValidationError:
+            output = ConsultativeReviewOutput(
+                status="fallback",
+                limitation_refs=("limitation_invalid_executor_output",),
+            )
+            execution = AutomatedReviewExecutionResult(
+                execution_id=request.execution_id,
+                tenant_id=tenant_id,
+                proposal_id=request.proposal_id,
+                review_agent_config_id=config.review_agent_config_id,
+                review_agent_config_version_id=config.review_agent_config_version_id,
+                product_type=request.product_type,
+                channel=request.channel,
+                review_purpose=request.review_purpose,
+                minimization_policy_ref=plan.policy_ref,
+                prompt_fingerprint=plan.prompt_fingerprint,
+                input_fields=plan.fields,
+                occurred_at=self._clock(),
+                status=output.status,
+                finding_refs=(),
+                limitation_refs=output.limitation_refs,
+            )
         except Exception:
             output = ConsultativeReviewOutput(
                 status="fallback",
                 limitation_refs=("limitation_executor_failure",),
             )
-        execution = AutomatedReviewExecutionResult(
-            execution_id=request.execution_id,
-            tenant_id=tenant_id,
-            proposal_id=request.proposal_id,
-            review_agent_config_id=config.review_agent_config_id,
-            review_agent_config_version_id=config.review_agent_config_version_id,
-            product_type=request.product_type,
-            channel=request.channel,
-            review_purpose=request.review_purpose,
-            minimization_policy_ref=plan.policy_ref,
-            prompt_fingerprint=plan.prompt_fingerprint,
-            input_fields=plan.fields,
-            occurred_at=self._clock(),
-            status=output.status,
-            finding_refs=output.finding_refs,
-            limitation_refs=output.limitation_refs,
-        )
+            execution = AutomatedReviewExecutionResult(
+                execution_id=request.execution_id,
+                tenant_id=tenant_id,
+                proposal_id=request.proposal_id,
+                review_agent_config_id=config.review_agent_config_id,
+                review_agent_config_version_id=config.review_agent_config_version_id,
+                product_type=request.product_type,
+                channel=request.channel,
+                review_purpose=request.review_purpose,
+                minimization_policy_ref=plan.policy_ref,
+                prompt_fingerprint=plan.prompt_fingerprint,
+                input_fields=plan.fields,
+                occurred_at=self._clock(),
+                status=output.status,
+                finding_refs=(),
+                limitation_refs=output.limitation_refs,
+            )
         execution_repository.create(
             execution,
             before_commit=lambda: self._publish_execution_audit(
