@@ -36,8 +36,11 @@ class AutomatedReviewExecutionRequest:
     candidate_inputs: tuple[ReviewInputCandidate, ...]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "execution_id", validate_agent_version(self.execution_id))
         object.__setattr__(
+            self,
+            "execution_id",
+            validate_agent_version(self.execution_id, field_path="execution_id"),
+        )
             self,
             "proposal_id",
             validate_non_sensitive_execution_reference(
