@@ -397,36 +397,26 @@ class AutomatedReviewApplicationService:
         try:
             output = executor.execute(execution_input)
             output_validation = _validate_executor_output(output)
-            if output_validation.status == "blocked":
-                execution = _fallback_execution_result(
-                    request=request,
-                    config=config,
-                    plan=plan,
-                    occurred_at=self._clock(),
-                    limitation_ref="limitation_invalid_executor_output",
-                    output_validation=output_validation,
-                )
-            else:
-                execution = AutomatedReviewExecutionResult(
-                    execution_id=request.execution_id,
-                    tenant_id=tenant_id,
-                    proposal_id=request.proposal_id,
-                    review_agent_config_id=config.review_agent_config_id,
-                    review_agent_config_version_id=config.review_agent_config_version_id,
-                    product_type=request.product_type,
-                    channel=request.channel,
-                    review_purpose=request.review_purpose,
-                    minimization_policy_ref=plan.policy_ref,
-                    prompt_fingerprint=plan.prompt_fingerprint,
-                    input_fields=plan.fields,
-                    occurred_at=self._clock(),
-                    status=output.status,
-                    finding_refs=output_validation.finding_refs,
-                    limitation_refs=output_validation.limitation_refs,
-                    output_validation_status=output_validation.status,
-                    accepted_output_counts_by_type=output_validation.accepted_counts_by_type,
-                    blocked_output_counts_by_reason=output_validation.blocked_counts_by_reason,
-                )
+            execution = AutomatedReviewExecutionResult(
+                execution_id=request.execution_id,
+                tenant_id=tenant_id,
+                proposal_id=request.proposal_id,
+                review_agent_config_id=config.review_agent_config_id,
+                review_agent_config_version_id=config.review_agent_config_version_id,
+                product_type=request.product_type,
+                channel=request.channel,
+                review_purpose=request.review_purpose,
+                minimization_policy_ref=plan.policy_ref,
+                prompt_fingerprint=plan.prompt_fingerprint,
+                input_fields=plan.fields,
+                occurred_at=self._clock(),
+                status=output.status,
+                finding_refs=output_validation.finding_refs,
+                limitation_refs=output_validation.limitation_refs,
+                output_validation_status=output_validation.status,
+                accepted_output_counts_by_type=output_validation.accepted_counts_by_type,
+                blocked_output_counts_by_reason=output_validation.blocked_counts_by_reason,
+            )
         except AutomatedReviewValidationError as error:
             output_validation = _blocked_output_validation(error)
             execution = _fallback_execution_result(
