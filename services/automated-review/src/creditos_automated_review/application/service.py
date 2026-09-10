@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from itertools import islice
 from time import monotonic
 from typing import Any
 
@@ -17,6 +18,7 @@ from creditos_automated_review.application.ports import (
     AutomatedReviewExecutionAuditPublisher,
     ConsultativeReviewExecutionInput,
     ConsultativeReviewExecutor,
+    ConsultativeReviewOutput,
     ReviewAgentConfigRepository,
     ReviewExecutionRepository,
 )
@@ -39,6 +41,8 @@ from creditos_automated_review.domain.value_objects import (
     ReviewAgentScope,
     ReviewInputCandidate,
     ReviewModelRef,
+    ReviewOutputItem,
+    ReviewOutputValidationResult,
 )
 from creditos_automated_review.domain.value_objects.review_agent_config import (
     validate_agent_version,
@@ -48,6 +52,7 @@ SERVICE_NAME = "automated-review"
 SERVICE_VERSION = "0.1.0"
 CONTRACT = "automated-review.application"
 CONTRACT_VERSION = "v1"
+MAX_EXECUTOR_OUTPUT_ITEMS = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,6 +398,7 @@ class AutomatedReviewApplicationService:
         executor = self._require_consultative_executor()
         try:
             output = executor.execute(execution_input)
+            output_validation = _validate_executor_output(output)
             execution = AutomatedReviewExecutionResult(
                 execution_id=request.execution_id,
                 tenant_id=tenant_id,
@@ -407,16 +413,21 @@ class AutomatedReviewApplicationService:
                 input_fields=plan.fields,
                 occurred_at=self._clock(),
                 status=output.status,
-                finding_refs=output.finding_refs,
-                limitation_refs=output.limitation_refs,
+                finding_refs=output_validation.finding_refs,
+                limitation_refs=output_validation.limitation_refs,
+                output_validation_status=output_validation.status,
+                accepted_output_counts_by_type=output_validation.accepted_counts_by_type,
+                blocked_output_counts_by_reason=output_validation.blocked_counts_by_reason,
             )
-        except AutomatedReviewValidationError:
+        except AutomatedReviewValidationError as error:
+            output_validation = _blocked_output_validation(error)
             execution = _fallback_execution_result(
                 request=request,
                 config=config,
                 plan=plan,
                 occurred_at=self._clock(),
                 limitation_ref="limitation_invalid_executor_output",
+                output_validation=output_validation,
             )
         except Exception:
             execution = _fallback_execution_result(
@@ -425,6 +436,10 @@ class AutomatedReviewApplicationService:
                 plan=plan,
                 occurred_at=self._clock(),
                 limitation_ref="limitation_executor_failure",
+                output_validation=ReviewOutputValidationResult.blocked(
+                    reason_refs=("reason_executor_failure",),
+                    blocked_counts_by_reason={"reason_executor_failure": 0},
+                ),
             )
         execution_repository.create(
             execution,
@@ -647,7 +662,12 @@ def _fallback_execution_result(
     plan: InputMinimizationPlan,
     occurred_at: datetime,
     limitation_ref: str,
+    output_validation: ReviewOutputValidationResult | None = None,
 ) -> AutomatedReviewExecutionResult:
+    output_validation = output_validation or ReviewOutputValidationResult.blocked(
+        reason_refs=(_fallback_output_reason_ref(limitation_ref),),
+        blocked_counts_by_reason={_fallback_output_reason_ref(limitation_ref): 1},
+    )
     return AutomatedReviewExecutionResult(
         execution_id=request.execution_id,
         tenant_id=config.tenant_id,
@@ -663,7 +683,84 @@ def _fallback_execution_result(
         occurred_at=occurred_at,
         status="fallback",
         limitation_refs=(limitation_ref,),
+        output_validation_status=output_validation.status,
+        accepted_output_counts_by_type=output_validation.accepted_counts_by_type,
+        blocked_output_counts_by_reason=output_validation.blocked_counts_by_reason,
     )
+
+
+def _validate_executor_output(output: ConsultativeReviewOutput) -> ReviewOutputValidationResult:
+    if output.status != "completed":
+        raise AutomatedReviewValidationError(
+            "status de saída consultiva inválido",
+            code="automated_review_invalid_executor_output_status",
+            field_path="executor_output.status",
+        )
+    if output.finding_refs or output.limitation_refs:
+        raise AutomatedReviewValidationError(
+            "campos legados de saída consultiva não são permitidos",
+            code="automated_review_legacy_output_fields_not_allowed",
+            field_path="executor_output",
+        )
+    raw_items = tuple(islice(output.output_items, MAX_EXECUTOR_OUTPUT_ITEMS + 1))
+    if len(raw_items) > MAX_EXECUTOR_OUTPUT_ITEMS:
+        raise AutomatedReviewValidationError(
+            "quantidade de itens de saída consultiva excede o limite",
+            code="automated_review_output_item_limit_exceeded",
+            field_path="executor_output.output_items",
+        )
+    if not raw_items:
+        raise AutomatedReviewValidationError(
+            "saída consultiva sem itens governados",
+            code="automated_review_empty_executor_output",
+            field_path="executor_output.output_items",
+        )
+    items: list[ReviewOutputItem] = []
+    for index, item in enumerate(raw_items):
+        if isinstance(item, ReviewOutputItem):
+            items.append(item)
+            continue
+        if isinstance(item, Mapping):
+            items.append(ReviewOutputItem.from_mapping(item, index=index))
+            continue
+        raise AutomatedReviewValidationError(
+            "item de saída consultiva inválido",
+            code="automated_review_invalid_output_item",
+            field_path=f"output_items[{index}]",
+        )
+    return ReviewOutputValidationResult.accepted(items=tuple(items))
+
+
+def _blocked_output_validation(
+    error: AutomatedReviewValidationError,
+) -> ReviewOutputValidationResult:
+    reason_ref = _output_block_reason_ref(error)
+    return ReviewOutputValidationResult.blocked(
+        reason_refs=(reason_ref,),
+        blocked_counts_by_reason={reason_ref: 1},
+    )
+
+
+def _output_block_reason_ref(error: AutomatedReviewValidationError) -> str:
+    if error.code in {
+        "automated_review_sensitive_output_content",
+        "automated_review_output_prompt_injection",
+        "automated_review_autonomous_output_content",
+        "automated_review_autonomous_execution_output",
+        "automated_review_autonomous_output_reference",
+    }:
+        return "reason_blocked_output_guardrail"
+    if error.code == "automated_review_unknown_output_field":
+        return "reason_invalid_output_schema"
+    return "reason_invalid_output_contract"
+
+
+def _fallback_output_reason_ref(limitation_ref: str) -> str:
+    if limitation_ref == "limitation_executor_failure":
+        return "reason_executor_failure"
+    if limitation_ref == "limitation_invalid_executor_output":
+        return "reason_invalid_output_contract"
+    return "reason_fallback_execution"
 
 
 def _safe_config_details(config: ReviewAgentConfiguration) -> dict[str, str]:
@@ -693,7 +790,7 @@ def _safe_config_details(config: ReviewAgentConfiguration) -> dict[str, str]:
 
 def _safe_execution_details(execution: AutomatedReviewExecutionResult) -> dict[str, str]:
     counts = _execution_action_counts(execution)
-    return {
+    details = {
         "execution_id": execution.execution_id,
         "proposal_id": execution.proposal_id,
         "review_agent_config_id": execution.review_agent_config_id,
@@ -711,9 +808,28 @@ def _safe_execution_details(execution: AutomatedReviewExecutionResult) -> dict[s
         "omitted_field_count": str(counts.get("omitted", 0)),
         "referenced_field_count": str(counts.get("referenced", 0)),
         "tokenized_field_count": str(counts.get("tokenized", 0)),
+        "output_validation_status": execution.output_validation_status,
+        "accepted_output_missing_data_count": str(
+            execution.accepted_output_counts_by_type.get("missing_data", 0)
+        ),
+        "accepted_output_inconsistency_count": str(
+            execution.accepted_output_counts_by_type.get("inconsistency", 0)
+        ),
+        "accepted_output_explainability_factor_count": str(
+            execution.accepted_output_counts_by_type.get("explainability_factor", 0)
+        ),
+        "accepted_output_limitation_count": str(
+            execution.accepted_output_counts_by_type.get("limitation", 0)
+        ),
+        "blocked_output_item_count": str(sum(execution.blocked_output_counts_by_reason.values())),
+        "blocked_output_reason_count": str(len(execution.blocked_output_counts_by_reason)),
         "raw_payload_persisted": "false",
         "prompt_payload_persisted": "false",
+        "raw_output_persisted": "false",
     }
+    for reason_ref, count in execution.blocked_output_counts_by_reason.items():
+        details[f"blocked_output_{reason_ref}_count"] = str(count)
+    return details
 
 
 def _execution_action_counts(execution: AutomatedReviewExecutionResult) -> dict[str, int]:

@@ -14,6 +14,19 @@ class MockConsultativeReviewExecutor:
         self.calls.append(command)
         return ConsultativeReviewOutput(
             status="completed",
-            finding_refs=("finding_missing_data_review",),
-            limitation_refs=("limitation_mock_executor",),
+            output_items=(
+                {
+                    "item_ref": "finding_missing_data_review",
+                    "item_type": "missing_data",
+                    "severity": "medium",
+                    "reason_ref": "reason_missing_data_review",
+                    "confidence": 80,
+                },
+                {
+                    "item_ref": "limitation_mock_executor",
+                    "item_type": "limitation",
+                    "severity": "low",
+                    "reason_ref": "reason_mock_executor",
+                },
+            ),
         )

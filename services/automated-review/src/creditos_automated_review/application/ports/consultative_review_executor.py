@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol
 
 from creditos_automated_review.domain.value_objects.review_execution import SafeInputValue
+from creditos_automated_review.domain.value_objects.review_output import ReviewOutputItem
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +29,7 @@ class ConsultativeReviewOutput:
     status: str = "completed"
     finding_refs: tuple[str, ...] = ()
     limitation_refs: tuple[str, ...] = ()
+    output_items: tuple[ReviewOutputItem | Mapping[str, object], ...] = ()
 
 
 class ConsultativeReviewExecutor(Protocol):
