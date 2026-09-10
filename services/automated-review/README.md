@@ -31,6 +31,17 @@ A Story 5.1 cria o núcleo de configuração versionada de agente de revisão:
 - `AutomatedReviewApplicationService` com contexto confiável, scopes, auditoria antes de exposição e logs minimizados;
 - `InMemoryReviewAgentConfigRepository` com isolamento por tenant e versão.
 
+## Story 5.2
+
+A Story 5.2 cria o núcleo de execução consultiva com entradas minimizadas:
+
+- `AutomatedReviewExecutionRequest` representa uma solicitação técnica governada, sem payload livre;
+- `ReviewInputCandidate` aceita apenas valores escalares seguros e rejeita payload bruto;
+- `InputMinimizationPlan` aplica `ReviewAgentPrompt.input_allowlist` e classifica campos como `included`, `masked`, `omitted`, `referenced` ou `tokenized`;
+- `AutomatedReviewExecutionResult` registra somente resultado consultivo, sem decisão final, termos aprovados ou ações externas;
+- `ConsultativeReviewExecutor` isola a execução consultiva atrás de uma porta, com adapter mockado no MVP;
+- `InMemoryReviewExecutionRepository` persiste apenas snapshot minimizado e metadados seguros.
+
 ## Segurança e privacidade
 
 - `tenant_id` e `tenant_isolation_tier` vêm do `PropagatedContext` confiável.
@@ -38,6 +49,7 @@ A Story 5.1 cria o núcleo de configuração versionada de agente de revisão:
 - Logs sempre omitem payload de comando com `payload="[OMITIDO]"`.
 - Eventos auditáveis carregam somente detalhes seguros, como IDs técnicos, versão e fingerprint de prompt.
 - Prompt, payload bruto, CPF, CNPJ, e-mail, telefone, endereço, token, segredo, header sensível e dado financeiro detalhado não devem aparecer em logs, auditoria ou erros.
+- Execuções consultivas registram contagens por classificação de minimização, política aplicada e referências técnicas, sem entrada bruta.
 
 ## Comandos locais
 
@@ -55,3 +67,4 @@ A Story 5.1 cria o núcleo de configuração versionada de agente de revisão:
 - Banco real, migration, outbox/inbox ou secret manager.
 - Evidência consultiva final vinculada à proposta.
 - Dashboard, métrica de negócio ou seleção nominal de fornecedor/modelo.
+- Validação profunda de saída de IA e guardrails de resposta, que ficam para a Story 5.3.
