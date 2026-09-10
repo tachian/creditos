@@ -31,6 +31,10 @@ _CONSULTATIVE_SEVERITIES = frozenset({"info", "low", "medium", "high"})
 _FINDING_ITEM_TYPES = _CONSULTATIVE_ITEM_TYPES - {"limitation"}
 _INJECTION_PATTERNS = (
     re.compile(r"\bignore\s+(?:all\s+)?(?:previous|prior)\s+instructions\b", re.I),
+    re.compile(
+        r"\bignore\s+(?:todas\s+as\s+)?instru(?:ç|c)[oõ]es\s+anteriores\b",
+        re.I,
+    ),
     re.compile(r"\bjailbreak\b", re.I),
     re.compile(r"\bsystem\s+prompt\b", re.I),
     re.compile(r"\bdeveloper\s+message\b", re.I),
@@ -41,6 +45,9 @@ _AUTONOMOUS_ACTION_PATTERNS = (
     re.compile(r"\brejected?\b", re.I),
     re.compile(r"\bapprove\b", re.I),
     re.compile(r"\breject\b", re.I),
+    re.compile(r"\baprova(?:r|do|da|ç[aã]o)?\s+(?:a\s+)?proposta\b", re.I),
+    re.compile(r"\breprova(?:r|do|da|ç[aã]o)?\s+(?:a\s+)?proposta\b", re.I),
+    re.compile(r"\bpublica(?:r|do|da|ç[aã]o)?\s+(?:a\s+)?decis[aã]o\b", re.I),
     re.compile(r"\balter(?:ar|e)?\s+terms?\b", re.I),
     re.compile(r"\bchange\s+terms?\b", re.I),
     re.compile(r"\bcallback\b", re.I),
@@ -59,6 +66,27 @@ _AUTONOMOUS_ACTION_PATTERNS = (
     re.compile(r"\bintegration\b", re.I),
     re.compile(r"\bintegra(?:ç|c)[aã]o\b", re.I),
 )
+_AUTONOMOUS_REFERENCE_PATTERNS = (
+    re.compile(r"(?:^|[_\W])approved?(?:$|[_\W])", re.I),
+    re.compile(r"(?:^|[_\W])rejected?(?:$|[_\W])", re.I),
+    re.compile(r"(?:^|[_\W])approve(?:$|[_\W])", re.I),
+    re.compile(r"(?:^|[_\W])reject(?:$|[_\W])", re.I),
+    re.compile(r"(?:^|[_\W])aprova(?:r|do|da|cao|ção)?(?:$|[_\W])", re.I),
+    re.compile(r"(?:^|[_\W])reprova(?:r|do|da|cao|ção)?(?:$|[_\W])", re.I),
+    re.compile(r"(?:^|[_\W])publica(?:r|do|da|cao|ção)?(?:$|[_\W])", re.I),
+    re.compile(r"(?:^|[_\W])decis(?:ao|ão|ion)(?:$|[_\W])", re.I),
+)
+_SENSITIVE_SUMMARY_PATTERNS = (
+    re.compile(r"\bauthorization\s*:\s*(?!bearer\s+)[^\s]+", re.I),
+    re.compile(r"\b(?:rua|avenida|av\.?|logradouro|bairro|cep)\b", re.I),
+    re.compile(r"\b(?:renda|sal[aá]rio|receita|faturamento)\b.*\bR\$\s*\d", re.I),
+    re.compile(
+        r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+"
+        r"(?:\s+(?:da|de|do|das|dos))?\s+"
+        r"[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+\b",
+    ),
+)
+_MAX_EVIDENCE_REFS = 8
 _SAFE_SUMMARY_MAX_LENGTH = 160
 
 
@@ -76,7 +104,7 @@ class ReviewOutputItem:
         object.__setattr__(
             self,
             "item_ref",
-            validate_safe_review_reference(
+            _validate_output_reference(
                 self.item_ref,
                 field_path="output_items[0].item_ref",
             ),
@@ -106,18 +134,24 @@ class ReviewOutputItem:
         object.__setattr__(
             self,
             "reason_ref",
-            validate_safe_review_reference(
+            _validate_output_reference(
                 self.reason_ref,
                 field_path="output_items[0].reason_ref",
             ),
         )
         if self.confidence is not None:
             object.__setattr__(self, "confidence", _validate_confidence(self.confidence))
+        if len(self.evidence_refs) > _MAX_EVIDENCE_REFS:
+            raise AutomatedReviewValidationError(
+                "quantidade de evidências de saída consultiva excede o limite",
+                code="automated_review_output_evidence_limit_exceeded",
+                field_path="output_items[0].evidence_refs",
+            )
         object.__setattr__(
             self,
             "evidence_refs",
             tuple(
-                validate_safe_review_reference(
+                _validate_output_reference(
                     evidence_ref,
                     field_path=f"output_items[0].evidence_refs[{index}]",
                 )
@@ -254,17 +288,22 @@ class ReviewOutputValidationResult:
             self,
             "limitation_refs",
             tuple(
-                validate_safe_review_reference(
+                _validate_output_reference(
                     limitation_ref,
                     field_path=f"output_validation.limitation_refs[{index}]",
                 )
                 for index, limitation_ref in enumerate(limitation_refs)
             ),
         )
+        blocked_counts_by_reason = _validate_counts_by_reason(self.blocked_counts_by_reason)
+        if status == "blocked":
+            for limitation_ref in self.limitation_refs:
+                if blocked_counts_by_reason.get(limitation_ref, 0) < 1:
+                    blocked_counts_by_reason[limitation_ref] = 1
         object.__setattr__(
             self,
             "blocked_counts_by_reason",
-            MappingProxyType(_validate_counts_by_reason(self.blocked_counts_by_reason)),
+            MappingProxyType(blocked_counts_by_reason),
         )
 
     @classmethod
@@ -282,13 +321,10 @@ class ReviewOutputValidationResult:
         reason_refs: tuple[str, ...],
         blocked_counts_by_reason: Mapping[str, int],
     ) -> ReviewOutputValidationResult:
-        counts = dict(blocked_counts_by_reason)
-        for reason_ref in reason_refs:
-            counts.setdefault(reason_ref, 0)
         return cls(
             status="blocked",
             limitation_refs=reason_refs,
-            blocked_counts_by_reason=MappingProxyType(counts),
+            blocked_counts_by_reason=MappingProxyType(dict(blocked_counts_by_reason)),
         )
 
     @property
@@ -328,6 +364,12 @@ def _validate_safe_summary(value: str) -> str:
             field_path="output_items[0].safe_summary",
         )
     if mask_text(normalized) != normalized:
+        raise AutomatedReviewValidationError(
+            "conteúdo sensível em saída consultiva",
+            code="automated_review_sensitive_output_content",
+            field_path="output_items[0].safe_summary",
+        )
+    if any(pattern.search(normalized) for pattern in _SENSITIVE_SUMMARY_PATTERNS):
         raise AutomatedReviewValidationError(
             "conteúdo sensível em saída consultiva",
             code="automated_review_sensitive_output_content",
@@ -393,6 +435,12 @@ def _optional_str_tuple(value: object, *, field_path: str) -> tuple[str, ...]:
         )
     refs: list[str] = []
     for index, item in enumerate(value):
+        if index >= _MAX_EVIDENCE_REFS:
+            raise AutomatedReviewValidationError(
+                "quantidade de evidências de saída consultiva excede o limite",
+                code="automated_review_output_evidence_limit_exceeded",
+                field_path=field_path,
+            )
         if not isinstance(item, str):
             raise AutomatedReviewValidationError(
                 "referência de evidência de saída consultiva inválida",
@@ -403,10 +451,21 @@ def _optional_str_tuple(value: object, *, field_path: str) -> tuple[str, ...]:
     return tuple(refs)
 
 
+def _validate_output_reference(value: str, *, field_path: str) -> str:
+    reference = validate_safe_review_reference(value, field_path=field_path)
+    if any(pattern.search(reference) for pattern in _AUTONOMOUS_REFERENCE_PATTERNS):
+        raise AutomatedReviewValidationError(
+            "decisão autônoma codificada em referência de saída consultiva",
+            code="automated_review_autonomous_output_reference",
+            field_path=field_path,
+        )
+    return reference
+
+
 def _validate_counts_by_reason(value: Mapping[str, int]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for reason_ref, count in value.items():
-        safe_reason_ref = validate_safe_review_reference(
+        safe_reason_ref = _validate_output_reference(
             reason_ref,
             field_path=f"output_validation.blocked_counts_by_reason.{reason_ref}",
         )

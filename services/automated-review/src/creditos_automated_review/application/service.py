@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from itertools import islice
 from time import monotonic
 from typing import Any
 
@@ -51,6 +52,7 @@ SERVICE_NAME = "automated-review"
 SERVICE_VERSION = "0.1.0"
 CONTRACT = "automated-review.application"
 CONTRACT_VERSION = "v1"
+MAX_EXECUTOR_OUTPUT_ITEMS = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -663,8 +665,8 @@ def _fallback_execution_result(
     output_validation: ReviewOutputValidationResult | None = None,
 ) -> AutomatedReviewExecutionResult:
     output_validation = output_validation or ReviewOutputValidationResult.blocked(
-        reason_refs=(limitation_ref,),
-        blocked_counts_by_reason={},
+        reason_refs=(_fallback_output_reason_ref(limitation_ref),),
+        blocked_counts_by_reason={_fallback_output_reason_ref(limitation_ref): 1},
     )
     return AutomatedReviewExecutionResult(
         execution_id=request.execution_id,
@@ -694,7 +696,19 @@ def _validate_executor_output(output: ConsultativeReviewOutput) -> ReviewOutputV
             code="automated_review_invalid_executor_output_status",
             field_path="executor_output.status",
         )
-    raw_items = tuple(output.output_items)
+    if output.finding_refs or output.limitation_refs:
+        raise AutomatedReviewValidationError(
+            "campos legados de saída consultiva não são permitidos",
+            code="automated_review_legacy_output_fields_not_allowed",
+            field_path="executor_output",
+        )
+    raw_items = tuple(islice(output.output_items, MAX_EXECUTOR_OUTPUT_ITEMS + 1))
+    if len(raw_items) > MAX_EXECUTOR_OUTPUT_ITEMS:
+        raise AutomatedReviewValidationError(
+            "quantidade de itens de saída consultiva excede o limite",
+            code="automated_review_output_item_limit_exceeded",
+            field_path="executor_output.output_items",
+        )
     if not raw_items:
         raise AutomatedReviewValidationError(
             "saída consultiva sem itens governados",
@@ -733,11 +747,20 @@ def _output_block_reason_ref(error: AutomatedReviewValidationError) -> str:
         "automated_review_output_prompt_injection",
         "automated_review_autonomous_output_content",
         "automated_review_autonomous_execution_output",
+        "automated_review_autonomous_output_reference",
     }:
         return "reason_blocked_output_guardrail"
     if error.code == "automated_review_unknown_output_field":
         return "reason_invalid_output_schema"
     return "reason_invalid_output_contract"
+
+
+def _fallback_output_reason_ref(limitation_ref: str) -> str:
+    if limitation_ref == "limitation_executor_failure":
+        return "reason_executor_failure"
+    if limitation_ref == "limitation_invalid_executor_output":
+        return "reason_invalid_output_contract"
+    return "reason_fallback_execution"
 
 
 def _safe_config_details(config: ReviewAgentConfiguration) -> dict[str, str]:

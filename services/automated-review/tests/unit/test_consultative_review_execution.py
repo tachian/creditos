@@ -13,6 +13,7 @@ from creditos_automated_review.application.ports import (
     AutomatedReviewExecutionAuditIntent,
     AutomatedReviewExecutionAuditPublisher,
     ConsultativeReviewExecutionInput,
+    ConsultativeReviewExecutor,
     ConsultativeReviewOutput,
 )
 from creditos_automated_review.application.service import (
@@ -120,6 +121,46 @@ class UngovernedOutputConsultativeReviewExecutor:
         return ConsultativeReviewOutput(
             status="completed",
             output_items=(self.output_item,),
+        )
+
+
+class LegacyFieldsConsultativeReviewExecutor:
+    def __init__(self) -> None:
+        self.calls: list[ConsultativeReviewExecutionInput] = []
+
+    def execute(self, command: ConsultativeReviewExecutionInput) -> ConsultativeReviewOutput:
+        self.calls.append(command)
+        return ConsultativeReviewOutput(
+            status="completed",
+            finding_refs=("approved_proposal",),
+            output_items=(
+                {
+                    "item_ref": "finding_missing_data_001",
+                    "item_type": "missing_data",
+                    "severity": "medium",
+                    "reason_ref": "reason_missing_income_signal",
+                },
+            ),
+        )
+
+
+class OversizedOutputConsultativeReviewExecutor:
+    def __init__(self) -> None:
+        self.calls: list[ConsultativeReviewExecutionInput] = []
+
+    def execute(self, command: ConsultativeReviewExecutionInput) -> ConsultativeReviewOutput:
+        self.calls.append(command)
+        return ConsultativeReviewOutput(
+            status="completed",
+            output_items=tuple(
+                {
+                    "item_ref": f"finding_missing_data_{index:03d}",
+                    "item_type": "missing_data",
+                    "severity": "medium",
+                    "reason_ref": "reason_missing_income_signal",
+                }
+                for index in range(33)
+            ),
         )
 
 
@@ -489,6 +530,50 @@ def test_application_blocks_unknown_output_fields_and_tool_use_without_autonomy(
     assert execution_audit.events[0].safe_details["raw_output_persisted"] == "false"
 
 
+def test_application_blocks_legacy_output_fields_even_with_governed_items() -> None:
+    execution_audit = RecordingExecutionAuditPublisher()
+    service = _service(
+        execution_audit=execution_audit,
+        executor=LegacyFieldsConsultativeReviewExecutor(),
+    )
+    _publish_default_config(service)
+
+    result = service.execute_consultative_review(
+        _execute_command(),
+        context=_context(),
+        trusted_context=_trusted_context(scopes=("automated_review:execute",)),
+    )
+
+    assert result.execution.status == "fallback"
+    assert result.execution.finding_refs == ()
+    assert result.execution.limitation_refs == ("limitation_invalid_executor_output",)
+    assert result.logs[0]["extra"]["blocked_output_item_count"] == "1"
+    assert result.logs[0]["extra"]["blocked_output_reason_count"] == "1"
+    assert execution_audit.events[0].safe_details["output_validation_status"] == "blocked"
+
+
+def test_application_blocks_oversized_executor_output_before_accepting_items() -> None:
+    execution_audit = RecordingExecutionAuditPublisher()
+    service = _service(
+        execution_audit=execution_audit,
+        executor=OversizedOutputConsultativeReviewExecutor(),
+    )
+    _publish_default_config(service)
+
+    result = service.execute_consultative_review(
+        _execute_command(),
+        context=_context(),
+        trusted_context=_trusted_context(scopes=("automated_review:execute",)),
+    )
+
+    assert result.execution.status == "fallback"
+    assert result.execution.finding_refs == ()
+    assert result.execution.limitation_refs == ("limitation_invalid_executor_output",)
+    assert result.logs[0]["extra"]["blocked_output_item_count"] == "1"
+    assert result.logs[0]["extra"]["blocked_output_reason_count"] == "1"
+    assert execution_audit.events[0].safe_details["raw_output_persisted"] == "false"
+
+
 def test_application_rejects_ambiguous_published_config_resolution() -> None:
     service = _service()
     _publish_default_config(service)
@@ -673,15 +758,7 @@ def _service(
     config_repository: InMemoryReviewAgentConfigRepository | None = None,
     execution_repository: InMemoryReviewExecutionRepository | None = None,
     execution_audit: AutomatedReviewExecutionAuditPublisher | None = None,
-    executor: (
-        MockConsultativeReviewExecutor
-        | FailingConsultativeReviewExecutor
-        | InvalidOutputConsultativeReviewExecutor
-        | GovernedOutputConsultativeReviewExecutor
-        | UngovernedOutputConsultativeReviewExecutor
-        | ReentrantConsultativeReviewExecutor
-        | None
-    ) = None,
+    executor: ConsultativeReviewExecutor | None = None,
 ) -> AutomatedReviewApplicationService:
     return AutomatedReviewApplicationService(
         repository=config_repository or InMemoryReviewAgentConfigRepository(),
