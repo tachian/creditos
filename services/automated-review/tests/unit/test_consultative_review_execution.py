@@ -524,6 +524,15 @@ def test_application_converts_invalid_executor_output_to_auditable_fallback() ->
             },
             "arexec_invalid_schema_enum",
         ),
+        (
+            {
+                "item_ref": "bad ref",
+                "item_type": "missing_data",
+                "severity": "medium",
+                "reason_ref": "reason_missing_income_signal",
+            },
+            "arexec_bad_schema_ref",
+        ),
     ),
 )
 def test_application_maps_structural_output_schema_errors_to_schema_fallback(
@@ -550,6 +559,37 @@ def test_application_maps_structural_output_schema_errors_to_schema_fallback(
     assert result.logs[0]["extra"]["limitation_ref"] == "limitation_invalid_output_schema"
     assert execution_audit.events[0].safe_details["fallback_reason_ref"] == (
         "reason_invalid_output_schema"
+    )
+
+
+def test_application_maps_sensitive_output_reference_to_guardrail_fallback() -> None:
+    execution_audit = RecordingExecutionAuditPublisher()
+    service = _service(
+        execution_audit=execution_audit,
+        executor=UngovernedOutputConsultativeReviewExecutor(
+            {
+                "item_ref": "finding_cpf_reference_001",
+                "item_type": "missing_data",
+                "severity": "medium",
+                "reason_ref": "reason_missing_income_signal",
+            }
+        ),
+    )
+    _publish_default_config(service)
+
+    result = service.execute_consultative_review(
+        _execute_command(execution_id="arexec_sensitive_output_ref"),
+        context=_context(),
+        trusted_context=_trusted_context(scopes=("automated_review:execute",)),
+    )
+
+    assert result.execution.status == "fallback"
+    assert result.execution.fallback_reason_refs == ("reason_blocked_output_guardrail",)
+    assert result.execution.limitation_refs == ("limitation_output_guardrail_blocked",)
+    assert result.logs[0]["extra"]["fallback_reason_ref"] == "reason_blocked_output_guardrail"
+    assert result.logs[0]["extra"]["limitation_ref"] == "limitation_output_guardrail_blocked"
+    assert execution_audit.events[0].safe_details["fallback_reason_ref"] == (
+        "reason_blocked_output_guardrail"
     )
 
 

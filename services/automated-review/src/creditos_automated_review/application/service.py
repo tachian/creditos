@@ -937,6 +937,7 @@ _OUTPUT_SCHEMA_ERROR_CODES = frozenset(
         "automated_review_invalid_output_severity",
         "automated_review_invalid_output_confidence",
         "automated_review_invalid_output_summary",
+        "automated_review_invalid_technical_token",
         "automated_review_output_evidence_limit_exceeded",
         "automated_review_duplicate_output_item_ref",
         "automated_review_empty_executor_output",
@@ -952,6 +953,7 @@ def _output_block_reason_ref(error: AutomatedReviewValidationError) -> str:
         "automated_review_autonomous_output_content",
         "automated_review_autonomous_execution_output",
         "automated_review_autonomous_output_reference",
+        "automated_review_sensitive_reference",
     }:
         return "reason_blocked_output_guardrail"
     if error.code in _OUTPUT_SCHEMA_ERROR_CODES:
