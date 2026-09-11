@@ -2,6 +2,9 @@ from creditos_automated_review.application.ports.audit_publisher import (
     AutomatedReviewAuditIntent,
     AutomatedReviewAuditPublisher,
 )
+from creditos_automated_review.application.ports.consultative_evidence_repository import (
+    ConsultativeEvidenceRepository,
+)
 from creditos_automated_review.application.ports.consultative_review_executor import (
     ConsultativeReviewExecutionInput,
     ConsultativeReviewExecutor,
@@ -23,6 +26,7 @@ __all__ = [
     "AutomatedReviewAuditPublisher",
     "AutomatedReviewExecutionAuditIntent",
     "AutomatedReviewExecutionAuditPublisher",
+    "ConsultativeEvidenceRepository",
     "ConsultativeReviewExecutionInput",
     "ConsultativeReviewExecutor",
     "ConsultativeReviewOutput",
