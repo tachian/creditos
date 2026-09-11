@@ -305,12 +305,14 @@ def _validate_execution_config_consistency(
     execution: AutomatedReviewExecutionResult,
     config: ReviewAgentConfiguration,
 ) -> None:
-    if (
         config.tenant_id != execution.tenant_id
         or config.review_agent_config_id != execution.review_agent_config_id
         or config.review_agent_config_version_id != execution.review_agent_config_version_id
         or config.product_type != execution.product_type
-    ):
+        or execution.channel not in config.scope.channels
+        or execution.review_purpose not in config.scope.review_purposes
+        or execution.minimization_policy_ref != config.prompt.prompt_version
+        or execution.prompt_fingerprint != config.prompt.prompt_fingerprint
         raise AutomatedReviewValidationError(
             "configuração incompatível com execução consultiva",
             code="automated_review_evidence_config_mismatch",
