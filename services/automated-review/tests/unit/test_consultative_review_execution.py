@@ -427,9 +427,59 @@ def test_application_converts_executor_failure_to_auditable_fallback() -> None:
     )
 
     assert result.execution.status == "fallback"
+    assert result.execution.fallback_action == "continue_without_review"
+    assert result.execution.fallback_reason_refs == ("reason_executor_failure",)
     assert result.execution.limitation_refs == ("limitation_executor_failure",)
+    assert result.execution.output_validation_status == "blocked"
+    assert result.execution.final_decision is None
+    assert result.execution.approved_terms is None
+    assert result.execution.external_actions == ()
     assert result.logs[0]["status"] == "fallback"
+    assert result.logs[0]["extra"]["fallback_action"] == "continue_without_review"
+    assert result.logs[0]["extra"]["fallback_reason_ref"] == "reason_executor_failure"
+    assert result.logs[0]["extra"]["fallback_reason_ref_0"] == "reason_executor_failure"
+    assert result.logs[0]["extra"]["limitation_ref"] == "limitation_executor_failure"
+    assert result.logs[0]["extra"]["limitation_ref_0"] == "limitation_executor_failure"
     assert execution_audit.events[0].event_type == "automated_review.execution.fallback"
+    assert execution_audit.events[0].safe_details["fallback_action"] == ("continue_without_review")
+    assert execution_audit.events[0].safe_details["fallback_reason_ref"] == (
+        "reason_executor_failure"
+    )
+    assert execution_audit.events[0].safe_details["fallback_reason_ref_0"] == (
+        "reason_executor_failure"
+    )
+    assert execution_audit.events[0].safe_details["limitation_ref"] == (
+        "limitation_executor_failure"
+    )
+    assert execution_audit.events[0].safe_details["limitation_ref_0"] == (
+        "limitation_executor_failure"
+    )
+    assert execution_audit.events[0].safe_details["raw_payload_persisted"] == "false"
+    assert execution_audit.events[0].safe_details["prompt_payload_persisted"] == "false"
+    assert execution_audit.events[0].safe_details["raw_output_persisted"] == "false"
+
+
+def test_application_records_safe_model_metadata_on_fallback_when_configured() -> None:
+    execution_audit = RecordingExecutionAuditPublisher()
+    service = _service(
+        execution_audit=execution_audit,
+        executor=FailingConsultativeReviewExecutor(),
+    )
+    _publish_default_config(service, model_ref=_model_ref())
+
+    result = service.execute_consultative_review(
+        _execute_command(),
+        context=_context(),
+        trusted_context=_trusted_context(scopes=("automated_review:execute",)),
+    )
+
+    assert result.execution.status == "fallback"
+    assert result.logs[0]["extra"]["provider_ref"] == "provider_mock_ai"
+    assert result.logs[0]["extra"]["model_ref"] == "model_credit_review_mock"
+    assert result.logs[0]["extra"]["model_version"] == "model_credit_review_v1"
+    assert execution_audit.events[0].safe_details["provider_ref"] == "provider_mock_ai"
+    assert execution_audit.events[0].safe_details["model_ref"] == "model_credit_review_mock"
+    assert execution_audit.events[0].safe_details["model_version"] == "model_credit_review_v1"
 
 
 def test_application_converts_invalid_executor_output_to_auditable_fallback() -> None:
@@ -445,9 +495,62 @@ def test_application_converts_invalid_executor_output_to_auditable_fallback() ->
     )
 
     assert result.execution.status == "fallback"
+    assert result.execution.fallback_action == "continue_without_review"
+    assert result.execution.fallback_reason_refs == ("reason_invalid_output_contract",)
     assert result.execution.limitation_refs == ("limitation_invalid_executor_output",)
     assert result.logs[0]["status"] == "fallback"
+    assert result.logs[0]["extra"]["fallback_action"] == "continue_without_review"
+    assert result.logs[0]["extra"]["fallback_reason_ref"] == "reason_invalid_output_contract"
     assert execution_audit.events[0].event_type == "automated_review.execution.fallback"
+
+
+@pytest.mark.parametrize(
+    ("output_item", "execution_id"),
+    (
+        (
+            {
+                "item_ref": "finding_missing_data_001",
+                "item_type": "missing_data",
+                "reason_ref": "reason_missing_income_signal",
+            },
+            "arexec_missing_schema_field",
+        ),
+        (
+            {
+                "item_ref": "finding_missing_data_001",
+                "item_type": "missing_data",
+                "severity": "critical",
+                "reason_ref": "reason_missing_income_signal",
+            },
+            "arexec_invalid_schema_enum",
+        ),
+    ),
+)
+def test_application_maps_structural_output_schema_errors_to_schema_fallback(
+    output_item: dict[str, object],
+    execution_id: str,
+) -> None:
+    execution_audit = RecordingExecutionAuditPublisher()
+    service = _service(
+        execution_audit=execution_audit,
+        executor=UngovernedOutputConsultativeReviewExecutor(output_item),
+    )
+    _publish_default_config(service)
+
+    result = service.execute_consultative_review(
+        _execute_command(execution_id=execution_id),
+        context=_context(),
+        trusted_context=_trusted_context(scopes=("automated_review:execute",)),
+    )
+
+    assert result.execution.status == "fallback"
+    assert result.execution.fallback_reason_refs == ("reason_invalid_output_schema",)
+    assert result.execution.limitation_refs == ("limitation_invalid_output_schema",)
+    assert result.logs[0]["extra"]["fallback_reason_ref"] == "reason_invalid_output_schema"
+    assert result.logs[0]["extra"]["limitation_ref"] == "limitation_invalid_output_schema"
+    assert execution_audit.events[0].safe_details["fallback_reason_ref"] == (
+        "reason_invalid_output_schema"
+    )
 
 
 def test_application_accepts_governed_output_items_and_safe_counts_only() -> None:
@@ -849,8 +952,13 @@ def test_application_blocks_autonomous_output_and_sensitive_content_without_leak
 
     assert result.execution.status == "fallback"
     assert result.execution.finding_refs == ()
-    assert result.execution.limitation_refs == ("limitation_invalid_executor_output",)
+    assert result.execution.fallback_action == "continue_without_review"
+    assert result.execution.fallback_reason_refs == ("reason_blocked_output_guardrail",)
+    assert result.execution.limitation_refs == ("limitation_output_guardrail_blocked",)
     assert result.logs[0]["status"] == "fallback"
+    assert result.logs[0]["extra"]["fallback_action"] == "continue_without_review"
+    assert result.logs[0]["extra"]["fallback_reason_ref"] == "reason_blocked_output_guardrail"
+    assert result.logs[0]["extra"]["limitation_ref"] == "limitation_output_guardrail_blocked"
     assert result.logs[0]["extra"]["blocked_output_item_count"] == "1"
     assert result.logs[0]["extra"]["blocked_output_reason_count"] == "1"
     assert execution_audit.events[0].event_type == "automated_review.execution.fallback"
@@ -860,6 +968,60 @@ def test_application_blocks_autonomous_output_and_sensitive_content_without_leak
     assert "synthetic.user@example.invalid" not in unsafe_text
     assert "ignore previous instructions" not in unsafe_text
     assert result.execution.approved_terms is None
+
+
+def test_application_preserves_configured_request_more_data_fallback_as_consultative() -> None:
+    execution_audit = RecordingExecutionAuditPublisher()
+    service = _service(
+        execution_audit=execution_audit,
+        executor=InvalidOutputConsultativeReviewExecutor(),
+    )
+    _publish_default_config(service, fallback_action="request_more_data")
+
+    result = service.execute_consultative_review(
+        _execute_command(),
+        context=_context(),
+        trusted_context=_trusted_context(scopes=("automated_review:execute",)),
+    )
+
+    assert result.execution.status == "fallback"
+    assert result.execution.classification == "consultative"
+    assert result.execution.fallback_action == "request_more_data"
+    assert result.execution.fallback_reason_refs == ("reason_invalid_output_contract",)
+    assert result.execution.final_decision is None
+    assert result.execution.approved_terms is None
+    assert result.execution.external_actions == ()
+    assert result.consultative_evidence is None
+    assert result.logs[0]["extra"]["fallback_action"] == "request_more_data"
+    assert result.logs[0]["extra"]["consultative_evidence_created"] == "false"
+    assert execution_audit.events[0].safe_details["fallback_action"] == "request_more_data"
+
+
+def test_application_preserves_configured_unable_to_decide_fallback_as_consultative() -> None:
+    execution_audit = RecordingExecutionAuditPublisher()
+    service = _service(
+        execution_audit=execution_audit,
+        executor=FailingConsultativeReviewExecutor(),
+    )
+    _publish_default_config(service, fallback_action="unable_to_decide")
+
+    result = service.execute_consultative_review(
+        _execute_command(),
+        context=_context(),
+        trusted_context=_trusted_context(scopes=("automated_review:execute",)),
+    )
+
+    assert result.execution.status == "fallback"
+    assert result.execution.classification == "consultative"
+    assert result.execution.fallback_action == "unable_to_decide"
+    assert result.execution.fallback_reason_refs == ("reason_executor_failure",)
+    assert result.execution.final_decision is None
+    assert result.execution.approved_terms is None
+    assert result.execution.external_actions == ()
+    assert result.logs[0]["extra"]["fallback_action"] == "unable_to_decide"
+    assert execution_audit.events[0].safe_details["fallback_reason_ref"] == (
+        "reason_executor_failure"
+    )
 
 
 def test_application_blocks_unknown_output_fields_and_tool_use_without_autonomy() -> None:
@@ -885,10 +1047,41 @@ def test_application_blocks_unknown_output_fields_and_tool_use_without_autonomy(
     )
 
     assert result.execution.status == "fallback"
-    assert result.execution.limitation_refs == ("limitation_invalid_executor_output",)
+    assert result.execution.fallback_reason_refs == ("reason_invalid_output_schema",)
+    assert result.execution.limitation_refs == ("limitation_invalid_output_schema",)
+    assert result.logs[0]["extra"]["fallback_reason_ref_0"] == "reason_invalid_output_schema"
+    assert result.logs[0]["extra"]["limitation_ref_0"] == "limitation_invalid_output_schema"
     assert result.logs[0]["extra"]["blocked_output_item_count"] == "1"
     assert result.logs[0]["extra"]["blocked_output_reason_count"] == "1"
     assert execution_audit.events[0].safe_details["raw_output_persisted"] == "false"
+
+
+def test_execution_result_rejects_inconsistent_fallback_state() -> None:
+    with pytest.raises(AutomatedReviewValidationError) as output_status_error:
+        _execution_result(status="fallback", output_validation_status="accepted")
+    assert output_status_error.value.code == "automated_review_invalid_fallback_output_status"
+
+    with pytest.raises(AutomatedReviewValidationError) as finding_error:
+        _execution_result(status="fallback", finding_refs=("finding_missing_data_001",))
+    assert finding_error.value.code == "automated_review_fallback_with_accepted_findings"
+
+    with pytest.raises(AutomatedReviewValidationError) as accepted_count_error:
+        _execution_result(
+            status="fallback",
+            accepted_output_counts_by_type={"missing_data": 1},
+        )
+    assert accepted_count_error.value.code == "automated_review_fallback_with_accepted_counts"
+
+
+def test_execution_result_rejects_autonomous_fallback_reason_reference() -> None:
+    with pytest.raises(AutomatedReviewValidationError) as error:
+        _execution_result(
+            status="fallback",
+            fallback_reason_refs=("approved_by_ai",),
+            blocked_output_counts_by_reason={"approved_by_ai": 1},
+        )
+
+    assert error.value.code == "automated_review_autonomous_output_reference"
 
 
 def test_application_blocks_legacy_output_fields_even_with_governed_items() -> None:
@@ -929,7 +1122,7 @@ def test_application_blocks_oversized_executor_output_before_accepting_items() -
 
     assert result.execution.status == "fallback"
     assert result.execution.finding_refs == ()
-    assert result.execution.limitation_refs == ("limitation_invalid_executor_output",)
+    assert result.execution.limitation_refs == ("limitation_invalid_output_schema",)
     assert result.logs[0]["extra"]["blocked_output_item_count"] == "1"
     assert result.logs[0]["extra"]["blocked_output_reason_count"] == "1"
     assert execution_audit.events[0].safe_details["raw_output_persisted"] == "false"
@@ -1143,9 +1336,10 @@ def _publish_default_config(
     service: AutomatedReviewApplicationService,
     *,
     model_ref: ReviewModelRef | None = None,
+    fallback_action: str = "continue_without_review",
 ) -> None:
     created = service.create_config(
-        _create_command(model_ref=model_ref),
+        _create_command(model_ref=model_ref, fallback_action=fallback_action),
         context=_context(),
         trusted_context=_trusted_context(scopes=("automated_review:write",)),
     )
@@ -1181,6 +1375,7 @@ def _create_command(
     review_agent_config_id: str = "rac_personal_credit_default",
     review_agent_config_version_id: str = "rac_personal_credit_default_v1",
     model_ref: ReviewModelRef | None = None,
+    fallback_action: str = "continue_without_review",
 ) -> CreateReviewAgentConfigCommand:
     return CreateReviewAgentConfigCommand(
         review_agent_config_id=review_agent_config_id,
@@ -1188,7 +1383,7 @@ def _create_command(
         agent_version="agent_credit_review_v1",
         prompt=_prompt(),
         scope=_scope(),
-        guardrails=_guardrails(),
+        guardrails=_guardrails(fallback_action=fallback_action),
         capabilities=_capabilities(),
         change_summary="Criação da configuração consultiva",
         model_ref=model_ref,
@@ -1231,7 +1426,11 @@ def _model_ref() -> ReviewModelRef:
     )
 
 
-def _execution_result(*, status: str = "completed") -> AutomatedReviewExecutionResult:
+def _execution_result(
+    *,
+    status: str = "completed",
+    **overrides: Any,
+) -> AutomatedReviewExecutionResult:
     plan = AutomatedReviewExecutionRequest.create(
         execution_id="arexec_001",
         proposal_id="proposal_001",
@@ -1240,21 +1439,30 @@ def _execution_result(*, status: str = "completed") -> AutomatedReviewExecutionR
         review_purpose="missing_data",
         candidate_inputs=(ReviewInputCandidate.create("requested_amount_units", 150000),),
     ).build_minimization_plan(_published_config())
-    return AutomatedReviewExecutionResult(
-        execution_id="arexec_001",
-        tenant_id="tenant_alpha",
-        proposal_id="proposal_001",
-        review_agent_config_id="rac_personal_credit_default",
-        review_agent_config_version_id="rac_personal_credit_default_v1",
-        product_type="personal_credit",
-        channel="api",
-        review_purpose="missing_data",
-        minimization_policy_ref=plan.policy_ref,
-        prompt_fingerprint=plan.prompt_fingerprint,
-        input_fields=plan.fields,
-        occurred_at=NOW,
-        status=status,
-    )
+    data: dict[str, Any] = {
+        "execution_id": "arexec_001",
+        "tenant_id": "tenant_alpha",
+        "proposal_id": "proposal_001",
+        "review_agent_config_id": "rac_personal_credit_default",
+        "review_agent_config_version_id": "rac_personal_credit_default_v1",
+        "product_type": "personal_credit",
+        "channel": "api",
+        "review_purpose": "missing_data",
+        "minimization_policy_ref": plan.policy_ref,
+        "prompt_fingerprint": plan.prompt_fingerprint,
+        "input_fields": plan.fields,
+        "occurred_at": NOW,
+        "status": status,
+        "fallback_action": "continue_without_review" if status == "fallback" else None,
+        "fallback_reason_refs": ("reason_executor_failure",) if status == "fallback" else (),
+        "limitation_refs": ("limitation_executor_failure",) if status == "fallback" else (),
+        "output_validation_status": "blocked" if status == "fallback" else "accepted",
+        "blocked_output_counts_by_reason": (
+            {"reason_executor_failure": 1} if status == "fallback" else {}
+        ),
+    }
+    data.update(overrides)
+    return AutomatedReviewExecutionResult(**data)
 
 
 def _consultative_evidence(
@@ -1319,14 +1527,14 @@ def _prompt() -> ReviewAgentPrompt:
     )
 
 
-def _guardrails() -> ReviewAgentGuardrails:
+def _guardrails(*, fallback_action: str = "continue_without_review") -> ReviewAgentGuardrails:
     return ReviewAgentGuardrails.create(
         require_schema_validation=True,
         require_input_minimization=True,
         block_sensitive_data=True,
         block_final_decision=True,
         block_tool_use=True,
-        fallback_action="continue_without_review",
+        fallback_action=fallback_action,
         max_prompt_tokens=3000,
         max_output_tokens=1000,
     )

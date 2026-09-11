@@ -33,3 +33,7 @@
 ## Deferred from: dev-story of 5-1-configuracao-versionada-de-agente-de-revisao (2026-09-07)
 
 - Suíte completa ainda depende de `uv` disponível no ambiente local: a regressão completa fora do sandbox passou em 546 testes e falhou apenas em `tests/test_local_harness.py:120` por `scripts/dev: line 47: uv: command not found`, condição ambiental preexistente e fora do escopo do `Automated Review Service`.
+
+## Deferred from: code review of 5-5-fallback-seguro-de-revisao-automatizada (2026-09-11)
+
+- Executor ausente não vira fallback e pode deixar reserva órfã em `execute_consultative_review`: a reserva antes de `_require_consultative_executor()` já existia antes da Story 5.5 e representa endurecimento futuro de configuração/bootstrapping do serviço, não falha de provedor/modelo tratada por fallback consultivo.

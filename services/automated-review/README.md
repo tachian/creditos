@@ -65,6 +65,18 @@ A Story 5.4 transforma saídas consultivas aceitas em evidências rastreáveis v
 - logs e auditoria emitem `automated_review.evidence.created` com contagens e flags `raw_payload_persisted=false`, `prompt_payload_persisted=false` e `raw_output_persisted=false`;
 - a evidência expõe somente `consultative_evidence_id` como referência técnica para decisão futura, sem alterar outcome, reason codes, termos ou fonte determinística do `Decision Service`.
 
+## Story 5.5
+
+A Story 5.5 torna falhas de revisão automatizada estados controlados e auditáveis:
+
+- `AutomatedReviewExecutionResult` em `status="fallback"` carrega `fallback_action` e `fallback_reason_refs` governados;
+- `fallback_action` vem da configuração publicada em `ReviewAgentGuardrails` e aceita `continue_without_review`, `request_more_data` ou `unable_to_decide`;
+- falha do executor/modelo usa `reason_executor_failure` e `limitation_executor_failure`;
+- saída inválida por schema usa `reason_invalid_output_schema` e `limitation_invalid_output_schema`;
+- bloqueio de guardrail usa `reason_blocked_output_guardrail` e `limitation_output_guardrail_blocked`;
+- fallback nunca aprova, reprova, altera termos, executa callback, chama ferramenta, aciona integração ou cria evidência consultiva aceita;
+- logs e auditoria registram metadados seguros, motivo, limitação, ação de fallback e flags de não persistência bruta.
+
 ## Segurança e privacidade
 
 - `tenant_id` e `tenant_isolation_tier` vêm do `PropagatedContext` confiável.
@@ -75,6 +87,7 @@ A Story 5.4 transforma saídas consultivas aceitas em evidências rastreáveis v
 - Execuções consultivas registram contagens por classificação de minimização, política aplicada e referências técnicas, sem entrada bruta.
 - Saídas consultivas registram apenas classificações permitidas (`missing_data`, `inconsistency`, `explainability_factor`, `limitation`), referências técnicas e contagens seguras.
 - Evidências consultivas não persistem prompt, payload, output bruto, entrada minimizada com valores ou `safe_summary`.
+- Fallbacks consultivos registram apenas ação configurada, reason refs, limitation refs e contagens seguras.
 - Nenhuma saída consultiva pode aprovar, reprovar, alterar termos, chamar ferramentas, executar callbacks ou acionar integrações.
 
 ## Comandos locais
