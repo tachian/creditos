@@ -324,7 +324,8 @@ def _validate_execution_output_consistency(
     output_validation: ReviewOutputValidationResult,
 ) -> None:
     if (
-        output_validation.finding_refs != execution.finding_refs
+        output_validation.status != execution.output_validation_status
+        or output_validation.finding_refs != execution.finding_refs
         or output_validation.limitation_refs != execution.limitation_refs
         or dict(output_validation.accepted_counts_by_type)
         != dict(execution.accepted_output_counts_by_type)
