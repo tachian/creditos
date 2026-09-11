@@ -14,7 +14,9 @@ class AutomatedReviewExecutionAuditIntent:
     review_agent_config_id: str
     review_agent_config_version_id: str
     correlation_id: str
+    request_id: str | None
     trace_id: str | None
+    tenant_isolation_tier: str
     occurred_at: str
     safe_details: dict[str, str]
 

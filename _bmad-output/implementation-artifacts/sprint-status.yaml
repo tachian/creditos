@@ -93,7 +93,7 @@ development_status:
   5-1-configuracao-versionada-de-agente-de-revisao: done
   5-2-execucao-consultiva-com-entradas-minimizadas: done
   5-3-validacao-de-saida-guardrails-e-classificacao: done
-  5-4-evidencia-consultiva-vinculada-a-proposta: backlog
+  5-4-evidencia-consultiva-vinculada-a-proposta: done
   5-5-fallback-seguro-de-revisao-automatizada: backlog
   5-6-observabilidade-custo-e-gates-de-ia: backlog
   epic-5-retrospective: optional

@@ -53,6 +53,18 @@ A Story 5.3 trata saídas de IA como não confiáveis antes de qualquer persist�
 - saídas com schema inválido, campo desconhecido, confiança fora de faixa, referência sensível, prompt injection, tool use, callback, ação externa ou semântica de decisão final viram `fallback`;
 - logs e auditoria registram `output_validation_status`, contagens por tipo e `raw_output_persisted=false`, sem output bruto.
 
+## Story 5.4
+
+A Story 5.4 transforma saídas consultivas aceitas em evidências rastreáveis vinculadas à proposta:
+
+- `ConsultativeEvidence` registra `tenant_id`, `proposal_id`, `execution_id`, `consultative_evidence_id`, `correlation_id`, `trace_id`, timestamp com timezone e classificação `consultative`;
+- a proveniência preserva configuração, versão, `agent_version`, `prompt_fingerprint`, política de minimização e referências seguras de modelo/provedor quando existirem;
+- `ConsultativeEvidenceItem` deriva exclusivamente de `ReviewOutputValidationResult` aceito e persiste apenas refs técnicas, tipo, severidade, `reason_ref`, confiança e `evidence_refs`;
+- `InMemoryConsultativeEvidenceRepository` garante idempotência por execução, isolamento por tenant e consultas internas por proposta ou execução;
+- `AutomatedReviewApplicationService` cria evidência somente para execução `completed` com saída `accepted`; fallbacks e guardrails bloqueados não geram evidência aceita;
+- logs e auditoria emitem `automated_review.evidence.created` com contagens e flags `raw_payload_persisted=false`, `prompt_payload_persisted=false` e `raw_output_persisted=false`;
+- a evidência expõe somente `consultative_evidence_id` como referência técnica para decisão futura, sem alterar outcome, reason codes, termos ou fonte determinística do `Decision Service`.
+
 ## Segurança e privacidade
 
 - `tenant_id` e `tenant_isolation_tier` vêm do `PropagatedContext` confiável.
@@ -62,6 +74,7 @@ A Story 5.3 trata saídas de IA como não confiáveis antes de qualquer persist�
 - Prompt, payload bruto, CPF, CNPJ, e-mail, telefone, endereço, token, segredo, header sensível e dado financeiro detalhado não devem aparecer em logs, auditoria ou erros.
 - Execuções consultivas registram contagens por classificação de minimização, política aplicada e referências técnicas, sem entrada bruta.
 - Saídas consultivas registram apenas classificações permitidas (`missing_data`, `inconsistency`, `explainability_factor`, `limitation`), referências técnicas e contagens seguras.
+- Evidências consultivas não persistem prompt, payload, output bruto, entrada minimizada com valores ou `safe_summary`.
 - Nenhuma saída consultiva pode aprovar, reprovar, alterar termos, chamar ferramentas, executar callbacks ou acionar integrações.
 
 ## Comandos locais
@@ -78,5 +91,4 @@ A Story 5.3 trata saídas de IA como não confiáveis antes de qualquer persist�
 - SDK de IA ou chamada real a provedor/modelo.
 - Endpoint público HTTP, gRPC real ou NATS JetStream.
 - Banco real, migration, outbox/inbox ou secret manager.
-- Evidência consultiva final vinculada à proposta.
 - Dashboard, métrica de negócio ou seleção nominal de fornecedor/modelo.

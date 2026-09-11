@@ -16,6 +16,7 @@ from creditos_automated_review.application.ports import (
     AutomatedReviewAuditPublisher,
     AutomatedReviewExecutionAuditIntent,
     AutomatedReviewExecutionAuditPublisher,
+    ConsultativeEvidenceRepository,
     ConsultativeReviewExecutionInput,
     ConsultativeReviewExecutor,
     ConsultativeReviewOutput,
@@ -25,6 +26,7 @@ from creditos_automated_review.application.ports import (
 from creditos_automated_review.domain.entities import (
     AutomatedReviewExecutionRequest,
     AutomatedReviewExecutionResult,
+    ConsultativeEvidence,
     ReviewAgentConfiguration,
 )
 from creditos_automated_review.domain.errors import (
@@ -46,6 +48,9 @@ from creditos_automated_review.domain.value_objects import (
 )
 from creditos_automated_review.domain.value_objects.review_agent_config import (
     validate_agent_version,
+)
+from creditos_automated_review.domain.value_objects.review_execution import (
+    validate_non_sensitive_execution_reference,
 )
 
 SERVICE_NAME = "automated-review"
@@ -117,6 +122,16 @@ class ExecuteConsultativeReviewCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class GetConsultativeEvidenceByExecutionCommand:
+    execution_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ListConsultativeEvidenceByProposalCommand:
+    proposal_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewAgentConfigApplicationResult:
     config: ReviewAgentConfiguration
     logs: tuple[dict[str, Any], ...]
@@ -126,6 +141,14 @@ class ReviewAgentConfigApplicationResult:
 class ReviewExecutionApplicationResult:
     execution: AutomatedReviewExecutionResult
     logs: tuple[dict[str, Any], ...]
+    consultative_evidence: ConsultativeEvidence | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConsultativeEvidenceApplicationResult:
+    evidence: ConsultativeEvidence | None = None
+    evidences: tuple[ConsultativeEvidence, ...] = ()
+    logs: tuple[dict[str, Any], ...] = ()
 
 
 class AutomatedReviewApplicationService:
@@ -136,6 +159,7 @@ class AutomatedReviewApplicationService:
         audit_publisher: AutomatedReviewAuditPublisher,
         environment: str,
         execution_repository: ReviewExecutionRepository | None = None,
+        consultative_evidence_repository: ConsultativeEvidenceRepository | None = None,
         execution_audit_publisher: AutomatedReviewExecutionAuditPublisher | None = None,
         consultative_executor: ConsultativeReviewExecutor | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -143,6 +167,7 @@ class AutomatedReviewApplicationService:
         self._repository = repository
         self._audit_publisher = audit_publisher
         self._execution_repository = execution_repository
+        self._consultative_evidence_repository = consultative_evidence_repository
         self._execution_audit_publisher = execution_audit_publisher
         self._consultative_executor = consultative_executor
         self._environment = environment
@@ -430,25 +455,51 @@ class AutomatedReviewApplicationService:
                 output_validation=output_validation,
             )
         except Exception:
+            output_validation = ReviewOutputValidationResult.blocked(
+                reason_refs=("reason_executor_failure",),
+                blocked_counts_by_reason={"reason_executor_failure": 0},
+            )
             execution = _fallback_execution_result(
                 request=request,
                 config=config,
                 plan=plan,
                 occurred_at=self._clock(),
                 limitation_ref="limitation_executor_failure",
-                output_validation=ReviewOutputValidationResult.blocked(
-                    reason_refs=("reason_executor_failure",),
-                    blocked_counts_by_reason={"reason_executor_failure": 0},
-                ),
+                output_validation=output_validation,
             )
-        execution_repository.create(
-            execution,
-            before_commit=lambda: self._publish_execution_audit(
+        evidence_repository = self._consultative_evidence_repository
+        consultative_evidence = (
+            _consultative_evidence_from_result(
+                execution=execution,
+                output_validation=output_validation,
+                config=config,
+                context=context,
+            )
+            if evidence_repository is not None
+            else None
+        )
+
+        def before_execution_commit() -> None:
+            if consultative_evidence is not None and evidence_repository is not None:
+                evidence_to_create = consultative_evidence
+                evidence_repository.create(
+                    evidence_to_create,
+                    before_commit=lambda: self._publish_consultative_evidence_audit(
+                        evidence_to_create,
+                        context,
+                        trusted_context.trusted.subject_id,
+                    ),
+                )
+            self._publish_execution_audit(
                 _execution_event_type(execution),
                 execution,
                 context,
                 trusted_context.trusted.subject_id,
-            ),
+            )
+
+        execution_repository.create(
+            execution,
+            before_commit=before_execution_commit,
         )
         log = self._log_operation(
             context=context,
@@ -456,9 +507,75 @@ class AutomatedReviewApplicationService:
             status=_execution_log_status(execution),
             duration_ms=_duration_ms(started),
             payload=command,
-            extra=_safe_execution_details(execution),
+            extra=_safe_execution_details(execution, evidence=consultative_evidence),
         )
-        return ReviewExecutionApplicationResult(execution=execution, logs=(log,))
+        return ReviewExecutionApplicationResult(
+            execution=execution,
+            logs=(log,),
+            consultative_evidence=consultative_evidence,
+        )
+
+    def get_consultative_evidence_by_execution(
+        self,
+        command: GetConsultativeEvidenceByExecutionCommand,
+        *,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+    ) -> ConsultativeEvidenceApplicationResult:
+        started = monotonic()
+        self._require_scope(trusted_context, "automated_review:read")
+        self._require_context_matches_trusted(context, trusted_context, require_complete=True)
+        tenant_id = self._require_bridge_tenant(trusted_context)
+        execution_id = _validate_evidence_lookup_reference(
+            command.execution_id,
+            field_path="execution_id",
+        )
+        evidence = self._require_consultative_evidence_repository().get_by_execution(
+            tenant_id=tenant_id,
+            execution_id=execution_id,
+        )
+        log = self._log_operation(
+            context=context,
+            operation="automated_review.evidence.get_by_execution",
+            status="accepted",
+            duration_ms=_duration_ms(started),
+            payload=command,
+            extra=_safe_evidence_lookup_details(evidence),
+        )
+        return ConsultativeEvidenceApplicationResult(
+            evidence=evidence,
+            evidences=() if evidence is None else (evidence,),
+            logs=(log,),
+        )
+
+    def list_consultative_evidences_by_proposal(
+        self,
+        command: ListConsultativeEvidenceByProposalCommand,
+        *,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+    ) -> ConsultativeEvidenceApplicationResult:
+        started = monotonic()
+        self._require_scope(trusted_context, "automated_review:read")
+        self._require_context_matches_trusted(context, trusted_context, require_complete=True)
+        tenant_id = self._require_bridge_tenant(trusted_context)
+        proposal_id = _validate_evidence_lookup_reference(
+            command.proposal_id,
+            field_path="proposal_id",
+        )
+        evidences = self._require_consultative_evidence_repository().list_by_proposal(
+            tenant_id=tenant_id,
+            proposal_id=proposal_id,
+        )
+        log = self._log_operation(
+            context=context,
+            operation="automated_review.evidence.list_by_proposal",
+            status="accepted",
+            duration_ms=_duration_ms(started),
+            payload=command,
+            extra=_safe_evidence_collection_lookup_details(evidences),
+        )
+        return ConsultativeEvidenceApplicationResult(evidences=evidences, logs=(log,))
 
     def _get_existing(
         self,
@@ -605,9 +722,35 @@ class AutomatedReviewApplicationService:
                 review_agent_config_id=execution.review_agent_config_id,
                 review_agent_config_version_id=execution.review_agent_config_version_id,
                 correlation_id=context.correlation_id,
+                request_id=context.request_id,
                 trace_id=context.trace_id,
+                tenant_isolation_tier=context.tenant_isolation_tier or "",
                 occurred_at=execution.occurred_at.isoformat(),
                 safe_details=_safe_execution_details(execution),
+            )
+        )
+
+    def _publish_consultative_evidence_audit(
+        self,
+        evidence: ConsultativeEvidence,
+        context: ObservabilityContext,
+        actor_subject_id: str,
+    ) -> None:
+        self._require_execution_audit_publisher().publish(
+            AutomatedReviewExecutionAuditIntent(
+                event_type="automated_review.evidence.created",
+                tenant_id=evidence.tenant_id,
+                actor_subject_id=actor_subject_id,
+                execution_id=evidence.execution_id,
+                proposal_id=evidence.proposal_id,
+                review_agent_config_id=evidence.review_agent_config_id,
+                review_agent_config_version_id=evidence.review_agent_config_version_id,
+                correlation_id=context.correlation_id,
+                request_id=context.request_id,
+                trace_id=context.trace_id,
+                tenant_isolation_tier=context.tenant_isolation_tier or "",
+                occurred_at=evidence.occurred_at.isoformat(),
+                safe_details=_safe_consultative_evidence_details(evidence),
             )
         )
 
@@ -649,6 +792,11 @@ class AutomatedReviewApplicationService:
             raise RuntimeError("execution_audit_publisher não configurado")
         return self._execution_audit_publisher
 
+    def _require_consultative_evidence_repository(self) -> ConsultativeEvidenceRepository:
+        if self._consultative_evidence_repository is None:
+            raise RuntimeError("consultative_evidence_repository não configurado")
+        return self._consultative_evidence_repository
+
     def _require_consultative_executor(self) -> ConsultativeReviewExecutor:
         if self._consultative_executor is None:
             raise RuntimeError("consultative_executor não configurado")
@@ -686,6 +834,31 @@ def _fallback_execution_result(
         output_validation_status=output_validation.status,
         accepted_output_counts_by_type=output_validation.accepted_counts_by_type,
         blocked_output_counts_by_reason=output_validation.blocked_counts_by_reason,
+    )
+
+
+def _consultative_evidence_from_result(
+    *,
+    execution: AutomatedReviewExecutionResult,
+    output_validation: ReviewOutputValidationResult,
+    config: ReviewAgentConfiguration,
+    context: ObservabilityContext,
+) -> ConsultativeEvidence | None:
+    if execution.status != "completed" or output_validation.status != "accepted":
+        return None
+    return ConsultativeEvidence.from_execution(
+        execution=execution,
+        output_validation=output_validation,
+        config=config,
+        correlation_id=context.correlation_id,
+        trace_id=context.trace_id,
+    )
+
+
+def _validate_evidence_lookup_reference(value: str, *, field_path: str) -> str:
+    return validate_non_sensitive_execution_reference(
+        validate_agent_version(value, field_path=field_path),
+        field_path=field_path,
     )
 
 
@@ -788,7 +961,11 @@ def _safe_config_details(config: ReviewAgentConfiguration) -> dict[str, str]:
     return details
 
 
-def _safe_execution_details(execution: AutomatedReviewExecutionResult) -> dict[str, str]:
+def _safe_execution_details(
+    execution: AutomatedReviewExecutionResult,
+    *,
+    evidence: ConsultativeEvidence | None = None,
+) -> dict[str, str]:
     counts = _execution_action_counts(execution)
     details = {
         "execution_id": execution.execution_id,
@@ -826,10 +1003,77 @@ def _safe_execution_details(execution: AutomatedReviewExecutionResult) -> dict[s
         "raw_payload_persisted": "false",
         "prompt_payload_persisted": "false",
         "raw_output_persisted": "false",
+        "consultative_evidence_created": str(evidence is not None).lower(),
     }
+    if evidence is not None:
+        details.update(_safe_consultative_evidence_details(evidence))
     for reason_ref, count in execution.blocked_output_counts_by_reason.items():
         details[f"blocked_output_{reason_ref}_count"] = str(count)
     return details
+
+
+def _safe_consultative_evidence_details(evidence: ConsultativeEvidence) -> dict[str, str]:
+    details = {
+        "consultative_evidence_id": evidence.consultative_evidence_id,
+        "proposal_id": evidence.proposal_id,
+        "execution_id": evidence.execution_id,
+        "review_agent_config_id": evidence.review_agent_config_id,
+        "review_agent_config_version_id": evidence.review_agent_config_version_id,
+        "agent_version": evidence.agent_version,
+        "product_type": evidence.product_type,
+        "channel": evidence.channel,
+        "review_purpose": evidence.review_purpose,
+        "classification": evidence.classification,
+        "minimization_policy_ref": evidence.minimization_policy_ref,
+        "prompt_fingerprint": evidence.prompt_fingerprint,
+        "correlation_id": evidence.correlation_id,
+        "trace_id_present": str(evidence.trace_id is not None).lower(),
+        "consultative_evidence_item_count": str(len(evidence.items)),
+        "consultative_evidence_missing_data_count": str(
+            evidence.counts_by_type.get("missing_data", 0)
+        ),
+        "consultative_evidence_inconsistency_count": str(
+            evidence.counts_by_type.get("inconsistency", 0)
+        ),
+        "consultative_evidence_explainability_factor_count": str(
+            evidence.counts_by_type.get("explainability_factor", 0)
+        ),
+        "consultative_evidence_limitation_count": str(evidence.counts_by_type.get("limitation", 0)),
+        "consultative_evidence_confidence_present_count": str(evidence.confidence_present_count),
+        "raw_payload_persisted": "false",
+        "prompt_payload_persisted": "false",
+        "raw_output_persisted": "false",
+    }
+    if evidence.provider_ref is not None:
+        details["provider_ref"] = evidence.provider_ref
+    if evidence.model_ref is not None:
+        details["model_ref"] = evidence.model_ref
+    if evidence.model_version is not None:
+        details["model_version"] = evidence.model_version
+    return details
+
+
+def _safe_evidence_lookup_details(evidence: ConsultativeEvidence | None) -> dict[str, str]:
+    details = {
+        "consultative_evidence_found": str(evidence is not None).lower(),
+        "raw_payload_persisted": "false",
+        "prompt_payload_persisted": "false",
+        "raw_output_persisted": "false",
+    }
+    if evidence is not None:
+        details.update(_safe_consultative_evidence_details(evidence))
+    return details
+
+
+def _safe_evidence_collection_lookup_details(
+    evidences: tuple[ConsultativeEvidence, ...],
+) -> dict[str, str]:
+    return {
+        "consultative_evidence_count": str(len(evidences)),
+        "raw_payload_persisted": "false",
+        "prompt_payload_persisted": "false",
+        "raw_output_persisted": "false",
+    }
 
 
 def _execution_action_counts(execution: AutomatedReviewExecutionResult) -> dict[str, int]:
