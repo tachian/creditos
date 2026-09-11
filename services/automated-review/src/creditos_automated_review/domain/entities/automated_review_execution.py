@@ -24,8 +24,12 @@ from creditos_automated_review.domain.value_objects.review_execution import (
     validate_prompt_fingerprint,
     validate_review_technical_token,
 )
+from creditos_automated_review.domain.value_objects.review_output import (
+    validate_review_output_reference,
+)
 
 _EXECUTION_STATUSES = frozenset({"completed", "blocked", "failed", "fallback"})
+_FALLBACK_ACTIONS = frozenset({"continue_without_review", "request_more_data", "unable_to_decide"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +170,8 @@ class AutomatedReviewExecutionResult:
     blocked_output_counts_by_reason: Mapping[str, int] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    fallback_action: str | None = None
+    fallback_reason_refs: tuple[str, ...] = ()
     final_decision: str | None = None
     approved_terms: str | None = None
     external_actions: tuple[str, ...] = ()
@@ -293,6 +299,82 @@ class AutomatedReviewExecutionResult:
                 )
             ),
         )
+        fallback_reason_refs = tuple(
+            validate_review_output_reference(
+                item,
+                field_path=f"fallback_reason_refs[{index}]",
+            )
+            for index, item in enumerate(self.fallback_reason_refs)
+        )
+        object.__setattr__(self, "fallback_reason_refs", fallback_reason_refs)
+        if self.fallback_action is not None:
+            fallback_action = validate_review_technical_token(
+                self.fallback_action,
+                field_path="fallback_action",
+            )
+            if fallback_action not in _FALLBACK_ACTIONS:
+                raise AutomatedReviewValidationError(
+                    "ação de fallback consultivo inválida",
+                    code="automated_review_invalid_fallback_action",
+                    field_path="fallback_action",
+                )
+            object.__setattr__(self, "fallback_action", fallback_action)
+        if status == "fallback":
+            if self.fallback_action is None:
+                raise AutomatedReviewValidationError(
+                    "fallback consultivo exige ação configurada",
+                    code="automated_review_missing_fallback_action",
+                    field_path="fallback_action",
+                )
+            if not fallback_reason_refs:
+                raise AutomatedReviewValidationError(
+                    "fallback consultivo exige motivo técnico",
+                    code="automated_review_missing_fallback_reason",
+                    field_path="fallback_reason_refs",
+                )
+            if output_validation_status != "blocked":
+                raise AutomatedReviewValidationError(
+                    "fallback consultivo exige saída bloqueada",
+                    code="automated_review_invalid_fallback_output_status",
+                    field_path="output_validation_status",
+                )
+            if not self.limitation_refs:
+                raise AutomatedReviewValidationError(
+                    "fallback consultivo exige limitação auditável",
+                    code="automated_review_missing_fallback_limitation",
+                    field_path="limitation_refs",
+                )
+            if self.finding_refs:
+                raise AutomatedReviewValidationError(
+                    "fallback consultivo não pode carregar achados aceitos",
+                    code="automated_review_fallback_with_accepted_findings",
+                    field_path="finding_refs",
+                )
+            if any(count > 0 for count in self.accepted_output_counts_by_type.values()):
+                raise AutomatedReviewValidationError(
+                    "fallback consultivo não pode carregar contagens aceitas",
+                    code="automated_review_fallback_with_accepted_counts",
+                    field_path="accepted_output_counts_by_type",
+                )
+            if not self.blocked_output_counts_by_reason:
+                raise AutomatedReviewValidationError(
+                    "fallback consultivo exige contagem de bloqueio",
+                    code="automated_review_missing_fallback_blocked_count",
+                    field_path="blocked_output_counts_by_reason",
+                )
+            for reason_ref in fallback_reason_refs:
+                if self.blocked_output_counts_by_reason.get(reason_ref, 0) < 1:
+                    raise AutomatedReviewValidationError(
+                        "fallback consultivo exige contagem para cada motivo",
+                        code="automated_review_missing_fallback_reason_count",
+                        field_path=f"blocked_output_counts_by_reason.{reason_ref}",
+                    )
+        elif self.fallback_action is not None or fallback_reason_refs:
+            raise AutomatedReviewValidationError(
+                "metadados de fallback só são permitidos para execução em fallback",
+                code="automated_review_unexpected_fallback_metadata",
+                field_path="fallback_action",
+            )
 
 
 def _persistable_input_field(field: MinimizedReviewInputField) -> MinimizedReviewInputField:

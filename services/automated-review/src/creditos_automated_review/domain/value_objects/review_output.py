@@ -451,7 +451,7 @@ def _optional_str_tuple(value: object, *, field_path: str) -> tuple[str, ...]:
     return tuple(refs)
 
 
-def _validate_output_reference(value: str, *, field_path: str) -> str:
+def validate_review_output_reference(value: str, *, field_path: str) -> str:
     reference = validate_safe_review_reference(value, field_path=field_path)
     if any(pattern.search(reference) for pattern in _AUTONOMOUS_REFERENCE_PATTERNS):
         raise AutomatedReviewValidationError(
@@ -460,6 +460,10 @@ def _validate_output_reference(value: str, *, field_path: str) -> str:
             field_path=field_path,
         )
     return reference
+
+
+def _validate_output_reference(value: str, *, field_path: str) -> str:
+    return validate_review_output_reference(value, field_path=field_path)
 
 
 def _validate_counts_by_reason(value: Mapping[str, int]) -> dict[str, int]:

@@ -451,13 +451,14 @@ class AutomatedReviewApplicationService:
                 config=config,
                 plan=plan,
                 occurred_at=self._clock(),
-                limitation_ref="limitation_invalid_executor_output",
+                limitation_ref=_fallback_limitation_ref(error),
+                fallback_reason_refs=output_validation.limitation_refs,
                 output_validation=output_validation,
             )
         except Exception:
             output_validation = ReviewOutputValidationResult.blocked(
                 reason_refs=("reason_executor_failure",),
-                blocked_counts_by_reason={"reason_executor_failure": 0},
+                blocked_counts_by_reason={"reason_executor_failure": 1},
             )
             execution = _fallback_execution_result(
                 request=request,
@@ -465,6 +466,7 @@ class AutomatedReviewApplicationService:
                 plan=plan,
                 occurred_at=self._clock(),
                 limitation_ref="limitation_executor_failure",
+                fallback_reason_refs=output_validation.limitation_refs,
                 output_validation=output_validation,
             )
         evidence_repository = self._consultative_evidence_repository
@@ -495,6 +497,7 @@ class AutomatedReviewApplicationService:
                 execution,
                 context,
                 trusted_context.trusted.subject_id,
+                config=config,
             )
 
         execution_repository.create(
@@ -507,7 +510,11 @@ class AutomatedReviewApplicationService:
             status=_execution_log_status(execution),
             duration_ms=_duration_ms(started),
             payload=command,
-            extra=_safe_execution_details(execution, evidence=consultative_evidence),
+            extra=_safe_execution_details(
+                execution,
+                evidence=consultative_evidence,
+                config=config,
+            ),
         )
         return ReviewExecutionApplicationResult(
             execution=execution,
@@ -711,6 +718,8 @@ class AutomatedReviewApplicationService:
         execution: AutomatedReviewExecutionResult,
         context: ObservabilityContext,
         actor_subject_id: str,
+        *,
+        config: ReviewAgentConfiguration | None = None,
     ) -> None:
         self._require_execution_audit_publisher().publish(
             AutomatedReviewExecutionAuditIntent(
@@ -726,7 +735,7 @@ class AutomatedReviewApplicationService:
                 trace_id=context.trace_id,
                 tenant_isolation_tier=context.tenant_isolation_tier or "",
                 occurred_at=execution.occurred_at.isoformat(),
-                safe_details=_safe_execution_details(execution),
+                safe_details=_safe_execution_details(execution, config=config),
             )
         )
 
@@ -810,12 +819,14 @@ def _fallback_execution_result(
     plan: InputMinimizationPlan,
     occurred_at: datetime,
     limitation_ref: str,
+    fallback_reason_refs: tuple[str, ...] = (),
     output_validation: ReviewOutputValidationResult | None = None,
 ) -> AutomatedReviewExecutionResult:
     output_validation = output_validation or ReviewOutputValidationResult.blocked(
         reason_refs=(_fallback_output_reason_ref(limitation_ref),),
         blocked_counts_by_reason={_fallback_output_reason_ref(limitation_ref): 1},
     )
+    fallback_reason_refs = fallback_reason_refs or output_validation.limitation_refs
     return AutomatedReviewExecutionResult(
         execution_id=request.execution_id,
         tenant_id=config.tenant_id,
@@ -831,6 +842,8 @@ def _fallback_execution_result(
         occurred_at=occurred_at,
         status="fallback",
         limitation_refs=(limitation_ref,),
+        fallback_action=config.guardrails.fallback_action,
+        fallback_reason_refs=fallback_reason_refs,
         output_validation_status=output_validation.status,
         accepted_output_counts_by_type=output_validation.accepted_counts_by_type,
         blocked_output_counts_by_reason=output_validation.blocked_counts_by_reason,
@@ -914,6 +927,25 @@ def _blocked_output_validation(
     )
 
 
+_OUTPUT_SCHEMA_ERROR_CODES = frozenset(
+    {
+        "automated_review_unknown_output_field",
+        "automated_review_missing_output_field",
+        "automated_review_invalid_output_field",
+        "automated_review_invalid_output_item",
+        "automated_review_invalid_output_item_type",
+        "automated_review_invalid_output_severity",
+        "automated_review_invalid_output_confidence",
+        "automated_review_invalid_output_summary",
+        "automated_review_invalid_technical_token",
+        "automated_review_output_evidence_limit_exceeded",
+        "automated_review_duplicate_output_item_ref",
+        "automated_review_empty_executor_output",
+        "automated_review_output_item_limit_exceeded",
+    }
+)
+
+
 def _output_block_reason_ref(error: AutomatedReviewValidationError) -> str:
     if error.code in {
         "automated_review_sensitive_output_content",
@@ -921,11 +953,21 @@ def _output_block_reason_ref(error: AutomatedReviewValidationError) -> str:
         "automated_review_autonomous_output_content",
         "automated_review_autonomous_execution_output",
         "automated_review_autonomous_output_reference",
+        "automated_review_sensitive_reference",
     }:
         return "reason_blocked_output_guardrail"
-    if error.code == "automated_review_unknown_output_field":
+    if error.code in _OUTPUT_SCHEMA_ERROR_CODES:
         return "reason_invalid_output_schema"
     return "reason_invalid_output_contract"
+
+
+def _fallback_limitation_ref(error: AutomatedReviewValidationError) -> str:
+    reason_ref = _output_block_reason_ref(error)
+    if reason_ref == "reason_blocked_output_guardrail":
+        return "limitation_output_guardrail_blocked"
+    if reason_ref == "reason_invalid_output_schema":
+        return "limitation_invalid_output_schema"
+    return "limitation_invalid_executor_output"
 
 
 def _fallback_output_reason_ref(limitation_ref: str) -> str:
@@ -933,6 +975,10 @@ def _fallback_output_reason_ref(limitation_ref: str) -> str:
         return "reason_executor_failure"
     if limitation_ref == "limitation_invalid_executor_output":
         return "reason_invalid_output_contract"
+    if limitation_ref == "limitation_invalid_output_schema":
+        return "reason_invalid_output_schema"
+    if limitation_ref == "limitation_output_guardrail_blocked":
+        return "reason_blocked_output_guardrail"
     return "reason_fallback_execution"
 
 
@@ -965,6 +1011,7 @@ def _safe_execution_details(
     execution: AutomatedReviewExecutionResult,
     *,
     evidence: ConsultativeEvidence | None = None,
+    config: ReviewAgentConfiguration | None = None,
 ) -> dict[str, str]:
     counts = _execution_action_counts(execution)
     details = {
@@ -1005,11 +1052,40 @@ def _safe_execution_details(
         "raw_output_persisted": "false",
         "consultative_evidence_created": str(evidence is not None).lower(),
     }
+    if execution.fallback_action is not None:
+        details["fallback_action"] = execution.fallback_action
+        details["fallback_reason_count"] = str(len(execution.fallback_reason_refs))
+    if execution.fallback_reason_refs:
+        details["fallback_reason_ref"] = execution.fallback_reason_refs[0]
+        for index, reason_ref in enumerate(execution.fallback_reason_refs):
+            details[f"fallback_reason_ref_{index}"] = reason_ref
+    if execution.limitation_refs:
+        details["limitation_ref"] = execution.limitation_refs[0]
+        for index, limitation_ref in enumerate(execution.limitation_refs):
+            details[f"limitation_ref_{index}"] = limitation_ref
+    if _config_matches_execution(config, execution) and config is not None and config.model_ref:
+        details["provider_ref"] = config.model_ref.provider_ref
+        details["model_ref"] = config.model_ref.model_ref
+        if config.model_ref.model_version is not None:
+            details["model_version"] = config.model_ref.model_version
     if evidence is not None:
         details.update(_safe_consultative_evidence_details(evidence))
     for reason_ref, count in execution.blocked_output_counts_by_reason.items():
         details[f"blocked_output_{reason_ref}_count"] = str(count)
     return details
+
+
+def _config_matches_execution(
+    config: ReviewAgentConfiguration | None,
+    execution: AutomatedReviewExecutionResult,
+) -> bool:
+    if config is None:
+        return False
+    return (
+        config.review_agent_config_id == execution.review_agent_config_id
+        and config.review_agent_config_version_id == execution.review_agent_config_version_id
+        and config.tenant_id == execution.tenant_id
+    )
 
 
 def _safe_consultative_evidence_details(evidence: ConsultativeEvidence) -> dict[str, str]:
