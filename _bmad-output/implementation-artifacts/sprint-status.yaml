@@ -95,7 +95,7 @@ development_status:
   5-3-validacao-de-saida-guardrails-e-classificacao: done
   5-4-evidencia-consultiva-vinculada-a-proposta: done
   5-5-fallback-seguro-de-revisao-automatizada: done
-  5-6-observabilidade-custo-e-gates-de-ia: backlog
+  5-6-observabilidade-custo-e-gates-de-ia: in-progress
   epic-5-retrospective: optional
   epic-6: backlog
   6-1-trilha-oficial-append-only-de-auditoria: backlog
