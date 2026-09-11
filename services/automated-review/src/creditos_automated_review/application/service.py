@@ -480,12 +480,6 @@ class AutomatedReviewApplicationService:
         )
 
         def before_execution_commit() -> None:
-            self._publish_execution_audit(
-                _execution_event_type(execution),
-                execution,
-                context,
-                trusted_context.trusted.subject_id,
-            )
             if consultative_evidence is not None and evidence_repository is not None:
                 evidence_to_create = consultative_evidence
                 evidence_repository.create(
@@ -496,6 +490,12 @@ class AutomatedReviewApplicationService:
                         trusted_context.trusted.subject_id,
                     ),
                 )
+            self._publish_execution_audit(
+                _execution_event_type(execution),
+                execution,
+                context,
+                trusted_context.trusted.subject_id,
+            )
 
         execution_repository.create(
             execution,

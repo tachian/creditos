@@ -549,13 +549,14 @@ def test_application_creates_consultative_evidence_for_accepted_output() -> None
         )
         is None
     )
-    assert execution_audit.events[1].event_type == "automated_review.evidence.created"
-    assert execution_audit.events[1].safe_details["consultative_evidence_id"] == (
+    assert execution_audit.events[0].event_type == "automated_review.evidence.created"
+    assert execution_audit.events[0].safe_details["consultative_evidence_id"] == (
         "cevid_arexec_001"
     )
-    assert execution_audit.events[1].safe_details["raw_payload_persisted"] == "false"
-    assert execution_audit.events[1].request_id == "req_review_context"
-    assert execution_audit.events[1].tenant_isolation_tier == "bridge"
+    assert execution_audit.events[0].safe_details["raw_payload_persisted"] == "false"
+    assert execution_audit.events[0].request_id == "req_review_context"
+    assert execution_audit.events[0].tenant_isolation_tier == "bridge"
+    assert execution_audit.events[1].event_type == "automated_review.execution.completed"
     assert result.logs[0]["extra"]["consultative_evidence_created"] == "true"
     assert result.logs[0]["extra"]["consultative_evidence_id"] == "cevid_arexec_001"
     unsafe_text = f"{evidence}{result.logs}{execution_audit.events}"
@@ -612,6 +613,7 @@ def test_application_keeps_execution_uncommitted_when_evidence_audit_fails() -> 
         )
         is None
     )
+    assert execution_audit.events == []
 
 
 def test_application_queries_consultative_evidence_with_trusted_context_only() -> None:
