@@ -12,6 +12,7 @@ from creditos_automated_review.domain.value_objects.review_execution import (
     MinimizedReviewInputField,
     ReviewInputAction,
     ReviewInputCandidate,
+    ReviewModelUsage,
 )
 from creditos_automated_review.domain.value_objects.review_output import (
     ReviewOutputItem,
@@ -29,6 +30,7 @@ __all__ = [
     "ReviewAgentStatus",
     "ReviewInputAction",
     "ReviewInputCandidate",
+    "ReviewModelUsage",
     "ReviewModelRef",
     "ReviewOutputItem",
     "ReviewOutputValidationResult",

@@ -15,6 +15,7 @@ from creditos_automated_review.domain.value_objects.review_agent_config import (
 
 type SafeInputValue = str | int | float | bool
 
+_MAX_MODEL_USAGE_UNITS = 1_000_000_000_000
 _TECHNICAL_TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{1,127}")
 _TECHNICAL_REF_SECRET_PATTERN = re.compile(
     r"^(?:sk-[A-Za-z0-9_-]{8,}|AKIA[A-Z0-9]{12,}|[A-Za-z0-9_-]{32,})$"
@@ -97,6 +98,98 @@ class ReviewInputAction(StrEnum):
     OMITTED = "omitted"
     REFERENCED = "referenced"
     TOKENIZED = "tokenized"
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewModelUsage:
+    estimated_cost_units: int | None = None
+    actual_cost_units: int | None = None
+    input_token_count: int | None = None
+    output_token_count: int | None = None
+    total_token_count: int | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "estimated_cost_units",
+            "actual_cost_units",
+            "input_token_count",
+            "output_token_count",
+            "total_token_count",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_usage_integer(
+                    getattr(self, field_name),
+                    field_path=f"model_usage.{field_name}",
+                ),
+            )
+        if self.total_token_count is not None:
+            if (
+                self.input_token_count is not None
+                and self.total_token_count < self.input_token_count
+            ):
+                raise AutomatedReviewValidationError(
+                    "contagem total de tokens inconsistente",
+                    code="automated_review_invalid_model_usage",
+                    field_path="model_usage.total_token_count",
+                )
+            if (
+                self.output_token_count is not None
+                and self.total_token_count < self.output_token_count
+            ):
+                raise AutomatedReviewValidationError(
+                    "contagem total de tokens inconsistente",
+                    code="automated_review_invalid_model_usage",
+                    field_path="model_usage.total_token_count",
+                )
+            if (
+                self.input_token_count is not None
+                and self.output_token_count is not None
+                and self.total_token_count < self.input_token_count + self.output_token_count
+            ):
+                raise AutomatedReviewValidationError(
+                    "contagem total de tokens inconsistente",
+                    code="automated_review_invalid_model_usage",
+                    field_path="model_usage.total_token_count",
+                )
+
+    @property
+    def cost_units_present(self) -> bool:
+        return self.estimated_cost_units is not None or self.actual_cost_units is not None
+
+    @property
+    def model_unit_counts_present(self) -> bool:
+        return (
+            self.input_token_count is not None
+            or self.output_token_count is not None
+            or self.total_token_count is not None
+        )
+
+    @property
+    def is_present(self) -> bool:
+        return self.cost_units_present or self.model_unit_counts_present
+
+    def as_log_safe_details(self) -> dict[str, str]:
+        details = {
+            "model_usage_present": str(self.is_present).lower(),
+            "cost_units_present": str(self.cost_units_present).lower(),
+            "estimated_cost_units_present": str(self.estimated_cost_units is not None).lower(),
+            "actual_cost_units_present": str(self.actual_cost_units is not None).lower(),
+            "model_unit_counts_present": str(self.model_unit_counts_present).lower(),
+        }
+        output_names = {
+            "estimated_cost_units": "estimated_cost_units",
+            "actual_cost_units": "actual_cost_units",
+            "input_token_count": "input_model_unit_count",
+            "output_token_count": "output_model_unit_count",
+            "total_token_count": "total_model_unit_count",
+        }
+        for field_name, output_name in output_names.items():
+            value = getattr(self, field_name)
+            if value is not None:
+                details[output_name] = str(value)
+        return details
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,6 +515,18 @@ def _validate_allowed_numeric_input_value(value: SafeInputValue, field_path: str
             field_path=field_path,
         )
     return numeric
+
+
+def _validate_usage_integer(value: int | None, *, field_path: str) -> int | None:
+    if value is None:
+        return None
+    if type(value) is not int or value < 0 or value > _MAX_MODEL_USAGE_UNITS:
+        raise AutomatedReviewValidationError(
+            "unidade de uso/custo do modelo inválida",
+            code="automated_review_invalid_model_usage",
+            field_path=field_path,
+        )
+    return value
 
 
 def _is_raw_payload_field(field_name: str) -> bool:

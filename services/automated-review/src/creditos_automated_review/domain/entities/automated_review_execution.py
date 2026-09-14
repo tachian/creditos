@@ -20,6 +20,7 @@ from creditos_automated_review.domain.value_objects.review_execution import (
     InputMinimizationPlan,
     MinimizedReviewInputField,
     ReviewInputCandidate,
+    ReviewModelUsage,
     validate_non_sensitive_execution_reference,
     validate_prompt_fingerprint,
     validate_review_technical_token,
@@ -172,6 +173,7 @@ class AutomatedReviewExecutionResult:
     )
     fallback_action: str | None = None
     fallback_reason_refs: tuple[str, ...] = ()
+    model_usage: ReviewModelUsage = field(default_factory=ReviewModelUsage)
     final_decision: str | None = None
     approved_terms: str | None = None
     external_actions: tuple[str, ...] = ()
@@ -252,6 +254,12 @@ class AutomatedReviewExecutionResult:
                 "execução consultiva não pode carregar decisão final ou ação externa",
                 code="automated_review_autonomous_execution_output",
                 field_path="execution_result",
+            )
+        if type(self.model_usage) is not ReviewModelUsage:
+            raise AutomatedReviewValidationError(
+                "uso/custo do modelo deve usar contrato tipado",
+                code="automated_review_invalid_model_usage",
+                field_path="model_usage",
             )
         object.__setattr__(
             self,

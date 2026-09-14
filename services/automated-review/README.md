@@ -77,6 +77,18 @@ A Story 5.5 torna falhas de revisão automatizada estados controlados e auditáv
 - fallback nunca aprova, reprova, altera termos, executa callback, chama ferramenta, aciona integração ou cria evidência consultiva aceita;
 - logs e auditoria registram metadados seguros, motivo, limitação, ação de fallback e flags de não persistência bruta.
 
+## Story 5.6
+
+A Story 5.6 adiciona observabilidade operacional, custo técnico e gates de governança para IA:
+
+- `ReviewModelUsage` representa custo e uso em contrato fechado, com `estimated_cost_units` e `actual_cost_units` inteiros, não monetários e opcionais;
+- contagens de uso do modelo são validadas como inteiros não negativos e emitidas em logs/auditoria por aliases seguros (`input_model_unit_count`, `output_model_unit_count`, `total_model_unit_count`);
+- `ConsultativeReviewOutput` e `AutomatedReviewExecutionResult` carregam uso/custo sem permitir decisão final, termos aprovados ou ações externas;
+- logs e auditoria registram presença/ausência de custo, latência, status, fallback, versões de agente/prompt/modelo e contagens seguras sem prompt, payload ou output bruto;
+- a instrumentação técnica usa `creditos_observability.InMemoryTelemetry` de forma opcional e testável, com atributos permitidos e sem `tenant_id` em métricas;
+- traces técnicos carregam apenas metadados controlados; métricas customer-facing continuam fora deste serviço e devem vir futuramente de projeções curadas;
+- testes bloqueiam caminhos de autonomia da IA, incluindo aprovação, reprovação, alteração de termos, callback, ferramenta, integração externa e publicação de decisão.
+
 ## Segurança e privacidade
 
 - `tenant_id` e `tenant_isolation_tier` vêm do `PropagatedContext` confiável.
@@ -89,6 +101,8 @@ A Story 5.5 torna falhas de revisão automatizada estados controlados e auditáv
 - Evidências consultivas não persistem prompt, payload, output bruto, entrada minimizada com valores ou `safe_summary`.
 - Fallbacks consultivos registram apenas ação configurada, reason refs, limitation refs e contagens seguras.
 - Nenhuma saída consultiva pode aprovar, reprovar, alterar termos, chamar ferramentas, executar callbacks ou acionar integrações.
+- Métricas técnicas não usam `tenant_id` como atributo; uso por tenant deve ser projetado futuramente por `Reporting & Insights`.
+- Custo de IA é técnico e não contábil: sem moeda, invoice, billing ou preço comercial de fornecedor.
 
 ## Comandos locais
 
@@ -105,3 +119,4 @@ A Story 5.5 torna falhas de revisão automatizada estados controlados e auditáv
 - Endpoint público HTTP, gRPC real ou NATS JetStream.
 - Banco real, migration, outbox/inbox ou secret manager.
 - Dashboard, métrica de negócio ou seleção nominal de fornecedor/modelo.
+- Projeção customer-facing final, cobrança financeira real ou dataset de treinamento de IA.
