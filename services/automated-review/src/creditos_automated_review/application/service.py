@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import islice
 from time import monotonic
-from typing import Any
+from types import TracebackType
+from typing import Any, Protocol
 
 from creditos_observability.context import ObservabilityContext
 from creditos_observability.logging import build_structured_log
@@ -43,6 +44,7 @@ from creditos_automated_review.domain.value_objects import (
     ReviewAgentScope,
     ReviewInputCandidate,
     ReviewModelRef,
+    ReviewModelUsage,
     ReviewOutputItem,
     ReviewOutputValidationResult,
 )
@@ -58,6 +60,95 @@ SERVICE_VERSION = "0.1.0"
 CONTRACT = "automated-review.application"
 CONTRACT_VERSION = "v1"
 MAX_EXECUTOR_OUTPUT_ITEMS = 32
+
+
+class AutomatedReviewTelemetry(Protocol):
+    def start_span(
+        self,
+        name: str,
+        *,
+        context: ObservabilityContext,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> Any: ...
+
+    def record_request(
+        self,
+        *,
+        context: ObservabilityContext,
+        operation: str,
+        status: str,
+        duration_ms: float,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> None: ...
+
+    def record_ai_usage(
+        self,
+        *,
+        context: ObservabilityContext,
+        operation: str,
+        status: str,
+        estimated_cost_units: int | None = None,
+        actual_cost_units: int | None = None,
+        input_model_unit_count: int | None = None,
+        output_model_unit_count: int | None = None,
+        total_model_unit_count: int | None = None,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> None: ...
+
+
+class _BestEffortTelemetrySpan:
+    def __init__(self, span_context_manager: Any) -> None:
+        self._span_context_manager = span_context_manager
+        self._active = False
+        self._span: Any | None = None
+
+    def __enter__(self) -> _BestEffortTelemetrySpan:
+        try:
+            self._span = self._span_context_manager.__enter__()
+        except Exception:
+            self._active = False
+            return self
+        self._active = True
+        return self
+
+    def set_terminal_attributes(self, attributes: Mapping[str, str]) -> None:
+        if not self._active or self._span is None:
+            return
+        try:
+            for key, value in attributes.items():
+                self._span.set_attribute(key, value)
+        except Exception:
+            return
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
+        if not self._active:
+            return False
+        try:
+            self._span_context_manager.__exit__(exc_type, exc_value, traceback)
+        except Exception:
+            return False
+        return False
+
+
+class _NoOpTelemetrySpan:
+    def __enter__(self) -> _NoOpTelemetrySpan:
+        return self
+
+    def set_terminal_attributes(self, attributes: Mapping[str, str]) -> None:
+        _ = attributes
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +253,7 @@ class AutomatedReviewApplicationService:
         consultative_evidence_repository: ConsultativeEvidenceRepository | None = None,
         execution_audit_publisher: AutomatedReviewExecutionAuditPublisher | None = None,
         consultative_executor: ConsultativeReviewExecutor | None = None,
+        telemetry: AutomatedReviewTelemetry | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._repository = repository
@@ -170,6 +262,7 @@ class AutomatedReviewApplicationService:
         self._consultative_evidence_repository = consultative_evidence_repository
         self._execution_audit_publisher = execution_audit_publisher
         self._consultative_executor = consultative_executor
+        self._telemetry = telemetry
         self._environment = environment
         self._clock = clock or (lambda: datetime.now(UTC))
         self._logged_events: list[dict[str, Any]] = []
@@ -420,107 +513,130 @@ class AutomatedReviewApplicationService:
             prompt_fingerprint=plan.prompt_fingerprint,
             input_for_execution=plan.input_for_execution,
         )
-        executor = self._require_consultative_executor()
-        try:
-            output = executor.execute(execution_input)
-            output_validation = _validate_executor_output(output)
-            execution = AutomatedReviewExecutionResult(
-                execution_id=request.execution_id,
-                tenant_id=tenant_id,
-                proposal_id=request.proposal_id,
-                review_agent_config_id=config.review_agent_config_id,
-                review_agent_config_version_id=config.review_agent_config_version_id,
-                product_type=request.product_type,
-                channel=request.channel,
-                review_purpose=request.review_purpose,
-                minimization_policy_ref=plan.policy_ref,
-                prompt_fingerprint=plan.prompt_fingerprint,
-                input_fields=plan.fields,
-                occurred_at=self._clock(),
-                status=output.status,
-                finding_refs=output_validation.finding_refs,
-                limitation_refs=output_validation.limitation_refs,
-                output_validation_status=output_validation.status,
-                accepted_output_counts_by_type=output_validation.accepted_counts_by_type,
-                blocked_output_counts_by_reason=output_validation.blocked_counts_by_reason,
-            )
-        except AutomatedReviewValidationError as error:
-            output_validation = _blocked_output_validation(error)
-            execution = _fallback_execution_result(
-                request=request,
-                config=config,
-                plan=plan,
-                occurred_at=self._clock(),
-                limitation_ref=_fallback_limitation_ref(error),
-                fallback_reason_refs=output_validation.limitation_refs,
-                output_validation=output_validation,
-            )
-        except Exception:
-            output_validation = ReviewOutputValidationResult.blocked(
-                reason_refs=("reason_executor_failure",),
-                blocked_counts_by_reason={"reason_executor_failure": 1},
-            )
-            execution = _fallback_execution_result(
-                request=request,
-                config=config,
-                plan=plan,
-                occurred_at=self._clock(),
-                limitation_ref="limitation_executor_failure",
-                fallback_reason_refs=output_validation.limitation_refs,
-                output_validation=output_validation,
-            )
-        evidence_repository = self._consultative_evidence_repository
-        consultative_evidence = (
-            _consultative_evidence_from_result(
-                execution=execution,
-                output_validation=output_validation,
-                config=config,
-                context=context,
-            )
-            if evidence_repository is not None
-            else None
-        )
-
-        def before_execution_commit() -> None:
-            if consultative_evidence is not None and evidence_repository is not None:
-                evidence_to_create = consultative_evidence
-                evidence_repository.create(
-                    evidence_to_create,
-                    before_commit=lambda: self._publish_consultative_evidence_audit(
-                        evidence_to_create,
-                        context,
-                        trusted_context.trusted.subject_id,
-                    ),
-                )
-            self._publish_execution_audit(
-                _execution_event_type(execution),
-                execution,
-                context,
-                trusted_context.trusted.subject_id,
-                config=config,
-            )
-
-        execution_repository.create(
-            execution,
-            before_commit=before_execution_commit,
-        )
-        log = self._log_operation(
+        with self._execution_span_context(
             context=context,
-            operation="automated_review.execution.execute_consultative",
-            status=_execution_log_status(execution),
-            duration_ms=_duration_ms(started),
-            payload=command,
-            extra=_safe_execution_details(
+            request=request,
+            config=config,
+        ) as telemetry_span:
+            executor = self._require_consultative_executor()
+            model_usage = ReviewModelUsage()
+            try:
+                output = executor.execute(execution_input)
+                model_usage = output.model_usage
+                output_validation = _validate_executor_output(output)
+                execution = AutomatedReviewExecutionResult(
+                    execution_id=request.execution_id,
+                    tenant_id=tenant_id,
+                    proposal_id=request.proposal_id,
+                    review_agent_config_id=config.review_agent_config_id,
+                    review_agent_config_version_id=config.review_agent_config_version_id,
+                    product_type=request.product_type,
+                    channel=request.channel,
+                    review_purpose=request.review_purpose,
+                    minimization_policy_ref=plan.policy_ref,
+                    prompt_fingerprint=plan.prompt_fingerprint,
+                    input_fields=plan.fields,
+                    occurred_at=self._clock(),
+                    status=output.status,
+                    finding_refs=output_validation.finding_refs,
+                    limitation_refs=output_validation.limitation_refs,
+                    output_validation_status=output_validation.status,
+                    accepted_output_counts_by_type=output_validation.accepted_counts_by_type,
+                    blocked_output_counts_by_reason=output_validation.blocked_counts_by_reason,
+                    model_usage=model_usage,
+                )
+            except AutomatedReviewValidationError as error:
+                output_validation = _blocked_output_validation(error)
+                execution = _fallback_execution_result(
+                    request=request,
+                    config=config,
+                    plan=plan,
+                    occurred_at=self._clock(),
+                    limitation_ref=_fallback_limitation_ref(error),
+                    fallback_reason_refs=output_validation.limitation_refs,
+                    output_validation=output_validation,
+                    model_usage=model_usage,
+                )
+            except Exception:
+                model_usage = ReviewModelUsage()
+                output_validation = ReviewOutputValidationResult.blocked(
+                    reason_refs=("reason_executor_failure",),
+                    blocked_counts_by_reason={"reason_executor_failure": 1},
+                )
+                execution = _fallback_execution_result(
+                    request=request,
+                    config=config,
+                    plan=plan,
+                    occurred_at=self._clock(),
+                    limitation_ref="limitation_executor_failure",
+                    fallback_reason_refs=output_validation.limitation_refs,
+                    output_validation=output_validation,
+                    model_usage=model_usage,
+                )
+            evidence_repository = self._consultative_evidence_repository
+            consultative_evidence = (
+                _consultative_evidence_from_result(
+                    execution=execution,
+                    output_validation=output_validation,
+                    config=config,
+                    context=context,
+                )
+                if evidence_repository is not None
+                else None
+            )
+
+            def before_execution_commit() -> None:
+                if consultative_evidence is not None and evidence_repository is not None:
+                    evidence_to_create = consultative_evidence
+                    evidence_repository.create(
+                        evidence_to_create,
+                        before_commit=lambda: self._publish_consultative_evidence_audit(
+                            evidence_to_create,
+                            context,
+                            trusted_context.trusted.subject_id,
+                        ),
+                    )
+                self._publish_execution_audit(
+                    _execution_event_type(execution),
+                    execution,
+                    context,
+                    trusted_context.trusted.subject_id,
+                    config=config,
+                    duration_ms=_duration_ms(started),
+                )
+
+            execution_repository.create(
                 execution,
-                evidence=consultative_evidence,
+                before_commit=before_execution_commit,
+            )
+            duration_ms = _duration_ms(started)
+            log = self._log_operation(
+                context=context,
+                operation="automated_review.execution.execute_consultative",
+                status=_execution_log_status(execution),
+                duration_ms=duration_ms,
+                payload=command,
+                extra=_safe_execution_details(
+                    execution,
+                    evidence=consultative_evidence,
+                    config=config,
+                    duration_ms=duration_ms,
+                ),
+            )
+            self._record_execution_telemetry(
+                context=context,
+                execution=execution,
                 config=config,
-            ),
-        )
-        return ReviewExecutionApplicationResult(
-            execution=execution,
-            logs=(log,),
-            consultative_evidence=consultative_evidence,
-        )
+                duration_ms=duration_ms,
+            )
+            telemetry_span.set_terminal_attributes(
+                _safe_execution_terminal_span_attributes(execution)
+            )
+            return ReviewExecutionApplicationResult(
+                execution=execution,
+                logs=(log,),
+                consultative_evidence=consultative_evidence,
+            )
 
     def get_consultative_evidence_by_execution(
         self,
@@ -720,6 +836,7 @@ class AutomatedReviewApplicationService:
         actor_subject_id: str,
         *,
         config: ReviewAgentConfiguration | None = None,
+        duration_ms: float | None = None,
     ) -> None:
         self._require_execution_audit_publisher().publish(
             AutomatedReviewExecutionAuditIntent(
@@ -735,7 +852,11 @@ class AutomatedReviewApplicationService:
                 trace_id=context.trace_id,
                 tenant_isolation_tier=context.tenant_isolation_tier or "",
                 occurred_at=execution.occurred_at.isoformat(),
-                safe_details=_safe_execution_details(execution, config=config),
+                safe_details=_safe_execution_details(
+                    execution,
+                    config=config,
+                    duration_ms=duration_ms,
+                ),
             )
         )
 
@@ -811,6 +932,58 @@ class AutomatedReviewApplicationService:
             raise RuntimeError("consultative_executor não configurado")
         return self._consultative_executor
 
+    def _execution_span_context(
+        self,
+        *,
+        context: ObservabilityContext,
+        request: AutomatedReviewExecutionRequest,
+        config: ReviewAgentConfiguration,
+    ) -> _BestEffortTelemetrySpan | _NoOpTelemetrySpan:
+        if self._telemetry is None:
+            return _NoOpTelemetrySpan()
+        try:
+            span_context = self._telemetry.start_span(
+                "automated_review.execution.execute_consultative",
+                context=context,
+                attributes=_safe_execution_span_attributes(request, config=config),
+            )
+        except Exception:
+            return _NoOpTelemetrySpan()
+        return _BestEffortTelemetrySpan(span_context)
+
+    def _record_execution_telemetry(
+        self,
+        *,
+        context: ObservabilityContext,
+        execution: AutomatedReviewExecutionResult,
+        config: ReviewAgentConfiguration,
+        duration_ms: float,
+    ) -> None:
+        if self._telemetry is None:
+            return
+        try:
+            attributes = _safe_execution_metric_attributes(execution)
+            self._telemetry.record_request(
+                context=context,
+                operation="automated_review.execution.execute_consultative",
+                status=_execution_log_status(execution),
+                duration_ms=duration_ms,
+                attributes=attributes,
+            )
+            self._telemetry.record_ai_usage(
+                context=context,
+                operation="automated_review.execution.execute_consultative",
+                status=_execution_log_status(execution),
+                estimated_cost_units=execution.model_usage.estimated_cost_units,
+                actual_cost_units=execution.model_usage.actual_cost_units,
+                input_model_unit_count=execution.model_usage.input_token_count,
+                output_model_unit_count=execution.model_usage.output_token_count,
+                total_model_unit_count=execution.model_usage.total_token_count,
+                attributes=attributes,
+            )
+        except Exception:
+            return
+
 
 def _fallback_execution_result(
     *,
@@ -821,6 +994,7 @@ def _fallback_execution_result(
     limitation_ref: str,
     fallback_reason_refs: tuple[str, ...] = (),
     output_validation: ReviewOutputValidationResult | None = None,
+    model_usage: ReviewModelUsage | None = None,
 ) -> AutomatedReviewExecutionResult:
     output_validation = output_validation or ReviewOutputValidationResult.blocked(
         reason_refs=(_fallback_output_reason_ref(limitation_ref),),
@@ -847,6 +1021,7 @@ def _fallback_execution_result(
         output_validation_status=output_validation.status,
         accepted_output_counts_by_type=output_validation.accepted_counts_by_type,
         blocked_output_counts_by_reason=output_validation.blocked_counts_by_reason,
+        model_usage=model_usage or ReviewModelUsage(),
     )
 
 
@@ -1012,6 +1187,7 @@ def _safe_execution_details(
     *,
     evidence: ConsultativeEvidence | None = None,
     config: ReviewAgentConfiguration | None = None,
+    duration_ms: float | None = None,
 ) -> dict[str, str]:
     counts = _execution_action_counts(execution)
     details = {
@@ -1052,6 +1228,9 @@ def _safe_execution_details(
         "raw_output_persisted": "false",
         "consultative_evidence_created": str(evidence is not None).lower(),
     }
+    details.update(execution.model_usage.as_log_safe_details())
+    if duration_ms is not None:
+        details["duration_ms"] = f"{duration_ms:.3f}"
     if execution.fallback_action is not None:
         details["fallback_action"] = execution.fallback_action
         details["fallback_reason_count"] = str(len(execution.fallback_reason_refs))
@@ -1063,16 +1242,80 @@ def _safe_execution_details(
         details["limitation_ref"] = execution.limitation_refs[0]
         for index, limitation_ref in enumerate(execution.limitation_refs):
             details[f"limitation_ref_{index}"] = limitation_ref
-    if _config_matches_execution(config, execution) and config is not None and config.model_ref:
-        details["provider_ref"] = config.model_ref.provider_ref
-        details["model_ref"] = config.model_ref.model_ref
-        if config.model_ref.model_version is not None:
-            details["model_version"] = config.model_ref.model_version
+    if _config_matches_execution(config, execution) and config is not None:
+        details["agent_version"] = config.agent_version
+        details["prompt_version"] = config.prompt.prompt_version
+        if config.model_ref is not None:
+            details["provider_ref"] = config.model_ref.provider_ref
+            details["model_ref"] = config.model_ref.model_ref
+            if config.model_ref.model_version is not None:
+                details["model_version"] = config.model_ref.model_version
     if evidence is not None:
         details.update(_safe_consultative_evidence_details(evidence))
     for reason_ref, count in execution.blocked_output_counts_by_reason.items():
         details[f"blocked_output_{reason_ref}_count"] = str(count)
     return details
+
+
+def _safe_execution_metric_attributes(
+    execution: AutomatedReviewExecutionResult,
+) -> dict[str, str]:
+    attributes = {
+        "contract": CONTRACT,
+        "contract_version": CONTRACT_VERSION,
+        "source": "automated_review.application",
+        "destination": "automated_review.domain",
+        "product_type": execution.product_type,
+        "channel": execution.channel,
+        "review_purpose": execution.review_purpose,
+        "classification": execution.classification,
+        "output_validation_status": execution.output_validation_status,
+        "cost_units_present": str(execution.model_usage.cost_units_present).lower(),
+    }
+    if execution.fallback_action is not None:
+        attributes["fallback_action"] = execution.fallback_action
+    return attributes
+
+
+def _safe_execution_span_attributes(
+    request: AutomatedReviewExecutionRequest,
+    *,
+    config: ReviewAgentConfiguration,
+) -> dict[str, str]:
+    attributes = {
+        "contract": CONTRACT,
+        "contract_version": CONTRACT_VERSION,
+        "source": "automated_review.application",
+        "destination": "automated_review.domain",
+        "operation": "automated_review.execution.execute_consultative",
+        "status": "started",
+        "product_type": request.product_type,
+        "channel": request.channel,
+        "review_purpose": request.review_purpose,
+        "classification": "consultative",
+        "review_agent_config_version_id": config.review_agent_config_version_id,
+        "agent_version": config.agent_version,
+        "prompt_version": config.prompt.prompt_version,
+    }
+    if config.model_ref is not None:
+        attributes["provider_ref"] = config.model_ref.provider_ref
+        attributes["model_ref"] = config.model_ref.model_ref
+        if config.model_ref.model_version is not None:
+            attributes["model_version"] = config.model_ref.model_version
+    return attributes
+
+
+def _safe_execution_terminal_span_attributes(
+    execution: AutomatedReviewExecutionResult,
+) -> dict[str, str]:
+    attributes = {
+        "status": _execution_log_status(execution),
+        "output_validation_status": execution.output_validation_status,
+        "cost_units_present": str(execution.model_usage.cost_units_present).lower(),
+    }
+    if execution.fallback_action is not None:
+        attributes["fallback_action"] = execution.fallback_action
+    return attributes
 
 
 def _config_matches_execution(
