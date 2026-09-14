@@ -89,14 +89,14 @@ development_status:
   4-7-resposta-explicavel-de-decisao: done
   4-8-gates-de-decisao-politica-e-explicabilidade: done
   epic-4-retrospective: optional
-  epic-5: in-progress
+  epic-5: done
   5-1-configuracao-versionada-de-agente-de-revisao: done
   5-2-execucao-consultiva-com-entradas-minimizadas: done
   5-3-validacao-de-saida-guardrails-e-classificacao: done
   5-4-evidencia-consultiva-vinculada-a-proposta: done
   5-5-fallback-seguro-de-revisao-automatizada: done
   5-6-observabilidade-custo-e-gates-de-ia: done
-  epic-5-retrospective: optional
+  epic-5-retrospective: done
   epic-6: backlog
   6-1-trilha-oficial-append-only-de-auditoria: backlog
   6-2-auditoria-de-decisoes-e-evidencias-criticas: backlog
@@ -123,3 +123,21 @@ development_status:
   8-6-testes-de-contrato-para-consulta-e-webhooks: backlog
   8-7-fluxo-e2e-de-analise-com-integracoes-mockadas: backlog
   epic-8-retrospective: optional
+
+action_items:
+  - epic: 5
+    action: "Mapear intenções auditáveis do Automated Review para o envelope oficial do Audit & Evidence."
+    owner: "Winston (Architect) + Amelia (Developer)"
+    status: open
+  - epic: 5
+    action: "Criar decisão técnica para falhas de auditoria crítica no Automated Review."
+    owner: "Amelia (Developer)"
+    status: open
+  - epic: 5
+    action: "Endurecer o caso de executor consultivo ausente para não deixar reserva órfã."
+    owner: "Amelia (Developer)"
+    status: open
+  - epic: 5
+    action: "Estabilizar o comando local completo com uv/harness ou documentar caminho operacional único."
+    owner: "Amelia (Developer) + Paige (Technical Writer)"
+    status: open
