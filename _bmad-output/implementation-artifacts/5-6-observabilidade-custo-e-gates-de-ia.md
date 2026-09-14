@@ -233,13 +233,13 @@ para que agentes/modelos sejam operados com segurança, governança e rastreabil
 
 ### Checklist de implementação para o dev agent
 
-- [ ] Antes de codificar, mover `CTOS-315` para `Em andamento`.
-- [ ] Começar por testes RED de custo/telemetria/gates de autonomia.
-- [ ] Reusar `creditos_observability` e padrões de custo da Story 3.5.
-- [ ] Não criar dependência do domínio em OpenTelemetry.
-- [ ] Não introduzir nova biblioteca ou infraestrutura sem aprovação/ADR.
-- [ ] Atualizar README e esta story com arquivos alterados, decisões locais e evidências.
-- [ ] Rodar `bmad-code-review` antes de commit/push/draft PR.
+- [x] Antes de codificar, mover `CTOS-315` para `Em andamento`.
+- [x] Começar por testes RED de custo/telemetria/gates de autonomia.
+- [x] Reusar `creditos_observability` e padrões de custo da Story 3.5.
+- [x] Não criar dependência do domínio em OpenTelemetry.
+- [x] Não introduzir nova biblioteca ou infraestrutura sem aprovação/ADR.
+- [x] Atualizar README e esta story com arquivos alterados, decisões locais e evidências.
+- [x] Rodar `bmad-code-review` antes de commit/push/draft PR.
 
 ## Dev Agent Record
 
@@ -261,6 +261,11 @@ Codex GPT-5.1
 - `.venv/bin/pytest tests/test_observability_foundation.py -q` — 8 passed após patches de review.
 
 - `git diff --check` — sem whitespace errors.
+- `.venv/bin/pytest services/automated-review/tests/unit/test_consultative_review_execution.py tests/test_observability_foundation.py -q` — 56 passed após correções do Codex no PR #51.
+- `.venv/bin/ruff format --check .` — 260 files already formatted após correções do PR #51.
+- `.venv/bin/ruff check .` — All checks passed após correções do PR #51.
+- `.venv/bin/pyright` — 0 errors, 0 warnings, 0 informations após correções do PR #51.
+- `git diff --check` — sem whitespace errors após correções do PR #51.
 
 ### Completion Notes List
 
@@ -276,6 +281,7 @@ Codex GPT-5.1
 - Code review Step 02 concluído com Blind Hunter, Edge Case Hunter e Acceptance Auditor; 8 achados patch aplicados.
 - Telemetria tornou-se best-effort, com span cobrindo a execução consultiva e métricas de uso/custo como medições técnicas de baixa cardinalidade.
 - `ReviewModelUsage` rejeita subclasses e valida `total_token_count` contra componentes individuais.
+- Correções do Codex no PR #51 aplicadas: span de execução agora recebe status terminal, duração de request é medida após persistência e métricas de uso/custo validam todos os valores antes de gravar qualquer medição.
 
 ### File List
 
@@ -289,9 +295,11 @@ Codex GPT-5.1
 - `services/automated-review/src/creditos_automated_review/domain/value_objects/__init__.py`
 - `services/automated-review/src/creditos_automated_review/domain/value_objects/review_execution.py`
 - `services/automated-review/tests/unit/test_consultative_review_execution.py`
+- `tests/test_observability_foundation.py`
 
 ### Change Log
 
 - 2026-09-11 — Story 5.6 detalhada por `bmad-create-story`, subtarefas Jira criadas e status BMAD atualizado para `ready-for-dev`.
 - 2026-09-12 — Implementada observabilidade segura, custo técnico e gates de governança de IA; story movida para `review`.
 - 2026-09-14 — Achados do `bmad-code-review` aplicados, validados e story movida para `done`.
+- 2026-09-14 — Correções pós-review do Codex no PR #51 aplicadas e validadas no mesmo branch.

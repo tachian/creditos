@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
 
+import creditos_automated_review.application.service as service_module
 import pytest
 from creditos_automated_review.adapters.model import MockConsultativeReviewExecutor
 from creditos_automated_review.adapters.persistence import (
@@ -133,6 +134,86 @@ class FailingTelemetry:
         raise RuntimeError("falha sintética de uso de IA")
 
 
+class RecordingSpan:
+    def __init__(self) -> None:
+        self.attributes: dict[str, str] = {}
+
+    def set_attribute(self, key: str, value: str) -> None:
+        self.attributes[key] = value
+
+
+class RecordingSpanContext:
+    def __init__(self, span: RecordingSpan) -> None:
+        self.span = span
+
+    def __enter__(self) -> RecordingSpan:
+        return self.span
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object | None,
+    ) -> bool:
+        _ = (exc_type, exc_value, traceback)
+        return False
+
+
+class RecordingTelemetry:
+    def __init__(self) -> None:
+        self.request_durations_ms: list[float] = []
+        self.spans: list[RecordingSpan] = []
+
+    def start_span(
+        self,
+        name: str,
+        *,
+        context: ObservabilityContext,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> RecordingSpanContext:
+        _ = (name, context, attributes)
+        span = RecordingSpan()
+        self.spans.append(span)
+        return RecordingSpanContext(span)
+
+    def record_request(
+        self,
+        *,
+        context: ObservabilityContext,
+        operation: str,
+        status: str,
+        duration_ms: float,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> None:
+        _ = (context, operation, status, attributes)
+        self.request_durations_ms.append(duration_ms)
+
+    def record_ai_usage(
+        self,
+        *,
+        context: ObservabilityContext,
+        operation: str,
+        status: str,
+        estimated_cost_units: int | None = None,
+        actual_cost_units: int | None = None,
+        input_model_unit_count: int | None = None,
+        output_model_unit_count: int | None = None,
+        total_model_unit_count: int | None = None,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> None:
+        _ = (
+            context,
+            operation,
+            status,
+            estimated_cost_units,
+            actual_cost_units,
+            input_model_unit_count,
+            output_model_unit_count,
+            total_model_unit_count,
+            attributes,
+        )
+
+
 class InvalidOutputConsultativeReviewExecutor:
     def __init__(self) -> None:
         self.calls: list[ConsultativeReviewExecutionInput] = []
@@ -205,6 +286,21 @@ class CostedGovernedOutputConsultativeReviewExecutor:
                 },
             ),
         )
+
+
+class AdvancingReviewExecutionRepository(InMemoryReviewExecutionRepository):
+    def __init__(self, advance_after_create: Callable[[], None]) -> None:
+        super().__init__()
+        self._advance_after_create = advance_after_create
+
+    def create(
+        self,
+        execution: AutomatedReviewExecutionResult,
+        *,
+        before_commit: Callable[[], None] | None = None,
+    ) -> None:
+        super().create(execution, before_commit=before_commit)
+        self._advance_after_create()
 
 
 class UngovernedOutputConsultativeReviewExecutor:
@@ -500,7 +596,9 @@ def test_application_emits_safe_ai_usage_cost_logs_audit_and_telemetry() -> None
     log_extra = result.logs[0]["extra"]
     audit_details = execution_audit.events[0].safe_details
     serialized_metrics = str(telemetry.metrics_data())
-    serialized_spans = str([dict(span.attributes or {}) for span in telemetry.finished_spans()])
+    spans = telemetry.finished_spans()
+    span_attributes = dict(spans[0].attributes or {})
+    serialized_spans = str([dict(span.attributes or {}) for span in spans])
 
     assert result.execution.model_usage.actual_cost_units == 34
     assert log_extra["model_usage_present"] == "true"
@@ -519,7 +617,8 @@ def test_application_emits_safe_ai_usage_cost_logs_audit_and_telemetry() -> None
     assert log_extra["prompt_fingerprint"] == _prompt().prompt_fingerprint
     assert "duration_ms" in log_extra
     assert audit_details["actual_cost_units"] == "34"
-    assert audit_details["duration_ms"] == log_extra["duration_ms"]
+    assert "duration_ms" in audit_details
+    assert float(log_extra["duration_ms"]) >= float(audit_details["duration_ms"])
     assert "creditos.requests.total" in serialized_metrics
     assert "creditos.request.duration" in serialized_metrics
     assert "creditos.ai.estimated_cost_units" in serialized_metrics
@@ -535,6 +634,43 @@ def test_application_emits_safe_ai_usage_cost_logs_audit_and_telemetry() -> None
     assert "raw_output" not in serialized_spans
     assert "model_credit_review_mock" in serialized_spans
     assert "rac_personal_credit_default_v1" in serialized_spans
+    assert span_attributes["status"] == "accepted"
+    assert span_attributes["output_validation_status"] == "accepted"
+    assert span_attributes["cost_units_present"] == "true"
+
+
+def test_application_measures_request_duration_after_execution_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_time = {"seconds": 100.0}
+
+    def monotonic_time() -> float:
+        return current_time["seconds"]
+
+    def advance_after_create() -> None:
+        current_time["seconds"] += 0.25
+
+    monkeypatch.setattr(service_module, "monotonic", monotonic_time)
+    execution_audit = RecordingExecutionAuditPublisher()
+    execution_repository = AdvancingReviewExecutionRepository(advance_after_create)
+    telemetry = RecordingTelemetry()
+    service = _service(
+        execution_audit=execution_audit,
+        execution_repository=execution_repository,
+        executor=CostedGovernedOutputConsultativeReviewExecutor(),
+        telemetry=telemetry,
+    )
+    _publish_default_config(service, model_ref=_model_ref())
+
+    result = service.execute_consultative_review(
+        _execute_command(),
+        context=_context(),
+        trusted_context=_trusted_context(scopes=("automated_review:execute",)),
+    )
+
+    assert result.logs[0]["duration_ms"] == 250.0
+    assert result.logs[0]["extra"]["duration_ms"] == "250.000"
+    assert telemetry.request_durations_ms == [250.0]
 
 
 def test_application_ignores_telemetry_failures_after_persisting_execution() -> None:

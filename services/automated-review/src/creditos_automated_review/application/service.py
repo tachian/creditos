@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import islice
 from time import monotonic
+from types import TracebackType
 from typing import Any, Protocol
 
 from creditos_observability.context import ObservabilityContext
@@ -100,20 +100,31 @@ class _BestEffortTelemetrySpan:
     def __init__(self, span_context_manager: Any) -> None:
         self._span_context_manager = span_context_manager
         self._active = False
+        self._span: Any | None = None
 
-    def __enter__(self) -> None:
+    def __enter__(self) -> _BestEffortTelemetrySpan:
         try:
-            self._span_context_manager.__enter__()
+            self._span = self._span_context_manager.__enter__()
         except Exception:
             self._active = False
-            return
+            return self
         self._active = True
+        return self
+
+    def set_terminal_attributes(self, attributes: Mapping[str, str]) -> None:
+        if not self._active or self._span is None:
+            return
+        try:
+            for key, value in attributes.items():
+                self._span.set_attribute(key, value)
+        except Exception:
+            return
 
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: object | None,
+        traceback: TracebackType | None,
     ) -> bool:
         if not self._active:
             return False
@@ -121,6 +132,22 @@ class _BestEffortTelemetrySpan:
             self._span_context_manager.__exit__(exc_type, exc_value, traceback)
         except Exception:
             return False
+        return False
+
+
+class _NoOpTelemetrySpan:
+    def __enter__(self) -> _NoOpTelemetrySpan:
+        return self
+
+    def set_terminal_attributes(self, attributes: Mapping[str, str]) -> None:
+        _ = attributes
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
         return False
 
 
@@ -490,7 +517,7 @@ class AutomatedReviewApplicationService:
             context=context,
             request=request,
             config=config,
-        ):
+        ) as telemetry_span:
             executor = self._require_consultative_executor()
             model_usage = ReviewModelUsage()
             try:
@@ -557,7 +584,6 @@ class AutomatedReviewApplicationService:
                 if evidence_repository is not None
                 else None
             )
-            duration_ms = _duration_ms(started)
 
             def before_execution_commit() -> None:
                 if consultative_evidence is not None and evidence_repository is not None:
@@ -576,13 +602,14 @@ class AutomatedReviewApplicationService:
                     context,
                     trusted_context.trusted.subject_id,
                     config=config,
-                    duration_ms=duration_ms,
+                    duration_ms=_duration_ms(started),
                 )
 
             execution_repository.create(
                 execution,
                 before_commit=before_execution_commit,
             )
+            duration_ms = _duration_ms(started)
             log = self._log_operation(
                 context=context,
                 operation="automated_review.execution.execute_consultative",
@@ -601,6 +628,9 @@ class AutomatedReviewApplicationService:
                 execution=execution,
                 config=config,
                 duration_ms=duration_ms,
+            )
+            telemetry_span.set_terminal_attributes(
+                _safe_execution_terminal_span_attributes(execution)
             )
             return ReviewExecutionApplicationResult(
                 execution=execution,
@@ -908,9 +938,9 @@ class AutomatedReviewApplicationService:
         context: ObservabilityContext,
         request: AutomatedReviewExecutionRequest,
         config: ReviewAgentConfiguration,
-    ) -> Any:
+    ) -> _BestEffortTelemetrySpan | _NoOpTelemetrySpan:
         if self._telemetry is None:
-            return nullcontext()
+            return _NoOpTelemetrySpan()
         try:
             span_context = self._telemetry.start_span(
                 "automated_review.execution.execute_consultative",
@@ -918,7 +948,7 @@ class AutomatedReviewApplicationService:
                 attributes=_safe_execution_span_attributes(request, config=config),
             )
         except Exception:
-            return nullcontext()
+            return _NoOpTelemetrySpan()
         return _BestEffortTelemetrySpan(span_context)
 
     def _record_execution_telemetry(
@@ -1272,6 +1302,19 @@ def _safe_execution_span_attributes(
         attributes["model_ref"] = config.model_ref.model_ref
         if config.model_ref.model_version is not None:
             attributes["model_version"] = config.model_ref.model_version
+    return attributes
+
+
+def _safe_execution_terminal_span_attributes(
+    execution: AutomatedReviewExecutionResult,
+) -> dict[str, str]:
+    attributes = {
+        "status": _execution_log_status(execution),
+        "output_validation_status": execution.output_validation_status,
+        "cost_units_present": str(execution.model_usage.cost_units_present).lower(),
+    }
+    if execution.fallback_action is not None:
+        attributes["fallback_action"] = execution.fallback_action
     return attributes
 
 

@@ -129,15 +129,18 @@ class InMemoryTelemetry:
         safe_attributes = _safe_metric_attributes(context, attributes)
         safe_attributes["operation"] = operation
         safe_attributes["status"] = status
-        for value, instrument in (
+        measurements = (
             (estimated_cost_units, self._ai_estimated_cost_units),
             (actual_cost_units, self._ai_actual_cost_units),
             (input_model_unit_count, self._ai_input_model_units),
             (output_model_unit_count, self._ai_output_model_units),
             (total_model_unit_count, self._ai_total_model_units),
-        ):
+        )
+        for value, _instrument in measurements:
             if value is not None:
                 _validate_usage_units(value)
+        for value, instrument in measurements:
+            if value is not None:
                 instrument.record(value, attributes=safe_attributes)
 
     def finished_spans(self) -> tuple[ReadableSpan, ...]:

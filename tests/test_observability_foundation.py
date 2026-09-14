@@ -255,3 +255,22 @@ def test_in_memory_telemetry_rejects_invalid_duration_and_does_not_record_except
     )
 
     assert "123.456.789-09" not in serialized_spans
+
+
+def test_in_memory_telemetry_validates_ai_usage_before_recording_any_measurement() -> None:
+    context = ObservabilityContext.new()
+    telemetry = InMemoryTelemetry(service_name="automated-review", service_version="0.1.0")
+
+    with pytest.raises(ValueError, match="uso/custo"):
+        telemetry.record_ai_usage(
+            context=context,
+            operation="automated_review.execution.execute_consultative",
+            status="accepted",
+            estimated_cost_units=10,
+            actual_cost_units=-1,
+        )
+
+    serialized_metrics = str(telemetry.metrics_data())
+
+    assert "creditos.ai.estimated_cost_units" not in serialized_metrics
+    assert "creditos.ai.actual_cost_units" not in serialized_metrics
