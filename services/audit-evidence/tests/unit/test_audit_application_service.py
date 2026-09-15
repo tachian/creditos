@@ -6,6 +6,7 @@ import pytest
 from creditos_audit_evidence.adapters.persistence import InMemoryAuditEventRepository
 from creditos_audit_evidence.application.service import (
     AuditEvidenceApplicationService,
+    GetAuditEventCommand,
     ListAuditEventsByAggregateCommand,
     ListAuditEventsByTimeWindowCommand,
     RegisterAuditEventCommand,
@@ -80,6 +81,32 @@ def test_register_audit_event_rejects_observability_context_tenant_spoofing() ->
                 tenant_isolation_tier="bridge",
             ),
             trusted_context=_trusted_context(),
+        )
+
+
+def test_register_audit_event_requires_audit_write_scope() -> None:
+    service = AuditEvidenceApplicationService(
+        repository=InMemoryAuditEventRepository(),
+        environment="test",
+    )
+
+    with pytest.raises(AuditEvidenceTenantContextError):
+        service.register_event(
+            RegisterAuditEventCommand(
+                event_id="audit_evt_001",
+                aggregate_type="credit_decision",
+                aggregate_id="decision_001",
+                event_type="credit_decision.created",
+                action="create",
+                resource_type="credit_decision",
+                resource_id="decision_001",
+                source_service="decision",
+                source_kind="grpc",
+                result="accepted",
+                occurred_at=datetime(2026, 9, 14, 12, 0, tzinfo=UTC),
+            ),
+            context=_observability_context(),
+            trusted_context=_trusted_context(scopes=()),
         )
 
 
@@ -165,6 +192,35 @@ def test_list_by_aggregate_is_tenant_scoped_and_does_not_return_cross_tenant() -
 
     assert [event.event_id for event in result.events] == ["audit_evt_001"]
     assert result.events[0].tenant_id == "tenant_alpha"
+
+
+def test_get_event_requires_audit_read_scope() -> None:
+    repository = InMemoryAuditEventRepository()
+    service = AuditEvidenceApplicationService(repository=repository, environment="test")
+    service.register_event(
+        RegisterAuditEventCommand(
+            event_id="audit_evt_001",
+            aggregate_type="credit_decision",
+            aggregate_id="decision_001",
+            event_type="credit_decision.created",
+            action="create",
+            resource_type="credit_decision",
+            resource_id="decision_001",
+            source_service="decision",
+            source_kind="grpc",
+            result="accepted",
+            occurred_at=datetime(2026, 9, 14, 12, 0, tzinfo=UTC),
+        ),
+        context=_observability_context(),
+        trusted_context=_trusted_context(scopes=("audit:write",)),
+    )
+
+    with pytest.raises(AuditEvidenceTenantContextError):
+        service.get_event(
+            GetAuditEventCommand(event_id="audit_evt_001"),
+            context=_observability_context(),
+            trusted_context=_trusted_context(scopes=()),
+        )
 
 
 def test_list_by_time_window_is_tenant_scoped_and_ordered() -> None:
@@ -290,13 +346,13 @@ def _observability_context() -> ObservabilityContext:
     )
 
 
-def _trusted_context() -> PropagatedContext:
+def _trusted_context(*, scopes: tuple[str, ...] = ("audit:read", "audit:write")) -> PropagatedContext:
     return PropagatedContext(
         trusted=TrustedContext(
             tenant_id="tenant_alpha",
             tenant_isolation_tier="bridge",
             subject_id="client-alpha",
-            scopes=("audit:write",),
+            scopes=scopes,
             roles=("service-client",),
             client_id="client-alpha",
             principal_type="m2m",

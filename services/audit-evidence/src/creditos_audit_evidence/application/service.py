@@ -97,6 +97,7 @@ class AuditEvidenceApplicationService:
     ) -> AuditEventApplicationResult:
         started_at = perf_counter()
         _require_matching_context(context=context, trusted_context=trusted_context)
+        _require_scope(trusted_context=trusted_context, required_scope="audit:write")
         event = AuditEvent.create(
             event_id=command.event_id,
             tenant_id=trusted_context.trusted.tenant_id,
@@ -137,6 +138,7 @@ class AuditEvidenceApplicationService:
     ) -> AuditEventApplicationResult | None:
         started_at = perf_counter()
         _require_matching_context(context=context, trusted_context=trusted_context)
+        _require_scope(trusted_context=trusted_context, required_scope="audit:read")
         event = self._repository.get(
             tenant_id=trusted_context.trusted.tenant_id,
             event_id=command.event_id,
@@ -162,6 +164,7 @@ class AuditEvidenceApplicationService:
     ) -> AuditEventListApplicationResult:
         started_at = perf_counter()
         _require_matching_context(context=context, trusted_context=trusted_context)
+        _require_scope(trusted_context=trusted_context, required_scope="audit:read")
         aggregate_type = validate_aggregate_type(command.aggregate_type)
         aggregate_id = validate_aggregate_id(command.aggregate_id)
         events = self._repository.list_by_aggregate(
@@ -192,6 +195,7 @@ class AuditEvidenceApplicationService:
     ) -> AuditEventListApplicationResult:
         started_at = perf_counter()
         _require_matching_context(context=context, trusted_context=trusted_context)
+        _require_scope(trusted_context=trusted_context, required_scope="audit:read")
         occurred_from = validate_occurred_at(command.occurred_from)
         occurred_to = validate_occurred_at(command.occurred_to)
         if occurred_from > occurred_to:
@@ -285,6 +289,15 @@ def _require_matching_context(
             "trace_id divergente",
             code="audit_evidence_trace_context_mismatch",
             field_path="trace_id",
+        )
+
+
+def _require_scope(*, trusted_context: PropagatedContext, required_scope: str) -> None:
+    if required_scope not in trusted_context.trusted.scopes:
+        raise AuditEvidenceTenantContextError(
+            "escopo obrigatório ausente",
+            code="audit_evidence_missing_scope",
+            field_path="scopes",
         )
 
 
