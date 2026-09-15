@@ -1,6 +1,6 @@
 ---
 jira_issue: CTOS-53
-branch: agent/story-6-1-audit-append-only-create-story
+branch: agent/story-6-1-audit-append-only
 baseline_commit: f0a9f71
 created_at: 2026-09-14
 subtasks:
@@ -17,7 +17,7 @@ subtasks:
 
 # Story 6.1: Trilha Oficial Append-only de Auditoria
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -77,60 +77,60 @@ para que decisões e ações sensíveis possam ser provadas e reconstruídas.
 
 ## Tasks / Subtasks
 
-- [ ] CTOS-321 — Criar base do `Audit & Evidence Service` (AC: 1, 7, 8)
-  - [ ] Criar `services/audit-evidence` seguindo o template DDD/hexagonal existente.
-  - [ ] Criar pacote `creditos_audit_evidence` com `domain`, `application`, `adapters`, `bootstrap` e testes unitários.
-  - [ ] Adicionar `pyproject.toml` do serviço com dependências compartilhadas `creditos-observability` e `creditos-security`.
-  - [ ] Atualizar `pyproject.toml` raiz (`extraPaths`/`pythonpath`) somente se necessário para Pyright/pytest reconhecerem o novo serviço.
+- [x] CTOS-321 — Criar base do `Audit & Evidence Service` (AC: 1, 7, 8)
+  - [x] Criar `services/audit-evidence` seguindo o template DDD/hexagonal existente.
+  - [x] Criar pacote `creditos_audit_evidence` com `domain`, `application`, `adapters`, `bootstrap` e testes unitários.
+  - [x] Adicionar `pyproject.toml` do serviço com dependências compartilhadas `creditos-observability` e `creditos-security`.
+  - [x] Atualizar `pyproject.toml` raiz (`extraPaths`/`pythonpath`) somente se necessário para Pyright/pytest reconhecerem o novo serviço.
 
-- [ ] CTOS-322 — Modelar evento oficial de auditoria no domínio (AC: 1, 3, 4, 5)
-  - [ ] Criar entidade/agregado imutável `AuditEvent` ou nome equivalente.
-  - [ ] Validar campos mínimos: `event_id`, `tenant_id`, `aggregate_type`, `aggregate_id`, `event_type`, `action`, `resource_type`, `resource_id`, `actor_subject_id`, `source_service`, `source_kind`, `result`, `occurred_at`, `correlation_id`, `trace_id` e `request_id` opcional.
-  - [ ] Exigir `occurred_at` timezone-aware em UTC e normalizar serialização ISO 8601 com offset UTC.
-  - [ ] Usar value objects/funções de validação locais ao bounded context; não importar entidades de `Decision`, `Integration` ou `Automated Review`.
+- [x] CTOS-322 — Modelar evento oficial de auditoria no domínio (AC: 1, 3, 4, 5)
+  - [x] Criar entidade/agregado imutável `AuditEvent` ou nome equivalente.
+  - [x] Validar campos mínimos: `event_id`, `tenant_id`, `aggregate_type`, `aggregate_id`, `event_type`, `action`, `resource_type`, `resource_id`, `actor_subject_id`, `source_service`, `source_kind`, `result`, `occurred_at`, `correlation_id`, `trace_id` e `request_id` opcional.
+  - [x] Exigir `occurred_at` timezone-aware em UTC e normalizar serialização ISO 8601 com offset UTC.
+  - [x] Usar value objects/funções de validação locais ao bounded context; não importar entidades de `Decision`, `Integration` ou `Automated Review`.
 
-- [ ] CTOS-323 — Implementar trilha append-only por porta hexagonal (AC: 1, 6, 7)
-  - [ ] Criar `AuditEventRepository` com métodos somente de append/leitura (`append`, `get`, `list_by_aggregate` ou equivalente).
-  - [ ] Não expor métodos `save`, `update`, `delete`, `remove`, `replace` ou mutação de registro existente na porta principal.
-  - [ ] Implementar adapter in-memory determinístico e thread-safe para testes, com índice por `(tenant_id, event_id)` e por agregado.
-  - [ ] Rejeitar duplicidade de `event_id` no mesmo tenant sem sobrescrever registro existente.
+- [x] CTOS-323 — Implementar trilha append-only por porta hexagonal (AC: 1, 6, 7)
+  - [x] Criar `AuditEventRepository` com métodos somente de append/leitura (`append`, `get`, `list_by_aggregate` ou equivalente).
+  - [x] Não expor métodos `save`, `update`, `delete`, `remove`, `replace` ou mutação de registro existente na porta principal.
+  - [x] Implementar adapter in-memory determinístico e thread-safe para testes, com índice por `(tenant_id, event_id)` e por agregado.
+  - [x] Rejeitar duplicidade de `event_id` no mesmo tenant sem sobrescrever registro existente.
 
-- [ ] CTOS-324 — Preparar persistência relacional append-only do MVP (AC: 1, 7, 8)
-  - [ ] Criar modelo/migration mínima para tabela principal de auditoria, se compatível com o padrão atual do repositório e sem exigir infraestrutura produtiva.
-  - [ ] Garantir que o desenho de persistência tenha operação normal apenas por `INSERT`; não criar fluxo operacional de `UPDATE`/`DELETE`.
-  - [ ] Se o adapter SQLAlchemy/Alembic completo extrapolar a story, registrar explicitamente em `deferred-work.md` o gap de persistência real sem enfraquecer a porta append-only e os testes in-memory.
-  - [ ] Não implementar hash encadeado ainda; reservar campos/interfaces apenas se isso não tornar o evento da Story 6.1 dependente da Story 6.4.
+- [x] CTOS-324 — Preparar desenho append-only e registrar gap de persistência relacional do MVP (AC: 1, 7, 8)
+  - [x] Confirmar que o repositório ainda não possui padrão operacional de migrations por serviço nem banco real provisionado para o `Audit & Evidence Service`.
+  - [x] Garantir que a porta e o adapter in-memory tenham operação normal apenas por `append`/leitura; não criar fluxo operacional de `UPDATE`/`DELETE`.
+  - [x] Registrar explicitamente em `deferred-work.md` o gap de SQLAlchemy/Alembic, grants `INSERT`-only e banco real sem enfraquecer a porta append-only e os testes in-memory.
+  - [x] Não implementar hash encadeado ainda; reservar campos/interfaces apenas se isso não tornar o evento da Story 6.1 dependente da Story 6.4.
 
-- [ ] CTOS-325 — Implementar caso de uso de registro oficial (AC: 1, 2, 3, 4, 5)
-  - [ ] Criar command/result imutáveis para registrar evento oficial.
-  - [ ] Exigir `ObservabilityContext` e `PropagatedContext` confiáveis; `tenant_id` e ator vêm do contexto, não do body.
-  - [ ] Emitir log operacional via `build_structured_log` apenas como telemetria auxiliar, com `payload="[OMITIDO]"` e `extra` minimizado.
-  - [ ] Falha de validação deve retornar erro de domínio/aplicação seguro, sem ecoar payload bruto.
+- [x] CTOS-325 — Implementar caso de uso de registro oficial (AC: 1, 2, 3, 4, 5)
+  - [x] Criar command/result imutáveis para registrar evento oficial.
+  - [x] Exigir `ObservabilityContext` e `PropagatedContext` confiáveis; `tenant_id` e ator vêm do contexto, não do body.
+  - [x] Emitir log operacional via `build_structured_log` apenas como telemetria auxiliar, com `payload="[OMITIDO]"` e `extra` minimizado.
+  - [x] Falha de validação deve retornar erro de domínio/aplicação seguro, sem ecoar payload bruto.
 
-- [ ] CTOS-326 — Separar evidência operacional complementar de auditoria oficial (AC: 2, 6)
-  - [ ] Modelar `OperationalEvidenceReference` ou estrutura equivalente para refs de `log`, `trace`, `message` ou `metric`.
-  - [ ] Permitir essas refs somente como complemento opcional do evento oficial, nunca como registro substituto.
-  - [ ] Rejeitar comandos que tentem registrar apenas log/trace/message como se fosse evento oficial.
-  - [ ] Documentar no README do serviço que logs/traces/eventos de mensageria não são a trilha oficial.
+- [x] CTOS-326 — Separar evidência operacional complementar de auditoria oficial (AC: 2, 6)
+  - [x] Modelar `OperationalEvidenceReference` ou estrutura equivalente para refs de `log`, `trace`, `message` ou `metric`.
+  - [x] Permitir essas refs somente como complemento opcional do evento oficial, nunca como registro substituto.
+  - [x] Rejeitar comandos que tentem registrar apenas log/trace/message como se fosse evento oficial.
+  - [x] Documentar no README do serviço que logs/traces/eventos de mensageria não são a trilha oficial.
 
-- [ ] CTOS-327 — Aplicar minimização, mascaramento e bloqueios de dados sensíveis (AC: 4, 5, 8)
-  - [ ] Reusar `creditos_security.masking.mask_sensitive_data` e constantes existentes como defesa adicional.
-  - [ ] Restringir `safe_details` a `dict[str, str]` com chaves permitidas/normalizadas, limite de cardinalidade e valores curtos.
-  - [ ] Rejeitar ou omitir chaves de payload bruto, documento, imagem, biometria, segredo, token e dados financeiros detalhados.
-  - [ ] Testar CPF, CNPJ, e-mail, telefone, token, segredo e payload em fixtures sintéticas.
+- [x] CTOS-327 — Aplicar minimização, mascaramento e bloqueios de dados sensíveis (AC: 4, 5, 8)
+  - [x] Reusar `creditos_security.masking.mask_sensitive_data` e constantes existentes como defesa adicional.
+  - [x] Restringir `safe_details` a `dict[str, str]` com chaves permitidas/normalizadas, limite de cardinalidade e valores curtos.
+  - [x] Rejeitar ou omitir chaves de payload bruto, documento, imagem, biometria, segredo, token e dados financeiros detalhados.
+  - [x] Testar CPF, CNPJ, e-mail, telefone, token, segredo e payload em fixtures sintéticas.
 
-- [ ] CTOS-328 — Criar testes de domínio, aplicação e persistência append-only (AC: 1-8)
-  - [ ] Cobrir criação válida, UTC obrigatório, IDs inválidos, tenant ausente/divergente, ator ausente e contexto não confiável.
-  - [ ] Cobrir idempotência/duplicidade de `event_id` sem sobrescrita.
-  - [ ] Cobrir ausência de métodos de update/delete na porta principal e adapter in-memory.
-  - [ ] Cobrir consulta por tenant/agregado sem vazamento cross-tenant.
-  - [ ] Cobrir que logs/traces/mensagens são apenas `operational_evidence_refs` e não substituem evento oficial.
+- [x] CTOS-328 — Criar testes de domínio, aplicação e persistência append-only (AC: 1-8)
+  - [x] Cobrir criação válida, UTC obrigatório, IDs inválidos, tenant ausente/divergente, ator ausente e contexto não confiável.
+  - [x] Cobrir idempotência/duplicidade de `event_id` sem sobrescrita.
+  - [x] Cobrir ausência de métodos de update/delete na porta principal e adapter in-memory.
+  - [x] Cobrir consulta por tenant/agregado sem vazamento cross-tenant.
+  - [x] Cobrir que logs/traces/mensagens são apenas `operational_evidence_refs` e não substituem evento oficial.
 
-- [ ] CTOS-329 — Atualizar documentação e rastreabilidade BMAD/Jira (AC: 7, 8)
-  - [ ] Criar/atualizar `services/audit-evidence/README.md` com responsabilidades, limites e fora de escopo.
-  - [ ] Atualizar esta story com decisões locais, arquivos alterados, evidências de validação e achados de review.
-  - [ ] Atualizar `sprint-status.yaml` conforme avanço da implementação.
-  - [ ] Criar/sincronizar subtarefas Jira antes de codificar e mover cards conforme execução.
+- [x] CTOS-329 — Atualizar documentação e rastreabilidade BMAD/Jira (AC: 7, 8)
+  - [x] Criar/atualizar `services/audit-evidence/README.md` com responsabilidades, limites e fora de escopo.
+  - [x] Atualizar esta story com decisões locais, arquivos alterados, evidências de validação e achados de review.
+  - [x] Atualizar `sprint-status.yaml` conforme avanço da implementação.
+  - [x] Criar/sincronizar subtarefas Jira antes de codificar e mover cards conforme execução.
 
 ## Dev Notes
 
@@ -198,7 +198,7 @@ para que decisões e ações sensíveis possam ser provadas e reconstruídas.
 ### Segurança e privacidade
 
 - Não persistir payload bruto de proposta, payload de fornecedor, prompt/output de IA, documento, imagem, biometria, token, segredo ou dado financeiro detalhado.
-- `safe_details` deve ter limite de número de chaves, tamanho de chave/valor, tipos apenas string e nomes técnicos normalizados.
+- `safe_details` deve ter allowlist fechada de chaves, limite de número de chaves, tamanho de chave/valor, tipos apenas string e nomes técnicos normalizados.
 - Refs operacionais devem ser IDs técnicos (`log_ref`, `trace_id`, `message_id`, `stream_subject`, `metric_ref`) e não conteúdo bruto.
 - Testes devem usar dados sintéticos; se usarem CPF/CNPJ/e-mail para teste negativo, devem ser fictícios e nunca reais.
 - Erros de validação não devem ecoar valores sensíveis recebidos.
@@ -246,30 +246,119 @@ para que decisões e ações sensíveis possam ser provadas e reconstruídas.
 
 ### Checklist de implementação para o dev agent
 
-- [ ] Antes de codificar, mover `CTOS-53` e `CTOS-321` para `Em andamento`.
-- [ ] Começar por testes RED de domínio/aplicação para append-only, contexto confiável, UTC e privacidade.
-- [ ] Reusar o template de serviço e padrões de `Decision`/`Automated Review`; não reinventar estrutura.
-- [ ] Manter domínio livre de infraestrutura.
-- [ ] Não criar tecnologia nova sem ADR/aprovação.
-- [ ] Não implementar Story 6.4/6.5/6.7 por antecipação.
-- [ ] Atualizar README, story, `sprint-status.yaml` e Jira conforme avanço.
-- [ ] Rodar `bmad-code-review` antes de `commit/push/draft PR`.
+- [x] Antes de codificar, mover `CTOS-53` e `CTOS-321` para `Em andamento`.
+- [x] Começar por testes RED de domínio/aplicação para append-only, contexto confiável, UTC e privacidade.
+- [x] Reusar o template de serviço e padrões de `Decision`/`Automated Review`; não reinventar estrutura.
+- [x] Manter domínio livre de infraestrutura.
+- [x] Não criar tecnologia nova sem ADR/aprovação.
+- [x] Não implementar Story 6.4/6.5/6.7 por antecipação.
+- [x] Atualizar README, story, `sprint-status.yaml` e Jira conforme avanço.
+- [x] Rodar `bmad-code-review` antes de `commit/push/draft PR`.
+
+### Review Findings
+
+- [x] [Review][Patch] Aplicar allowlist fechada para `safe_details` — Decisão: opção 1, aceitar somente chaves explicitamente permitidas para auditoria oficial e rejeitar chaves não reconhecidas.
+- [x] [Review][Patch] Ajustar checklist/documentação da persistência relacional — Decisão: opção 2, manter adapter in-memory nesta story e deixar SQLAlchemy/Alembic/grants como trabalho posterior registrado.
+- [x] [Review][Patch] Congelar `safe_details` e proteger retornos append-only contra mutação pós-append [`services/audit-evidence/src/creditos_audit_evidence/domain/entities/audit_event.py:66`]
+- [x] [Review][Patch] Corrigir detecção de CPF/CNPJ em identificadores técnicos [`services/audit-evidence/src/creditos_audit_evidence/domain/value_objects/audit_event.py:15`]
+- [x] [Review][Patch] Rejeitar `occurred_at` com timezone diferente de UTC em vez de normalizar silenciosamente [`services/audit-evidence/src/creditos_audit_evidence/domain/value_objects/audit_event.py:81`]
+- [x] [Review][Patch] Implementar consulta oficial por janela temporal prevista no AC6 [`services/audit-evidence/src/creditos_audit_evidence/application/ports/audit_event_repository.py:17`]
+- [x] [Review][Patch] Revalidar duplicidade após `before_commit` para evitar overwrite/reindexação reentrante [`services/audit-evidence/src/creditos_audit_evidence/adapters/persistence/in_memory_audit_event_repository.py:24`]
+- [x] [Review][Patch] Rejeitar colisão de chaves normalizadas em `safe_details` [`services/audit-evidence/src/creditos_audit_evidence/domain/value_objects/audit_event.py:122`]
+- [x] [Review][Patch] Fortalecer bloqueio de aliases operacionais que tentem substituir auditoria oficial [`services/audit-evidence/src/creditos_audit_evidence/domain/entities/audit_event.py:185`]
+- [x] [Review][Patch] Corrigir runtime/healthcheck para refletir prontidão real e manter `serve` vivo até shutdown [`services/audit-evidence/src/creditos_audit_evidence/bootstrap/container_runtime.py:15`]
 
 ## Dev Agent Record
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+Codex GPT-5.1
+
+### Implementation Plan
+
+- Criar primeiro testes RED para domínio e aplicação do `Audit & Evidence Service`.
+- Materializar um novo bounded context em `services/audit-evidence` seguindo o template DDD/hexagonal.
+- Implementar entidade `AuditEvent`, `OperationalEvidenceReference`, validações de IDs/UTC/contexto e mascaramento de `safe_details`.
+- Implementar porta append-only e adapter in-memory sem métodos de update/delete.
+- Implementar `AuditEvidenceApplicationService` usando `ObservabilityContext`, `PropagatedContext` e log operacional seguro.
+- Registrar gap de persistência SQLAlchemy/Alembic real em `deferred-work.md`, sem enfraquecer a porta append-only nem afirmar que o banco real foi entregue nesta story.
 
 ### Debug Log References
+
+- `.venv/bin/pytest services/audit-evidence/tests/unit -q` — RED inicial: falha por pacote `creditos_audit_evidence` inexistente.
+- `.venv/bin/pytest services/audit-evidence/tests/unit -q` — 20 passed.
+- `.venv/bin/ruff format services/audit-evidence` — 27 files left unchanged após correções.
+- `.venv/bin/ruff check services/audit-evidence` — All checks passed.
+- `.venv/bin/pyright` — 0 errors, 0 warnings, 0 informations.
+- `.venv/bin/pytest services/audit-evidence/tests -q` — 20 passed.
+- `.venv/bin/ruff format services/audit-evidence _bmad-output/implementation-artifacts/6-1-trilha-oficial-append-only-de-auditoria.md` — 2 files reformatted, 27 files left unchanged.
+- `.venv/bin/ruff check services/audit-evidence --fix` — All checks passed.
+- `.venv/bin/pytest services/audit-evidence/tests/unit -q` — 31 passed após patches do code review.
+- `.venv/bin/ruff format --check .` — 288 files already formatted.
+- `.venv/bin/ruff check .` — All checks passed.
+- `.venv/bin/pyright` — 0 errors, 0 warnings, 0 informations.
+- `.venv/bin/pytest services/audit-evidence/tests -q` — 31 passed.
+- `.venv/bin/pytest -q --ignore=tests/test_local_harness.py` — 631 passed.
+- `.venv/bin/ruff format --check .` — 287 files already formatted.
+- `.venv/bin/ruff check .` — All checks passed.
+- `.venv/bin/pyright` — 0 errors, 0 warnings, 0 informations.
+- `.venv/bin/pytest -q` — 624 passed, 3 failed em `tests/test_local_harness.py` por limitação ambiental preexistente (`Operation not permitted` para socket e `uv: command not found`).
+- `.venv/bin/pytest -q --ignore=tests/test_local_harness.py` — 620 passed.
 
 ### Completion Notes List
 
 - Story criada por `bmad-create-story` em 2026-09-14.
 - Epic 6 marcado como `in-progress` no `sprint-status.yaml`.
 - Story 6.1 marcada como `ready-for-dev` no `sprint-status.yaml`.
+- `Audit & Evidence Service` criado em `services/audit-evidence` com estrutura DDD/hexagonal, pacote instalável e runtime mínimo de container.
+- Entidade `AuditEvent` e `OperationalEvidenceReference` implementadas com validação de evento oficial, UTC, IDs técnicos, tenant, ator, origem, resultado, rastreabilidade e evidências operacionais complementares.
+- Porta `AuditEventRepository` e adapter `InMemoryAuditEventRepository` implementados com semântica append-only, rejeição de duplicidade e sem API de update/delete.
+- `AuditEvidenceApplicationService` implementado usando contexto confiável para tenant/ator/rastreabilidade e logs operacionais seguros via `build_structured_log`.
+- `safe_details` normaliza strings, aplica mascaramento/omissão para PII, payload, token, segredo e dado financeiro, e limita cardinalidade/tamanho.
+- Code review aplicado: `safe_details` agora usa allowlist fechada e mapping imutável, `occurred_at` rejeita timezone não UTC, CPF/CNPJ formatados são detectados, consulta por janela temporal foi adicionada, append reentrante revalida duplicidade e runtime de container mantém `serve` vivo até shutdown.
+- Persistência SQLAlchemy/Alembic real foi registrada em `deferred-work.md` como trabalho futuro, pois o repositório ainda não possui padrão operacional de migrations por serviço.
+- Jira sincronizado: `CTOS-53` e `CTOS-321` movidos para `Em andamento` no início; subtarefas `CTOS-321` a `CTOS-329` concluídas após validação.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/6-1-trilha-oficial-append-only-de-auditoria.md`
+- `_bmad-output/implementation-artifacts/deferred-work.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `pyproject.toml`
+- `services/audit-evidence/.dockerignore`
+- `services/audit-evidence/Dockerfile`
+- `services/audit-evidence/README.md`
+- `services/audit-evidence/pyproject.toml`
+- `services/audit-evidence/src/creditos_audit_evidence/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/adapters/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/adapters/api/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/adapters/events/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/adapters/external/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/adapters/grpc/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/adapters/persistence/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/adapters/persistence/in_memory_audit_event_repository.py`
+- `services/audit-evidence/src/creditos_audit_evidence/application/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/application/ports/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/application/ports/audit_event_repository.py`
+- `services/audit-evidence/src/creditos_audit_evidence/application/service.py`
+- `services/audit-evidence/src/creditos_audit_evidence/application/use_cases/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/bootstrap/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/bootstrap/container_runtime.py`
+- `services/audit-evidence/src/creditos_audit_evidence/domain/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/domain/entities/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/domain/entities/audit_event.py`
+- `services/audit-evidence/src/creditos_audit_evidence/domain/errors.py`
+- `services/audit-evidence/src/creditos_audit_evidence/domain/events/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/domain/policies/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/domain/services/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/domain/value_objects/__init__.py`
+- `services/audit-evidence/src/creditos_audit_evidence/domain/value_objects/audit_event.py`
+- `services/audit-evidence/tests/unit/test_audit_application_service.py`
+- `services/audit-evidence/tests/unit/test_container_runtime.py`
+- `services/audit-evidence/tests/unit/test_audit_event_model.py`
+
+### Change Log
+
+- 2026-09-14 — Implementada fundação do `Audit & Evidence Service` com domínio, aplicação, adapter append-only in-memory, testes e documentação inicial.
+- 2026-09-14 — Registrado trabalho futuro para persistência SQLAlchemy/Alembic real e grants de banco append-only.
+- 2026-09-14 — Aplicados patches do `bmad-code-review` para allowlist de `safe_details`, imutabilidade, UTC estrito, consulta por janela temporal, revalidação append-only e runtime de container.

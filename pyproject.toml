@@ -53,6 +53,7 @@ extraPaths = [
   "services/automated-review/src",
   "services/decision/src",
   "services/integration/src",
+  "services/audit-evidence/src",
   "services/proposal-intake/src",
   "services/service-template/src",
 ]
@@ -78,6 +79,7 @@ pythonpath = [
   "services/automated-review/src",
   "services/decision/src",
   "services/integration/src",
+  "services/audit-evidence/src",
   "services/proposal-intake/src",
   "services/service-template/src",
 ]
