@@ -42,6 +42,12 @@ def test_audit_event_requires_canonical_utc_append_only_fields() -> None:
         cast(Any, event.safe_details)["policy_id"] = "mutated"
 
 
+def test_audit_event_accepts_not_found_result() -> None:
+    event = AuditEvent.create(**{**_valid_event_values(), "result": "not_found"})
+
+    assert event.result == "not_found"
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from creditos_observability import ObservabilityContext
 from creditos_observability.logging import build_structured_log
@@ -144,7 +145,21 @@ class AuditEvidenceApplicationService:
             event_id=command.event_id,
         )
         if event is None:
+            self._append_read_audit_event(
+                command=command, trusted_context=trusted_context, result="not_found"
+            )
+            self._log_operation(
+                context=context,
+                operation="audit_evidence.event.get",
+                status="not_found",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                extra={"source_event_id": command.event_id, "outcome": "not_found"},
+            )
             return None
+        self._append_read_audit_event(
+            command=command, trusted_context=trusted_context, result="accepted"
+        )
         log = self._log_operation(
             context=context,
             operation="audit_evidence.event.get",
@@ -154,6 +169,35 @@ class AuditEvidenceApplicationService:
             extra=_safe_event_details(event),
         )
         return AuditEventApplicationResult(event=event, logs=(log,))
+
+    def _append_read_audit_event(
+        self,
+        *,
+        command: GetAuditEventCommand,
+        trusted_context: PropagatedContext,
+        result: str,
+    ) -> None:
+        self._repository.append(
+            AuditEvent.create(
+                event_id=f"audit_evt_read_{uuid4().hex}",
+                tenant_id=trusted_context.trusted.tenant_id,
+                aggregate_type="audit_event",
+                aggregate_id=command.event_id,
+                event_type="audit_event.read",
+                action="read",
+                resource_type="audit_event",
+                resource_id=command.event_id,
+                actor_subject_id=trusted_context.trusted.subject_id,
+                source_service=SERVICE_NAME,
+                source_kind="system",
+                result=result,
+                occurred_at=datetime.now(UTC),
+                correlation_id=trusted_context.correlation_id,
+                trace_id=trusted_context.trace_id,
+                request_id=trusted_context.request_id,
+                safe_details={"source_event_id": command.event_id, "outcome": result},
+            )
+        )
 
     def list_by_aggregate(
         self,

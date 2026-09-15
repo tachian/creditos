@@ -223,6 +223,76 @@ def test_get_event_requires_audit_read_scope() -> None:
         )
 
 
+def test_get_event_records_official_read_audit_for_accepted_lookup() -> None:
+    repository = InMemoryAuditEventRepository()
+    service = AuditEvidenceApplicationService(repository=repository, environment="test")
+    service.register_event(
+        RegisterAuditEventCommand(
+            event_id="audit_evt_001",
+            aggregate_type="credit_decision",
+            aggregate_id="decision_001",
+            event_type="credit_decision.created",
+            action="create",
+            resource_type="credit_decision",
+            resource_id="decision_001",
+            source_service="decision",
+            source_kind="grpc",
+            result="accepted",
+            occurred_at=datetime(2026, 9, 14, 12, 0, tzinfo=UTC),
+        ),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    )
+
+    result = service.get_event(
+        GetAuditEventCommand(event_id="audit_evt_001"),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    )
+
+    assert result is not None
+    assert result.event.event_id == "audit_evt_001"
+    read_events = repository.list_by_aggregate(
+        tenant_id="tenant_alpha",
+        aggregate_type="audit_event",
+        aggregate_id="audit_evt_001",
+    )
+    assert len(read_events) == 1
+    assert read_events[0].event_type == "audit_event.read"
+    assert read_events[0].resource_id == "audit_evt_001"
+    assert read_events[0].result == "accepted"
+    assert read_events[0].safe_details == {
+        "source_event_id": "audit_evt_001",
+        "outcome": "accepted",
+    }
+
+
+def test_get_event_records_official_read_audit_for_not_found_lookup() -> None:
+    repository = InMemoryAuditEventRepository()
+    service = AuditEvidenceApplicationService(repository=repository, environment="test")
+
+    result = service.get_event(
+        GetAuditEventCommand(event_id="audit_evt_missing"),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    )
+
+    assert result is None
+    read_events = repository.list_by_aggregate(
+        tenant_id="tenant_alpha",
+        aggregate_type="audit_event",
+        aggregate_id="audit_evt_missing",
+    )
+    assert len(read_events) == 1
+    assert read_events[0].result == "not_found"
+    assert read_events[0].safe_details == {
+        "source_event_id": "audit_evt_missing",
+        "outcome": "not_found",
+    }
+    assert service.logged_events[-1]["status"] == "not_found"
+    assert service.logged_events[-1]["payload"] == "[OMITIDO]"
+
+
 def test_list_by_time_window_is_tenant_scoped_and_ordered() -> None:
     repository = InMemoryAuditEventRepository()
     service = AuditEvidenceApplicationService(repository=repository, environment="test")
@@ -346,7 +416,9 @@ def _observability_context() -> ObservabilityContext:
     )
 
 
-def _trusted_context(*, scopes: tuple[str, ...] = ("audit:read", "audit:write")) -> PropagatedContext:
+def _trusted_context(
+    *, scopes: tuple[str, ...] = ("audit:read", "audit:write")
+) -> PropagatedContext:
     return PropagatedContext(
         trusted=TrustedContext(
             tenant_id="tenant_alpha",

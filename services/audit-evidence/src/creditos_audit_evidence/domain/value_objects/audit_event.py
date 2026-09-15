@@ -20,7 +20,9 @@ _BRAZILIAN_DOCUMENT_PATTERN = re.compile(
     r"^(?:\d{11}|\d{14}|\d{3}\.\d{3}\.\d{3}-\d{2}|\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})$"
 )
 _SOURCE_KINDS = frozenset({"api", "worker", "job", "grpc", "event_consumer", "system"})
-_RESULTS = frozenset({"accepted", "rejected", "blocked", "failed", "technical_failure"})
+_RESULTS = frozenset(
+    {"accepted", "not_found", "rejected", "blocked", "failed", "technical_failure"}
+)
 _ALLOWED_SAFE_DETAIL_KEYS = frozenset(
     {
         "decision_id",
