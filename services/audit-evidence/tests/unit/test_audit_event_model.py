@@ -118,6 +118,21 @@ def test_safe_details_reject_unknown_sensitive_or_colliding_keys(
         AuditEvent.create(**{**_valid_event_values(), "safe_details": safe_details})
 
 
+def test_safe_details_omits_sensitive_value_patterns_even_with_allowlisted_keys() -> None:
+    event = AuditEvent.create(
+        **{
+            **_valid_event_values(),
+            "safe_details": {
+                "reason_code": "******",
+                "policy_id": "raw-provider-payload",
+            },
+        }
+    )
+
+    assert event.safe_details["reason_code"] == "[OMITIDO]"
+    assert event.safe_details["policy_id"] == "[OMITIDO]"
+
+
 def test_operational_evidence_reference_cannot_replace_official_event() -> None:
     with pytest.raises(AuditEvidenceValidationError):
         AuditEvent.create(

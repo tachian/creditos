@@ -4,7 +4,7 @@ import re
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 
-from creditos_security.masking import mask_sensitive_data
+from creditos_security.masking import OMITTED, mask_sensitive_data
 
 from creditos_audit_evidence.domain.errors import AuditEvidenceValidationError
 
@@ -13,6 +13,9 @@ _TECHNICAL_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _EVENT_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
 _TRACE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _SAFE_DETAIL_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_SENSITIVE_SAFE_DETAIL_VALUE_PATTERN = re.compile(
+    r"(?i)(?:\b(?:token|secret|password|senha|authorization|bearer|api[_-]?key|payload)\b|\*{4,})"
+)
 _BRAZILIAN_DOCUMENT_PATTERN = re.compile(
     r"^(?:\d{11}|\d{14}|\d{3}\.\d{3}\.\d{3}-\d{2}|\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})$"
 )
@@ -163,7 +166,10 @@ def normalize_safe_details(value: Mapping[str, str]) -> dict[str, str]:
                 f"safe_details.{key}",
             )
         masked_value = str(mask_sensitive_data(raw_value, key=key))
-        normalized_details[key] = masked_value[:_MAX_SAFE_DETAIL_VALUE_LENGTH]
+        if _SENSITIVE_SAFE_DETAIL_VALUE_PATTERN.search(masked_value) is not None:
+            normalized_details[key] = OMITTED
+        else:
+            normalized_details[key] = masked_value[:_MAX_SAFE_DETAIL_VALUE_LENGTH]
     return normalized_details
 
 
