@@ -295,8 +295,8 @@ def _require_matching_context(
 def _require_scope(*, trusted_context: PropagatedContext, required_scope: str) -> None:
     if required_scope not in trusted_context.trusted.scopes:
         raise AuditEvidenceTenantContextError(
-            "escopo obrigatório ausente",
-            code="audit_evidence_missing_scope",
+            f"escopo obrigatório ausente: {required_scope}",
+            code=f"audit_evidence_missing_scope_{required_scope.replace(':', '_')}",
             field_path="scopes",
         )
 
