@@ -106,7 +106,7 @@ def test_register_audit_event_requires_audit_write_scope() -> None:
                 occurred_at=datetime(2026, 9, 14, 12, 0, tzinfo=UTC),
             ),
             context=_observability_context(),
-            trusted_context=_trusted_context(scopes=()),
+            trusted_context=_trusted_context(scopes=("proposal:read",)),
         )
 
 
@@ -219,7 +219,7 @@ def test_get_event_requires_audit_read_scope() -> None:
         service.get_event(
             GetAuditEventCommand(event_id="audit_evt_001"),
             context=_observability_context(),
-            trusted_context=_trusted_context(scopes=()),
+            trusted_context=_trusted_context(scopes=("proposal:read",)),
         )
 
 
