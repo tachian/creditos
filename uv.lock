@@ -5,6 +5,7 @@ requires-python = ">=3.13"
 [manifest]
 members = [
     "creditos",
+    "creditos-audit-evidence",
     "creditos-automated-review",
     "creditos-contracts",
     "creditos-decision",
@@ -54,6 +55,21 @@ dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.1.0" },
     { name = "ruff", specifier = ">=0.12.5" },
+]
+
+[[package]]
+name = "creditos-audit-evidence"
+version = "0.1.0"
+source = { editable = "services/audit-evidence" }
+dependencies = [
+    { name = "creditos-observability" },
+    { name = "creditos-security" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "creditos-observability", editable = "packages/observability" },
+    { name = "creditos-security", editable = "packages/security" },
 ]
 
 [[package]]

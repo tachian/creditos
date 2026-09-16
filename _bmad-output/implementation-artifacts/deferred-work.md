@@ -37,3 +37,7 @@
 ## Deferred from: code review of 5-5-fallback-seguro-de-revisao-automatizada (2026-09-11)
 
 - Executor ausente não vira fallback e pode deixar reserva órfã em `execute_consultative_review`: a reserva antes de `_require_consultative_executor()` já existia antes da Story 5.5 e representa endurecimento futuro de configuração/bootstrapping do serviço, não falha de provedor/modelo tratada por fallback consultivo.
+
+## Deferred from: dev-story of 6-1-trilha-oficial-append-only-de-auditoria (2026-09-14)
+
+- Adapter SQLAlchemy/Alembic real e grants de banco para trilha append-only: a Story 6.1 criou a porta append-only, adapter in-memory testável e desenho de domínio/aplicação. O repositório ainda não possui padrão operacional de migrations por serviço nem banco real provisionado; a implementação física com `INSERT`-only, usuário sem `UPDATE`/`DELETE`, migrations Alembic e grants deve ser feita em história/ADR operacional de persistência real do `Audit & Evidence Service`, preservando a porta append-only já criada.
