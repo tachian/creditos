@@ -132,6 +132,19 @@ Os gates de decisão, política e explicabilidade consolidam regressões para en
 
 Esta etapa não adiciona tecnologia, dependência, endpoint público, OpenAPI externo, gRPC real, NATS, banco real, IA real, serviço novo ou outbox. Lacunas estruturais descobertas pelos gates devem ser registradas como trabalho futuro, não resolvidas com overbuild local.
 
+## Story 6.2
+
+A auditoria de decisões e evidências críticas conecta a decisão produtiva à trilha oficial do `Audit & Evidence`:
+
+- `CreditDecisionAuditIntent` passa a carregar tenant, tier de isolamento, ator, decisão, proposta, política, catálogo, correlation ID, request ID e traceparent derivados do contexto confiável.
+- `AuditEvidenceDecisionAuditPublisher` converte intents de decisão em `RegisterAuditEventCommand` sem importar domínio de `Audit & Evidence` no domínio de `Decision`.
+- O evento oficial usa agregado/recurso `credit_decision`, `event_type` canônico, `action` derivada da operação e `result` controlado.
+- Evidências críticas ficam em `safe_details` minimizado: ids técnicos, versões, contagens, reason codes/regras como referências técnicas e fingerprint decisório.
+- Logs/traces continuam apenas como evidência operacional complementar via `OperationalEvidenceReference`; não substituem a auditoria oficial.
+- Falha na escrita da auditoria crítica gera `credit_decision_audit_write_failed` e impede que a decisão fique visível por `decision_id` ou `proposal_id`.
+
+Ficam fora desta etapa: gRPC real, NATS JetStream, outbox, banco real, hash encadeado, checkpoints, WORM/S3 Object Lock, IaC e endpoints públicos.
+
 ## Arquitetura
 
 O serviço segue DDD + arquitetura hexagonal:

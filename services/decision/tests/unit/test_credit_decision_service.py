@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from creditos_audit_evidence.adapters.persistence import InMemoryAuditEventRepository
+from creditos_audit_evidence.application.service import AuditEvidenceApplicationService
+from creditos_decision.adapters.external import AuditEvidenceDecisionAuditPublisher
 from creditos_decision.adapters.persistence import (
     InMemoryCreditDecisionRepository,
     InMemoryCreditPolicyRepository,
@@ -22,9 +25,11 @@ from creditos_decision.application.service import (
     GetCreditDecisionCommand,
     PublishCreditPolicyCommand,
     RunPolicySimulationCommand,
+    _bounded_csv,
 )
 from creditos_decision.domain.entities import CreditPolicy, ReasonCodeCatalog
 from creditos_decision.domain.errors import (
+    CreditDecisionAuditWriteError,
     CreditDecisionNotFoundError,
     PolicyNotFoundError,
     PolicyTenantContextError,
@@ -53,6 +58,18 @@ class RecordingAuditPublisher:
 
     def publish(self, event: DecisionAuditIntent) -> None:
         self.events.append(event)
+
+
+def test_bounded_csv_never_truncates_selected_references() -> None:
+    first_ref = "a" * 120
+    second_ref = "b" * 123
+    overflow_ref = "c" * 120
+
+    result = _bounded_csv((first_ref, second_ref, overflow_ref), max_length=250)
+
+    assert result == f"{first_ref},more_2"
+    assert second_ref not in result
+    assert len(result) <= 250
 
 
 def test_execute_credit_decision_persists_productive_decision_with_minimized_audit() -> None:
@@ -111,6 +128,8 @@ def test_execute_credit_decision_persists_productive_decision_with_minimized_aud
     assert event.safe_details["factor_count"] == "1"
     assert "fallback_action" not in event.safe_details
     assert event.safe_details["fingerprint"] == result.decision.decision_fingerprint
+    assert event.safe_details["integration_result_count"] == "1"
+    assert event.safe_details["integration_result_refs"] == "integration_income_check_001"
     assert event.safe_details["operation"] == "credit_decision.execute"
     assert event.safe_details["outcome"] == "approve"
     assert event.safe_details["policy_id"] == published_policy.policy_id
@@ -126,6 +145,85 @@ def test_execute_credit_decision_persists_productive_decision_with_minimized_aud
     assert event.safe_details["status"] == "completed"
     assert event.safe_details["triggered_rule_count"] == "1"
     assert event.safe_details["validation_issue_count"] == "0"
+
+
+def test_execute_credit_decision_appends_official_audit_event_with_adapter() -> None:
+    policy_repository = InMemoryCreditPolicyRepository()
+    catalog_repository = _published_catalog_repository()
+    simulation_repository = InMemoryPolicySimulationRepository()
+    decision_repository = InMemoryCreditDecisionRepository()
+    bootstrap_service = _service(
+        audit=RecordingAuditPublisher(),
+        repository=policy_repository,
+        catalog_repository=catalog_repository,
+        simulation_repository=simulation_repository,
+        decision_repository=decision_repository,
+    )
+    _create_and_publish_policy(bootstrap_service)
+    audit_repository = InMemoryAuditEventRepository()
+    audit_service = AuditEvidenceApplicationService(
+        repository=audit_repository,
+        environment="test",
+    )
+    decision_service = _service(
+        audit=AuditEvidenceDecisionAuditPublisher(
+            audit_service=audit_service,
+            clock=lambda: NOW,
+        ),
+        repository=policy_repository,
+        catalog_repository=catalog_repository,
+        simulation_repository=simulation_repository,
+        decision_repository=decision_repository,
+    )
+
+    decision_service.execute_credit_decision(
+        _execute_command(integration_result_refs=("integration_income_check_001",)),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+    )
+
+    events = audit_repository.list_by_aggregate(
+        tenant_id="tenant_alpha",
+        aggregate_type="credit_decision",
+        aggregate_id="decision_personal_credit_001",
+    )
+    assert len(events) == 1
+    assert events[0].event_type == "credit_decision.completed"
+    assert events[0].safe_details["proposal_id"] == "proposal_personal_credit_001"
+    assert events[0].safe_details["policy_id"] == "pol_personal_credit_default"
+    assert events[0].safe_details["integration_result_count"] == "1"
+    assert events[0].safe_details["integration_result_refs"] == "integration_income_check_001"
+    assert events[0].safe_details["reason_code_refs"] == "rc_min_income"
+    assert events[0].safe_details["triggered_rule_ids"] == "rule_min_income"
+    assert events[0].operational_evidence_refs[0].kind == "trace"
+    assert "300000" not in str(events[0].safe_details)
+
+    decision_service.execute_credit_decision(
+        ExecuteCreditDecisionCommand(
+            decision_id="decision_missing_fields_001",
+            proposal_id="proposal_missing_fields_001",
+            product_type="personal_credit",
+            channel="api",
+            effective_at=NOW + timedelta(days=2),
+            field_values=(
+                CreditDecisionInputFieldValue.create(
+                    field="requested_amount_units",
+                    value=700_000,
+                ),
+            ),
+        ),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+    )
+    missing_events = audit_repository.list_by_aggregate(
+        tenant_id="tenant_alpha",
+        aggregate_type="credit_decision",
+        aggregate_id="decision_missing_fields_001",
+    )
+    assert missing_events[0].safe_details["outcome"] == "request_more_data"
+    assert missing_events[0].safe_details["fallback_action"] == "request_more_data"
+    assert missing_events[0].safe_details["required_data_count"] == "3"
+    assert "700000" not in str(missing_events[0].safe_details)
 
 
 def test_get_credit_decision_returns_explainable_response_by_id_and_proposal() -> None:
@@ -215,6 +313,32 @@ def test_get_credit_decision_requires_read_scope_and_hides_cross_tenant_decision
                 scopes=("decision:read",),
                 tenant_isolation_tier="silo",
             ),
+        )
+
+
+def test_execute_credit_decision_rejects_divergent_traceability_contexts() -> None:
+    service = _service(audit=RecordingAuditPublisher())
+    _create_and_publish_policy(service)
+
+    with pytest.raises(PolicyTenantContextError, match="correlation ID divergente"):
+        service.execute_credit_decision(
+            _execute_command(),
+            context=_context("tenant_alpha", correlation_id="corr_divergent123456"),
+            trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+        )
+
+    with pytest.raises(PolicyTenantContextError, match="request ID divergente"):
+        service.execute_credit_decision(
+            _execute_command(),
+            context=_context("tenant_alpha", request_id="req_divergent123456"),
+            trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+        )
+
+    with pytest.raises(PolicyTenantContextError, match="trace ID divergente"):
+        service.execute_credit_decision(
+            _execute_command(),
+            context=_context("tenant_alpha", trace_id="2234567890abcdef1234567890abcdef"),
+            trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
         )
 
 
@@ -516,12 +640,16 @@ def test_execute_credit_decision_is_not_visible_when_audit_fails() -> None:
         decision_repository=decision_repository,
     )
 
-    with pytest.raises(RuntimeError, match="audit unavailable"):
+    with pytest.raises(CreditDecisionAuditWriteError) as error:
         failing_service.execute_credit_decision(
             _execute_command(),
             context=_context("tenant_alpha"),
             trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
         )
+    assert error.value.code == "credit_decision_audit_write_failed"
+    assert failing_service.logged_events[-1]["extra"]["error_code"] == (
+        "credit_decision_audit_write_failed"
+    )
 
     assert (
         decision_repository.get(
@@ -596,6 +724,7 @@ def _create_and_publish_policy(
 def _execute_command(
     *,
     effective_at: datetime | None = None,
+    integration_result_refs: tuple[str, ...] = (),
 ) -> ExecuteCreditDecisionCommand:
     return ExecuteCreditDecisionCommand(
         decision_id="decision_personal_credit_001",
@@ -604,6 +733,7 @@ def _execute_command(
         channel="api",
         effective_at=effective_at or NOW + timedelta(days=2),
         field_values=_decision_field_values(),
+        integration_result_refs=integration_result_refs,
     )
 
 
@@ -794,12 +924,15 @@ def _reason_codes(
 def _context(
     tenant_id: str | None,
     *,
+    correlation_id: str = "corr_1234567890abcdef",
+    request_id: str = "req_1234567890abcdef",
     tenant_isolation_tier: str = "bridge",
+    trace_id: str = "1234567890abcdef1234567890abcdef",
 ) -> ObservabilityContext:
     return ObservabilityContext.new(
-        correlation_id="corr_1234567890abcdef",
-        request_id="req_1234567890abcdef",
-        trace_id="1234567890abcdef1234567890abcdef",
+        correlation_id=correlation_id,
+        request_id=request_id,
+        trace_id=trace_id,
         tenant_id=tenant_id,
         tenant_isolation_tier=tenant_isolation_tier,
     )

@@ -42,6 +42,7 @@ class PolicySimulationAuditIntent:
 class CreditDecisionAuditIntent:
     event_type: str
     tenant_id: str
+    tenant_isolation_tier: str
     actor_subject_id: str
     decision_id: str
     proposal_id: str
@@ -50,6 +51,8 @@ class CreditDecisionAuditIntent:
     reason_code_catalog_id: str
     reason_code_catalog_version_id: str
     correlation_id: str
+    request_id: str
+    traceparent: str
     safe_details: dict[str, str]
 
 

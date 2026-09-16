@@ -50,6 +50,12 @@ class CreditDecisionNotFoundError(DecisionDomainError):
     safe_message = "decisão de crédito não encontrada"
 
 
+class CreditDecisionAuditWriteError(DecisionDomainError):
+    code = "credit_decision_audit_write_failed"
+    safe_message = "falha técnica ao registrar auditoria crítica de decisão"
+    grpc_status = "FAILED_PRECONDITION"
+
+
 class PolicySimulationNotFoundError(DecisionDomainError):
     code = "policy_simulation_not_found"
     safe_message = "simulação de política não encontrada"
