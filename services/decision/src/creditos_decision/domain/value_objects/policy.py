@@ -749,13 +749,12 @@ def _validate_safe_text(value: str, *, field_path: str) -> str:
 def _reject_sensitive_or_prohibited(value: Any, *, field_path: str) -> None:
     normalized = _normalize_for_sensitive_matching(value)
     compact = re.sub(r"[^a-z0-9]", "", normalized)
-    digits = re.sub(r"\D", "", normalized)
     normalized_tokens = set(re.split(r"[^a-z0-9]+", normalized))
     if (
         normalized in _PROHIBITED_TOKENS
         or compact in _PROHIBITED_COMPACT_TOKENS
         or normalized_tokens.intersection(_PROHIBITED_TOKENS)
-        or len(digits) in (11, 14)
+        or _looks_like_unlabeled_brazilian_document(normalized)
         or _FORMATTED_CPF_PATTERN.search(str(value))
         or _FORMATTED_CNPJ_PATTERN.search(str(value))
         or _EMAIL_PATTERN.search(str(value))
@@ -766,6 +765,53 @@ def _reject_sensitive_or_prohibited(value: Any, *, field_path: str) -> None:
             code="sensitive_or_prohibited_policy_field",
             field_path=field_path,
         )
+
+
+def _looks_like_unlabeled_brazilian_document(value: str) -> bool:
+    if (
+        re.search(r"(?<!\d)\d{3}\.\d{3}\.\d{3}-\d{2}(?!\d)", value) is not None
+        or re.search(r"(?<!\d)\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}(?!\d)", value) is not None
+    ):
+        return True
+    digits = re.sub(r"\D", "", value)
+    non_document_chars = re.sub(r"[\d.\-/\s]", "", value)
+    if not non_document_chars and len(digits) in (11, 14):
+        return True
+    return any(
+        _is_valid_cpf(sequence) for sequence in re.findall(r"(?<!\d)\d{11}(?!\d)", value)
+    ) or any(_is_valid_cnpj(sequence) for sequence in re.findall(r"(?<!\d)\d{14}(?!\d)", value))
+
+
+def _is_valid_cpf(value: str) -> bool:
+    if len(value) != 11 or len(set(value)) == 1:
+        return False
+    first_digit = _cpf_check_digit(value[:9])
+    second_digit = _cpf_check_digit(value[:9] + str(first_digit))
+    return value[-2:] == f"{first_digit}{second_digit}"
+
+
+def _cpf_check_digit(value: str) -> int:
+    total = sum(
+        int(digit) * weight
+        for digit, weight in zip(value, range(len(value) + 1, 1, -1), strict=True)
+    )
+    remainder = (total * 10) % 11
+    return 0 if remainder == 10 else remainder
+
+
+def _is_valid_cnpj(value: str) -> bool:
+    if len(value) != 14 or len(set(value)) == 1:
+        return False
+    first_digit = _cnpj_check_digit(value[:12])
+    second_digit = _cnpj_check_digit(value[:12] + str(first_digit))
+    return value[-2:] == f"{first_digit}{second_digit}"
+
+
+def _cnpj_check_digit(value: str) -> int:
+    weights = (6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)[-len(value) :]
+    total = sum(int(digit) * weight for digit, weight in zip(value, weights, strict=True))
+    remainder = total % 11
+    return 0 if remainder < 2 else 11 - remainder
 
 
 def _normalize_for_sensitive_matching(value: Any) -> str:

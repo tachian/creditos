@@ -30,6 +30,7 @@ from creditos_decision.domain.entities import (
     ReasonCodeCatalog,
 )
 from creditos_decision.domain.errors import (
+    CreditDecisionAuditWriteError,
     CreditDecisionNotFoundError,
     PolicyNotFoundError,
     PolicySimulationNotFoundError,
@@ -249,6 +250,7 @@ class CreditDecisionExplanationApplicationResult:
 @dataclass(frozen=True, slots=True)
 class _PolicyOperationContext:
     tenant_id: str
+    tenant_isolation_tier: str
     actor_subject_id: str
 
 
@@ -829,13 +831,17 @@ class DecisionApplicationService:
             def publish_audit_before_commit() -> None:
                 nonlocal decision_audit_completed
                 assert decision is not None
-                self._publish_credit_decision_audit_intent(
-                    decision=decision,
-                    event_type="credit_decision.completed",
-                    actor_subject_id=operation_context.actor_subject_id,
-                    correlation_id=context.correlation_id,
-                    duration_ms=duration_ms,
-                )
+                try:
+                    self._publish_credit_decision_audit_intent(
+                        decision=decision,
+                        event_type="credit_decision.completed",
+                        operation_context=operation_context,
+                        context=context,
+                        trusted_context=trusted_context,
+                        duration_ms=duration_ms,
+                    )
+                except Exception as error:
+                    raise CreditDecisionAuditWriteError() from error
                 decision_audit_completed = True
 
             duration_ms = _duration_ms(started_at)
@@ -934,6 +940,7 @@ class DecisionApplicationService:
                 decision=decision,
                 audience=audience,
                 context=context,
+                trusted_context=trusted_context,
                 operation_context=operation_context,
                 started_at=started_at,
                 command=command,
@@ -992,6 +999,7 @@ class DecisionApplicationService:
                 decision=decision,
                 audience=audience,
                 context=context,
+                trusted_context=trusted_context,
                 operation_context=operation_context,
                 started_at=started_at,
                 command=command,
@@ -1447,6 +1455,7 @@ class DecisionApplicationService:
         decision: CreditDecision,
         audience: str,
         context: ObservabilityContext,
+        trusted_context: PropagatedContext,
         operation_context: _PolicyOperationContext,
         started_at: float,
         command: object,
@@ -1463,8 +1472,9 @@ class DecisionApplicationService:
         self._publish_credit_decision_audit_intent(
             decision=decision,
             event_type="credit_decision.explanation_retrieved",
-            actor_subject_id=operation_context.actor_subject_id,
-            correlation_id=context.correlation_id,
+            operation_context=operation_context,
+            context=context,
+            trusted_context=trusted_context,
             duration_ms=duration_ms,
             operation="credit_decision.explanation.get",
             safe_details=_credit_decision_explanation_safe_details(
@@ -1694,8 +1704,9 @@ class DecisionApplicationService:
         *,
         decision: CreditDecision,
         event_type: str,
-        actor_subject_id: str,
-        correlation_id: str,
+        operation_context: _PolicyOperationContext,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
         duration_ms: float | None = None,
         operation: str = "credit_decision.execute",
         safe_details: dict[str, str] | None = None,
@@ -1704,14 +1715,17 @@ class DecisionApplicationService:
             CreditDecisionAuditIntent(
                 event_type=event_type,
                 tenant_id=decision.tenant_id,
-                actor_subject_id=actor_subject_id,
+                tenant_isolation_tier=operation_context.tenant_isolation_tier,
+                actor_subject_id=operation_context.actor_subject_id,
                 decision_id=decision.decision_id,
                 proposal_id=decision.proposal_id,
                 policy_id=decision.policy_id,
                 policy_version_id=decision.policy_version_id,
                 reason_code_catalog_id=decision.reason_code_catalog_id,
                 reason_code_catalog_version_id=decision.reason_code_catalog_version_id,
-                correlation_id=correlation_id,
+                correlation_id=trusted_context.correlation_id,
+                request_id=trusted_context.request_id,
+                traceparent=trusted_context.traceparent,
                 safe_details=(
                     safe_details
                     if safe_details is not None
@@ -1747,10 +1761,7 @@ class DecisionApplicationService:
         )
         tenant_id = _trusted_tenant_id_or_unknown(trusted_context)
         actor_subject_id = _trusted_actor_subject_id_or_unknown(trusted_context)
-        correlation_id = _safe_correlation_id(
-            context.correlation_id,
-            fallback="corr_unknown0000",
-        )
+        correlation_id = trusted_context.correlation_id
         rejection_safe_details = {
             "operation": operation,
             "rejection_reason": getattr(error, "code", type(error).__name__),
@@ -1846,6 +1857,7 @@ class DecisionApplicationService:
         if skip_decision_id is not None and decision_id == skip_decision_id:
             return
         tenant_id = _trusted_tenant_id_or_unknown(trusted_context)
+        tenant_isolation_tier = _trusted_tenant_isolation_tier_or_bridge(trusted_context)
         actor_subject_id = _trusted_actor_subject_id_or_unknown(trusted_context)
         correlation_id = _safe_correlation_id(
             context.correlation_id,
@@ -1856,6 +1868,7 @@ class DecisionApplicationService:
                 CreditDecisionAuditIntent(
                     event_type="credit_decision.rejected",
                     tenant_id=tenant_id,
+                    tenant_isolation_tier=tenant_isolation_tier,
                     actor_subject_id=actor_subject_id,
                     decision_id=decision_id,
                     proposal_id=(
@@ -1883,6 +1896,8 @@ class DecisionApplicationService:
                         else "unknown_reason_code_catalog_version"
                     ),
                     correlation_id=correlation_id,
+                    request_id=trusted_context.request_id,
+                    traceparent=trusted_context.traceparent,
                     safe_details=_credit_decision_rejection_safe_details(
                         operation=operation,
                         command=command,
@@ -2029,6 +2044,21 @@ def _require_policy_context(
             "tier de tenant divergente",
             code="policy_tenant_tier_mismatch",
         )
+    if context.correlation_id != trusted_context.correlation_id:
+        raise PolicyTenantContextError(
+            "correlation ID divergente",
+            code="policy_correlation_context_mismatch",
+        )
+    if context.request_id != trusted_context.request_id:
+        raise PolicyTenantContextError(
+            "request ID divergente",
+            code="policy_request_context_mismatch",
+        )
+    if context.trace_id != trusted_context.trace_id:
+        raise PolicyTenantContextError(
+            "trace ID divergente",
+            code="policy_trace_context_mismatch",
+        )
     if trusted.tenant_isolation_tier != "bridge":
         raise PolicyTenantContextError(
             "tier de tenant não suportado",
@@ -2041,6 +2071,7 @@ def _require_policy_context(
         )
     return _PolicyOperationContext(
         tenant_id=trusted.tenant_id,
+        tenant_isolation_tier=trusted.tenant_isolation_tier,
         actor_subject_id=trusted.subject_id,
     )
 
@@ -2130,6 +2161,12 @@ def _trusted_tenant_id_or_unknown(trusted_context: object) -> str:
     if not isinstance(trusted_context, PropagatedContext):
         return "unknown_tenant"
     return trusted_context.trusted.tenant_id or "unknown_tenant"
+
+
+def _trusted_tenant_isolation_tier_or_bridge(trusted_context: object) -> str:
+    if not isinstance(trusted_context, PropagatedContext):
+        return "bridge"
+    return trusted_context.trusted.tenant_isolation_tier or "bridge"
 
 
 def _trusted_actor_subject_id_or_unknown(trusted_context: object) -> str:
@@ -2227,13 +2264,18 @@ def _credit_decision_safe_details(
     if decision.fallback_action is not None:
         details["fallback_action"] = decision.fallback_action
     if decision.reason_code_refs:
-        details["reason_code_refs"] = ",".join(sorted(decision.reason_code_refs))
+        details["reason_code_refs"] = _bounded_csv(decision.reason_code_refs)
+    if decision.triggered_rule_ids:
+        details["triggered_rule_ids"] = _bounded_csv(decision.triggered_rule_ids)
+    if decision.integration_result_refs:
+        details["integration_result_count"] = str(len(decision.integration_result_refs))
+        details["integration_result_refs"] = _bounded_csv(decision.integration_result_refs)
     if decision.required_data_refs:
         details["required_data_count"] = str(len(decision.required_data_refs))
-        details["required_data_refs"] = ",".join(sorted(decision.required_data_refs))
+        details["required_data_refs"] = _bounded_csv(decision.required_data_refs)
     if decision.validation_issues:
-        details["validation_issue_codes"] = ",".join(
-            sorted({issue.code for issue in decision.validation_issues})
+        details["validation_issue_codes"] = _bounded_csv(
+            tuple({issue.code for issue in decision.validation_issues})
         )
     return details
 
@@ -2270,10 +2312,39 @@ def _credit_decision_explanation_safe_details(
         details["fallback_action"] = explanation.fallback_action
     if explanation.required_data_refs:
         details["required_data_count"] = str(len(explanation.required_data_refs))
-        details["required_data_refs"] = ",".join(sorted(explanation.required_data_refs))
+        details["required_data_refs"] = _bounded_csv(explanation.required_data_refs)
+    if explanation.triggered_rule_ids:
+        details["triggered_rule_ids"] = _bounded_csv(explanation.triggered_rule_ids)
     if explanation.validation_issue_codes:
-        details["validation_issue_codes"] = ",".join(sorted(explanation.validation_issue_codes))
+        details["validation_issue_codes"] = _bounded_csv(explanation.validation_issue_codes)
     return details
+
+
+def _bounded_csv(values: tuple[str, ...], *, max_length: int = 256) -> str:
+    selected: list[str] = []
+    remaining = 0
+    for value in sorted(values):
+        candidate = ",".join((*selected, value))
+        if len(candidate) <= max_length:
+            selected.append(value)
+            continue
+        remaining += 1
+    result = ",".join(selected)
+    if remaining == 0:
+        return result
+    suffix = f",more_{remaining}"
+    if not result:
+        return suffix[1:]
+    if len(result) + len(suffix) <= max_length:
+        return f"{result}{suffix}"
+    while selected:
+        selected.pop()
+        remaining += 1
+        result = ",".join(selected)
+        suffix = f",more_{remaining}"
+        if result and len(result) + len(suffix) <= max_length:
+            return f"{result}{suffix}"
+    return suffix[1:max_length]
 
 
 def _credit_decision_explanation_log_extra(

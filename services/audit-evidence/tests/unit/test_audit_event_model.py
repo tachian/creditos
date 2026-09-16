@@ -52,7 +52,9 @@ def test_audit_event_accepts_not_found_result() -> None:
     "field,value",
     [
         ("event_id", "12345678901"),
+        ("event_id", "id_529.982.247-25"),
         ("aggregate_id", "12.345.678/0001-99"),
+        ("aggregate_id", "proposal_12345678909"),
         ("tenant_id", "tenant alpha"),
         ("aggregate_type", "credit decision"),
         ("event_type", "credit_decision"),
@@ -131,12 +133,16 @@ def test_safe_details_omits_sensitive_value_patterns_even_with_allowlisted_keys(
             "safe_details": {
                 "reason_code": "******",
                 "policy_id": "raw-provider-payload",
+                "proposal_id": "proposal_12345678909",
+                "decision_id": "id_529.982.247-25",
             },
         }
     )
 
     assert event.safe_details["reason_code"] == "[OMITIDO]"
     assert event.safe_details["policy_id"] == "[OMITIDO]"
+    assert event.safe_details["proposal_id"] == "[OMITIDO]"
+    assert event.safe_details["decision_id"] == "[OMITIDO]"
 
 
 def test_operational_evidence_reference_cannot_replace_official_event() -> None:

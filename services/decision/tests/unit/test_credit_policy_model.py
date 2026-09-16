@@ -231,6 +231,17 @@ def test_policy_model_rejects_unsupported_product_and_sensitive_or_arbitrary_fie
         )
 
     with pytest.raises(PolicyValidationError, match="dado sensível ou campo proibido"):
+        PolicyRule.create(
+            rule_id="rule_529.982.247-25",
+            name="Regra com documento no ID",
+            source_field="monthly_income_units",
+            operator="gte",
+            threshold_value=250_000,
+            outcome="approve",
+            reason_code_refs=("rc_min_income",),
+        )
+
+    with pytest.raises(PolicyValidationError, match="dado sensível ou campo proibido"):
         PolicyCriterion.create(
             criterion_id="criterion_email",
             field="email",

@@ -19,6 +19,16 @@ Ele é separado de logs operacionais, traces, métricas e eventos de mensageria.
 - O adapter in-memory é a fundação testável desta story; SQLAlchemy/Alembic, grants `INSERT`-only e banco real append-only ficam registrados como trabalho posterior.
 - Hash encadeado, checkpoints, WORM/S3 Object Lock, gRPC/NATS reais e IaC ficam para histórias futuras do Epic 6.
 
+## Auditoria de Decisões
+
+A Story 6.2 registra decisões do `Decision Service` como eventos oficiais:
+
+- `credit_decision.completed` vira evento append-only com agregado e recurso `credit_decision`.
+- `credit_decision.rejected` registra rejeições técnicas minimizadas quando a intent chega ao serviço.
+- `safe_details` aceita somente chaves canônicas de decisão, como decisão, proposta, política, versão, catálogo, outcome, status, reason codes/regras como referências técnicas, contagens e fingerprint.
+- `OperationalEvidenceReference` pode apontar para trace técnico complementar, sem persistir conteúdo de log, payload de provedor ou dado sensível.
+- Falhas de validação ou append são críticas para decisões finais e devem impedir publicação/visibilidade da decisão no serviço de origem.
+
 ## Camadas
 
 - `domain`: entidades, value objects e erros puros.
