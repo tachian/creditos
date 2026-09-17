@@ -77,12 +77,14 @@ name = "creditos-automated-review"
 version = "0.1.0"
 source = { editable = "services/automated-review" }
 dependencies = [
+    { name = "creditos-audit-evidence" },
     { name = "creditos-observability" },
     { name = "creditos-security" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "creditos-audit-evidence", editable = "services/audit-evidence" },
     { name = "creditos-observability", editable = "packages/observability" },
     { name = "creditos-security", editable = "packages/security" },
 ]

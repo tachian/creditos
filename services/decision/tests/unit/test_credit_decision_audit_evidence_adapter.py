@@ -8,9 +8,15 @@ from creditos_audit_evidence.application.service import AuditEvidenceApplication
 from creditos_audit_evidence.domain.errors import AuditEvidenceValidationError
 from creditos_decision.adapters.external.audit_evidence_publisher import (
     AuditEvidenceDecisionAuditPublisher,
+    AuditEvidenceDecisionSensitiveChangeAuditPublisher,
     CompositeDecisionAuditPublisher,
 )
-from creditos_decision.application.ports import CreditDecisionAuditIntent, CreditPolicyAuditIntent
+from creditos_decision.application.ports import (
+    CreditDecisionAuditIntent,
+    CreditPolicyAuditIntent,
+    PolicySimulationAuditIntent,
+    ReasonCodeCatalogAuditIntent,
+)
 
 NOW = datetime(2026, 9, 16, 12, 0, tzinfo=UTC)
 TRACEPARENT = "00-1234567890abcdef1234567890abcdef-1234567890abcdef-01"
@@ -272,7 +278,213 @@ def test_credit_decision_audit_adapter_rejects_conflicting_authoritative_details
         )
 
 
-def test_composite_decision_audit_publisher_routes_decision_and_fallback_events() -> None:
+def test_policy_sensitive_change_intent_appends_official_audit_event() -> None:
+    repository = InMemoryAuditEventRepository()
+    audit_service = AuditEvidenceApplicationService(repository=repository, environment="test")
+    publisher = AuditEvidenceDecisionSensitiveChangeAuditPublisher(
+        audit_service=audit_service,
+        clock=lambda: NOW,
+        occurrence_token_factory=lambda: "occurrence_policy_publish",
+    )
+
+    publisher.publish(
+        CreditPolicyAuditIntent(
+            event_type="credit_policy.published",
+            tenant_id="tenant_alpha",
+            tenant_isolation_tier="bridge",
+            actor_subject_id="user_credit_manager",
+            policy_id="pol_personal_credit_default",
+            policy_version_id="polver_personal_credit_default_v1",
+            correlation_id="corr_1234567890abcdef",
+            request_id="req_1234567890abcdef",
+            traceparent=TRACEPARENT,
+            safe_details={
+                "approval_reference": "approval_board_001",
+                "change_reason": "Publicação aprovada",
+                "changed_fields": "status,applicability",
+                "operation": "credit_policy.publish",
+                "previous_revision": "2",
+                "product_type": "personal_credit",
+                "resulting_revision": "3",
+                "status": "published",
+            },
+        )
+    )
+
+    events = repository.list_by_aggregate(
+        tenant_id="tenant_alpha",
+        aggregate_type="credit_policy",
+        aggregate_id="pol_personal_credit_default",
+    )
+    assert len(events) == 1
+    event = events[0]
+    assert event.event_type == "credit_policy.published"
+    assert event.action == "publish"
+    assert event.resource_type == "credit_policy"
+    assert event.resource_id == "polver_personal_credit_default_v1"
+    assert event.result == "accepted"
+    assert event.actor_subject_id == "user_credit_manager"
+    assert event.correlation_id == "corr_1234567890abcdef"
+    assert event.trace_id == "1234567890abcdef1234567890abcdef"
+    assert event.safe_details["policy_id"] == "pol_personal_credit_default"
+    assert event.safe_details["policy_version_id"] == "polver_personal_credit_default_v1"
+    assert event.safe_details["approval_reference"] == "approval_board_001"
+    assert event.safe_details["changed_fields"] == "status,applicability"
+
+
+def test_catalog_and_simulation_sensitive_change_intents_map_to_official_events() -> None:
+    repository = InMemoryAuditEventRepository()
+    audit_service = AuditEvidenceApplicationService(repository=repository, environment="test")
+    publisher = AuditEvidenceDecisionSensitiveChangeAuditPublisher(
+        audit_service=audit_service,
+        clock=lambda: NOW,
+        occurrence_token_factory=lambda: "occurrence_sensitive_change",
+    )
+
+    publisher.publish(
+        ReasonCodeCatalogAuditIntent(
+            event_type="reason_code_catalog.updated",
+            tenant_id="tenant_alpha",
+            tenant_isolation_tier="bridge",
+            actor_subject_id="user_credit_manager",
+            catalog_id="rcc_personal_credit_default",
+            catalog_version_id="rccver_personal_credit_default_v1",
+            correlation_id="corr_1234567890abcdef",
+            request_id="req_1234567890abcdef",
+            traceparent=TRACEPARENT,
+            safe_details={
+                "changed_fields": "reason_codes,explainable_factors",
+                "operation": "reason_code_catalog.update_draft",
+                "reason_code_count": "2",
+                "resulting_revision": "4",
+                "status": "draft",
+            },
+        )
+    )
+    publisher.publish(
+        PolicySimulationAuditIntent(
+            event_type="policy_simulation.completed",
+            tenant_id="tenant_alpha",
+            tenant_isolation_tier="bridge",
+            actor_subject_id="user_credit_manager",
+            simulation_id="sim_policy_001",
+            policy_id="pol_personal_credit_default",
+            policy_version_id="polver_personal_credit_default_v1",
+            correlation_id="corr_1234567890abcdef",
+            request_id="req_1234567890abcdef",
+            traceparent=TRACEPARENT,
+            safe_details={
+                "case_count": "2",
+                "issue_count": "0",
+                "non_production": "true",
+                "operation": "policy_simulation.run",
+                "status": "completed",
+            },
+        )
+    )
+
+    catalog_events = repository.list_by_aggregate(
+        tenant_id="tenant_alpha",
+        aggregate_type="reason_code_catalog",
+        aggregate_id="rcc_personal_credit_default",
+    )
+    simulation_events = repository.list_by_aggregate(
+        tenant_id="tenant_alpha",
+        aggregate_type="policy_simulation",
+        aggregate_id="sim_policy_001",
+    )
+    assert catalog_events[0].action == "update"
+    assert catalog_events[0].resource_id == "rccver_personal_credit_default_v1"
+    assert catalog_events[0].safe_details["catalog_id"] == "rcc_personal_credit_default"
+    assert simulation_events[0].action == "execute"
+    assert simulation_events[0].resource_type == "policy_simulation"
+    assert simulation_events[0].safe_details["simulation_id"] == "sim_policy_001"
+
+
+def test_sensitive_change_audit_adapter_maps_blocked_status_and_rejects_invalid_traceparent() -> (
+    None
+):
+    repository = InMemoryAuditEventRepository()
+    audit_service = AuditEvidenceApplicationService(repository=repository, environment="test")
+    publisher = AuditEvidenceDecisionSensitiveChangeAuditPublisher(
+        audit_service=audit_service,
+        clock=lambda: NOW,
+    )
+
+    publisher.publish(
+        CreditPolicyAuditIntent(
+            event_type="credit_policy.blocked",
+            tenant_id="tenant_alpha",
+            tenant_isolation_tier="bridge",
+            actor_subject_id="user_credit_manager",
+            policy_id="pol_personal_credit_default",
+            policy_version_id="polver_personal_credit_default_v1",
+            correlation_id="corr_1234567890abcdef",
+            request_id="req_1234567890abcdef",
+            traceparent=TRACEPARENT,
+            safe_details={
+                "operation": "credit_policy.publish",
+                "status": "blocked",
+            },
+        )
+    )
+
+    events = repository.list_by_aggregate(
+        tenant_id="tenant_alpha",
+        aggregate_type="credit_policy",
+        aggregate_id="pol_personal_credit_default",
+    )
+    assert events[0].result == "blocked"
+
+    with pytest.raises(ValueError, match="traceparent inválido"):
+        publisher.publish(
+            CreditPolicyAuditIntent(
+                event_type="credit_policy.published",
+                tenant_id="tenant_alpha",
+                tenant_isolation_tier="bridge",
+                actor_subject_id="user_credit_manager",
+                policy_id="pol_personal_credit_default",
+                policy_version_id="polver_personal_credit_default_v1",
+                correlation_id="corr_1234567890abcdef",
+                request_id="req_1234567890abcdef",
+                traceparent=f"00-{'0' * 32}-{'2' * 16}-01",
+                safe_details={"operation": "credit_policy.publish", "status": "published"},
+            )
+        )
+
+
+def test_sensitive_change_audit_adapter_rejects_authoritative_safe_detail_conflict() -> None:
+    repository = InMemoryAuditEventRepository()
+    audit_service = AuditEvidenceApplicationService(repository=repository, environment="test")
+    publisher = AuditEvidenceDecisionSensitiveChangeAuditPublisher(
+        audit_service=audit_service,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(ValueError, match="safe_details.policy_id"):
+        publisher.publish(
+            CreditPolicyAuditIntent(
+                event_type="credit_policy.updated",
+                tenant_id="tenant_alpha",
+                tenant_isolation_tier="bridge",
+                actor_subject_id="user_credit_manager",
+                policy_id="pol_personal_credit_default",
+                policy_version_id="polver_personal_credit_default_v1",
+                correlation_id="corr_1234567890abcdef",
+                request_id="req_1234567890abcdef",
+                traceparent=TRACEPARENT,
+                safe_details={
+                    "operation": "credit_policy.update_draft",
+                    "policy_id": "pol_other",
+                    "status": "draft",
+                },
+            )
+        )
+
+
+def test_composite_decision_audit_publisher_fails_closed_for_unconfigured_sensitive_changes() -> (
+    None
+):
     decision_recorder = _RecordingPublisher()
     fallback_recorder = _RecordingPublisher()
     publisher = CompositeDecisionAuditPublisher(
@@ -283,18 +495,51 @@ def test_composite_decision_audit_publisher_routes_decision_and_fallback_events(
     policy_intent = CreditPolicyAuditIntent(
         event_type="credit_policy.created",
         tenant_id="tenant_alpha",
+        tenant_isolation_tier="bridge",
         actor_subject_id="user_credit_manager",
         policy_id="pol_personal_credit_default",
         policy_version_id="polver_personal_credit_default_v1",
         correlation_id="corr_1234567890abcdef",
+        request_id="req_1234567890abcdef",
+        traceparent=TRACEPARENT,
         safe_details={"policy_id": "pol_personal_credit_default"},
     )
 
     publisher.publish(decision_intent)
-    publisher.publish(policy_intent)
+    with pytest.raises(RuntimeError, match="publisher oficial"):
+        publisher.publish(policy_intent)
 
     assert decision_recorder.events == [decision_intent]
-    assert fallback_recorder.events == [policy_intent]
+    assert fallback_recorder.events == []
+
+
+def test_composite_decision_audit_publisher_routes_sensitive_changes_when_configured() -> None:
+    decision_recorder = _RecordingPublisher()
+    sensitive_change_recorder = _RecordingPublisher()
+    fallback_recorder = _RecordingPublisher()
+    publisher = CompositeDecisionAuditPublisher(
+        decision_publisher=decision_recorder,
+        sensitive_change_publisher=sensitive_change_recorder,
+        fallback_publisher=fallback_recorder,
+    )
+    policy_intent = CreditPolicyAuditIntent(
+        event_type="credit_policy.created",
+        tenant_id="tenant_alpha",
+        tenant_isolation_tier="bridge",
+        actor_subject_id="user_credit_manager",
+        policy_id="pol_personal_credit_default",
+        policy_version_id="polver_personal_credit_default_v1",
+        correlation_id="corr_1234567890abcdef",
+        request_id="req_1234567890abcdef",
+        traceparent=TRACEPARENT,
+        safe_details={"policy_id": "pol_personal_credit_default"},
+    )
+
+    publisher.publish(policy_intent)
+
+    assert sensitive_change_recorder.events == [policy_intent]
+    assert decision_recorder.events == []
+    assert fallback_recorder.events == []
 
 
 class _RecordingPublisher:

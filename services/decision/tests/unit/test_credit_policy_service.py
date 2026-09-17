@@ -74,8 +74,12 @@ def test_create_policy_uses_trusted_context_and_publishes_minimized_audit_intent
     assert event.policy_id == result.policy.policy_id
     assert event.policy_version_id == result.policy.policy_version_id
     assert event.safe_details == {
+        "change_type": "created",
         "change_summary": "Criação inicial da política padrão",
+        "operation": "credit_policy.create_draft",
+        "previous_revision": "0",
         "product_type": "personal_credit",
+        "resulting_revision": "1",
         "status": "draft",
     }
     assert "payload" not in audit.events[0].safe_details

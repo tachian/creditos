@@ -325,6 +325,60 @@ def test_review_agent_application_publishes_after_audit_and_rolls_back_on_audit_
     assert persisted_after_audit_failure is not None
     assert persisted_after_audit_failure.status == "draft"
 
+    class FailingVersionAudit(RecordingAuditPublisher):
+        def publish(self, event: AutomatedReviewAuditIntent) -> None:
+            if event.event_type == "automated_review.config.version_created":
+                raise RuntimeError("audit sink unavailable")
+            super().publish(event)
+
+    failing_version_repository = InMemoryReviewAgentConfigRepository()
+    failing_version_service = _service(
+        repository=failing_version_repository,
+        audit=FailingVersionAudit(),
+    )
+    created_for_version_failure = failing_version_service.create_config(
+        _create_command(review_agent_config_id="rac_version_failure_case"),
+        context=_context(),
+        trusted_context=_trusted_context(scopes=("automated_review:write",)),
+    )
+    published_for_version_failure = failing_version_service.publish_config(
+        PublishReviewAgentConfigCommand(
+            review_agent_config_id=created_for_version_failure.config.review_agent_config_id,
+            review_agent_config_version_id=(
+                created_for_version_failure.config.review_agent_config_version_id
+            ),
+            approval_reference="approval_board_003",
+            change_summary="Publicação antes da nova versão",
+        ),
+        context=_context(),
+        trusted_context=_trusted_context(scopes=("automated_review:publish",)),
+    )
+
+    with pytest.raises(RuntimeError, match="audit sink unavailable"):
+        failing_version_service.create_config_version(
+            CreateReviewAgentConfigVersionCommand(
+                review_agent_config_id=(
+                    published_for_version_failure.config.review_agent_config_id
+                ),
+                current_review_agent_config_version_id=(
+                    published_for_version_failure.config.review_agent_config_version_id
+                ),
+                new_review_agent_config_version_id="rac_version_failure_case_v2",
+                change_summary="Nova versão deve preservar atomicidade",
+            ),
+            context=_context(),
+            trusted_context=_trusted_context(scopes=("automated_review:write",)),
+        )
+
+    assert (
+        failing_version_repository.get(
+            tenant_id="tenant_alpha",
+            review_agent_config_id=published_for_version_failure.config.review_agent_config_id,
+            review_agent_config_version_id="rac_version_failure_case_v2",
+        )
+        is None
+    )
+
 
 def test_review_agent_application_versions_and_preserves_historical_published_config() -> None:
     audit = RecordingAuditPublisher()
