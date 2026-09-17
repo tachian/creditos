@@ -59,13 +59,20 @@ def test_create_reason_code_catalog_uses_trusted_context_and_minimized_audit() -
     assert audit.events[-1] == ReasonCodeCatalogAuditIntent(
         event_type="reason_code_catalog.created",
         tenant_id="tenant_alpha",
+        tenant_isolation_tier="bridge",
         actor_subject_id="user_credit_manager",
         catalog_id="rcc_personal_credit_default",
         catalog_version_id="rccver_personal_credit_default_v1",
         correlation_id="corr_1234567890abcdef",
+        request_id="req_1234567890abcdef",
+        traceparent="00-1234567890abcdef1234567890abcdef-1234567890abcdef-01",
         safe_details={
+            "change_type": "created",
             "change_summary": "Criação inicial do catálogo",
+            "operation": "reason_code_catalog.create_draft",
+            "previous_revision": "0",
             "product_type": "personal_credit",
+            "resulting_revision": "1",
             "status": "draft",
         },
     )

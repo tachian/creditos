@@ -41,3 +41,9 @@
 ## Deferred from: dev-story of 6-1-trilha-oficial-append-only-de-auditoria (2026-09-14)
 
 - Adapter SQLAlchemy/Alembic real e grants de banco para trilha append-only: a Story 6.1 criou a porta append-only, adapter in-memory testável e desenho de domínio/aplicação. O repositório ainda não possui padrão operacional de migrations por serviço nem banco real provisionado; a implementação física com `INSERT`-only, usuário sem `UPDATE`/`DELETE`, migrations Alembic e grants deve ser feita em história/ADR operacional de persistência real do `Audit & Evidence Service`, preservando a porta append-only já criada.
+
+## Deferred from: dev-story of 6-3-auditoria-de-alteracoes-sensiveis (2026-09-17)
+
+- Fluxos reais de permissões, manutenção e break-glass: a Story 6.3 definiu os escopos segregados futuros `governance:maintenance` e `governance:break_glass`, mas não criou CRUD de roles/scopes, IAM/cloud, bypass operacional ou endpoint administrativo novo. Quando esses fluxos forem materializados, devem emitir eventos oficiais no `Audit & Evidence` com resultado `accepted`, `blocked`, `rejected` ou `technical_failure`, sem depender de logs/traces.
+- Exportação WORM/S3 Object Lock e acesso sensível real: não há fluxo operacional de exportação imutável nem consulta customer-facing de auditoria nesta etapa. Histórias futuras devem registrar `export_reference`, finalidade, retenção, legal hold quando aplicável e trilha oficial sem snapshots completos ou dados sensíveis.
+- Transporte e durabilidade reais de auditoria de alterações sensíveis: os adapters oficiais permanecem in-process/testáveis. gRPC real, outbox transacional, persistência SQLAlchemy/Alembic, hash encadeado, checkpoints verificáveis, WORM e IaC continuam dependentes das próximas histórias/ADRs do Epic 6.

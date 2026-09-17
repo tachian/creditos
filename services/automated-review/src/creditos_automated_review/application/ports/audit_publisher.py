@@ -8,10 +8,13 @@ from typing import Protocol
 class AutomatedReviewAuditIntent:
     event_type: str
     tenant_id: str
+    tenant_isolation_tier: str
     actor_subject_id: str
     review_agent_config_id: str
     review_agent_config_version_id: str
     correlation_id: str
+    request_id: str
+    traceparent: str
     occurred_at: str
     change_summary: str
     previous_revision: int

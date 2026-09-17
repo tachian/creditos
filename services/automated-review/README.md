@@ -89,6 +89,16 @@ A Story 5.6 adiciona observabilidade operacional, custo técnico e gates de gove
 - traces técnicos carregam apenas metadados controlados; métricas customer-facing continuam fora deste serviço e devem vir futuramente de projeções curadas;
 - testes bloqueiam caminhos de autonomia da IA, incluindo aprovação, reprovação, alteração de termos, callback, ferramenta, integração externa e publicação de decisão.
 
+## Story 6.3
+
+A auditoria de alterações sensíveis conecta configurações de agente à trilha oficial do `Audit & Evidence`:
+
+- `AutomatedReviewAuditIntent` carrega tenant, tier de isolamento, ator, correlation ID, request ID e traceparent derivados do contexto confiável;
+- `AuditEvidenceAutomatedReviewAuditPublisher` converte criação, atualização, nova versão e publicação de configuração em `RegisterAuditEventCommand`;
+- eventos usam agregado/recurso `review_agent_config`, resultado controlado e referência operacional de trace;
+- `safe_details` registra apenas IDs técnicos, versões/revisões, prompt/model refs, fingerprint, status, escopo, contagens e justificativas seguras;
+- divergência entre `safe_details` e campos autoritativos da intent é rejeitada antes do append.
+
 ## Segurança e privacidade
 
 - `tenant_id` e `tenant_isolation_tier` vêm do `PropagatedContext` confiável.

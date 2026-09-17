@@ -29,6 +29,16 @@ A Story 6.2 registra decisões do `Decision Service` como eventos oficiais:
 - `OperationalEvidenceReference` pode apontar para trace técnico complementar, sem persistir conteúdo de log, payload de provedor ou dado sensível.
 - Falhas de validação ou append são críticas para decisões finais e devem impedir publicação/visibilidade da decisão no serviço de origem.
 
+## Auditoria de Alterações Sensíveis
+
+A Story 6.3 amplia a trilha oficial para alterações sensíveis já materializadas no MVP:
+
+- políticas, catálogos de reason codes e simulações governadas do `Decision Service`;
+- configurações versionadas de agente de IA consultivo do `Automated Review Service`;
+- `safe_details` continua fechado, minimizado e composto apenas por IDs técnicos, versões, revisões, fingerprints, contagens, status e justificativas seguras;
+- campos autoritativos de recurso não podem ser sobrescritos pelo payload seguro informado pelo serviço de origem;
+- manutenção, bypass, permissões, exportações/WORM e acesso sensível real ficam registrados como lacunas controladas até existirem fluxos materializados.
+
 ## Camadas
 
 - `domain`: entidades, value objects e erros puros.

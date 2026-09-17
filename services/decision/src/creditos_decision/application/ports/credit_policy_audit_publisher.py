@@ -8,10 +8,13 @@ from typing import Protocol
 class CreditPolicyAuditIntent:
     event_type: str
     tenant_id: str
+    tenant_isolation_tier: str
     actor_subject_id: str
     policy_id: str
     policy_version_id: str
     correlation_id: str
+    request_id: str
+    traceparent: str
     safe_details: dict[str, str]
 
 
@@ -19,10 +22,13 @@ class CreditPolicyAuditIntent:
 class ReasonCodeCatalogAuditIntent:
     event_type: str
     tenant_id: str
+    tenant_isolation_tier: str
     actor_subject_id: str
     catalog_id: str
     catalog_version_id: str
     correlation_id: str
+    request_id: str
+    traceparent: str
     safe_details: dict[str, str]
 
 
@@ -30,11 +36,14 @@ class ReasonCodeCatalogAuditIntent:
 class PolicySimulationAuditIntent:
     event_type: str
     tenant_id: str
+    tenant_isolation_tier: str
     actor_subject_id: str
     simulation_id: str
     policy_id: str
     policy_version_id: str
     correlation_id: str
+    request_id: str
+    traceparent: str
     safe_details: dict[str, str]
 
 

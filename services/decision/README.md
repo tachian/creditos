@@ -145,6 +145,19 @@ A auditoria de decisões e evidências críticas conecta a decisão produtiva à
 
 Ficam fora desta etapa: gRPC real, NATS JetStream, outbox, banco real, hash encadeado, checkpoints, WORM/S3 Object Lock, IaC e endpoints públicos.
 
+## Story 6.3
+
+A auditoria de alterações sensíveis conecta governança de política à trilha oficial do `Audit & Evidence`:
+
+- `CreditPolicyAuditIntent`, `ReasonCodeCatalogAuditIntent` e `PolicySimulationAuditIntent` carregam tenant, tier de isolamento, ator, correlation ID, request ID e traceparent derivados do contexto confiável;
+- `AuditEvidenceDecisionSensitiveChangeAuditPublisher` converte alterações de política, catálogo e simulação em `RegisterAuditEventCommand`;
+- `CompositeDecisionAuditPublisher` roteia decisões para o publisher da Story 6.2 e alterações sensíveis para o publisher oficial quando configurado;
+- eventos usam agregado/recurso canônico (`credit_policy`, `reason_code_catalog` ou `policy_simulation`) e resultado controlado;
+- `safe_details` registra apenas metadados minimizados, como IDs técnicos, versões, revisões, status, contagens, fingerprints e justificativas seguras;
+- divergência entre `safe_details` e campos autoritativos da intent é rejeitada antes do append.
+
+Ficam fora desta etapa: gRPC real, NATS JetStream, outbox, banco real, endpoints públicos, IAM/cloud real, hash encadeado, checkpoints e WORM/S3 Object Lock.
+
 ## Arquitetura
 
 O serviço segue DDD + arquitetura hexagonal:

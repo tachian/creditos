@@ -334,11 +334,17 @@ class DecisionApplicationService:
                 self._publish_audit_intent(
                     policy=policy,
                     event_type="credit_policy.created",
+                    operation_context=operation_context,
+                    trusted_context=trusted_context,
                     actor_subject_id=operation_context.actor_subject_id,
                     correlation_id=context.correlation_id,
                     safe_details={
+                        "change_type": "created",
                         "change_summary": command.change_summary,
+                        "operation": "credit_policy.create_draft",
+                        "previous_revision": "0",
                         "product_type": policy.product_type,
+                        "resulting_revision": str(policy.revision),
                         "status": policy.status,
                     },
                 )
@@ -429,12 +435,18 @@ class DecisionApplicationService:
                 self._publish_audit_intent(
                     policy=updated_policy,
                     event_type="credit_policy.updated",
+                    operation_context=operation_context,
+                    trusted_context=trusted_context,
                     actor_subject_id=operation_context.actor_subject_id,
                     correlation_id=context.correlation_id,
                     safe_details={
+                        "change_type": "updated",
                         "change_summary": command.change_summary,
+                        "operation": "credit_policy.update_draft",
+                        "previous_revision": str(existing_policy.revision),
                         "product_type": updated_policy.product_type,
                         "revision": str(updated_policy.revision),
+                        "resulting_revision": str(updated_policy.revision),
                         "status": updated_policy.status,
                     },
                 )
@@ -559,6 +571,8 @@ class DecisionApplicationService:
                 self._publish_audit_intent(
                     policy=published_policy,
                     event_type="credit_policy.published",
+                    operation_context=operation_context,
+                    trusted_context=trusted_context,
                     actor_subject_id=operation_context.actor_subject_id,
                     correlation_id=context.correlation_id,
                     safe_details=_policy_publication_safe_details(
@@ -669,13 +683,18 @@ class DecisionApplicationService:
                 self._publish_audit_intent(
                     policy=next_policy,
                     event_type="credit_policy.versioned",
+                    operation_context=operation_context,
+                    trusted_context=trusted_context,
                     actor_subject_id=operation_context.actor_subject_id,
                     correlation_id=context.correlation_id,
                     safe_details={
+                        "change_type": "new_version_created",
                         "change_summary": next_policy.changelog[-1].change_summary,
                         "operation": "credit_policy.create_version",
                         "previous_policy_version_id": current_policy.policy_version_id,
+                        "previous_revision": str(current_policy.revision),
                         "product_type": next_policy.product_type,
+                        "resulting_revision": str(next_policy.revision),
                         "status": next_policy.status,
                         "version": str(next_policy.version),
                         "effective_ends_at": (
@@ -1072,6 +1091,8 @@ class DecisionApplicationService:
                 self._publish_policy_simulation_audit_intent(
                     simulation=simulation,
                     event_type="policy_simulation.completed",
+                    operation_context=operation_context,
+                    trusted_context=trusted_context,
                     actor_subject_id=operation_context.actor_subject_id,
                     correlation_id=context.correlation_id,
                 )
@@ -1183,11 +1204,17 @@ class DecisionApplicationService:
                 self._publish_reason_code_catalog_audit_intent(
                     catalog=catalog,
                     event_type="reason_code_catalog.created",
+                    operation_context=operation_context,
+                    trusted_context=trusted_context,
                     actor_subject_id=operation_context.actor_subject_id,
                     correlation_id=context.correlation_id,
                     safe_details={
+                        "change_type": "created",
                         "change_summary": catalog.changelog[-1].change_summary,
+                        "operation": "reason_code_catalog.create_draft",
+                        "previous_revision": "0",
                         "product_type": catalog.product_type,
+                        "resulting_revision": str(catalog.revision),
                         "status": catalog.status,
                     },
                 )
@@ -1270,12 +1297,18 @@ class DecisionApplicationService:
                 self._publish_reason_code_catalog_audit_intent(
                     catalog=updated_catalog,
                     event_type="reason_code_catalog.updated",
+                    operation_context=operation_context,
+                    trusted_context=trusted_context,
                     actor_subject_id=operation_context.actor_subject_id,
                     correlation_id=context.correlation_id,
                     safe_details={
+                        "change_type": "updated",
                         "change_summary": updated_catalog.changelog[-1].change_summary,
+                        "operation": "reason_code_catalog.update_draft",
+                        "previous_revision": str(existing_catalog.revision),
                         "product_type": updated_catalog.product_type,
                         "revision": str(updated_catalog.revision),
+                        "resulting_revision": str(updated_catalog.revision),
                         "status": updated_catalog.status,
                     },
                 )
@@ -1360,12 +1393,18 @@ class DecisionApplicationService:
                 self._publish_reason_code_catalog_audit_intent(
                     catalog=next_catalog,
                     event_type="reason_code_catalog.versioned",
+                    operation_context=operation_context,
+                    trusted_context=trusted_context,
                     actor_subject_id=operation_context.actor_subject_id,
                     correlation_id=context.correlation_id,
                     safe_details={
+                        "change_type": "new_version_created",
                         "change_summary": next_catalog.changelog[-1].change_summary,
+                        "operation": "reason_code_catalog.create_version",
                         "previous_catalog_version_id": current_catalog.catalog_version_id,
+                        "previous_revision": str(current_catalog.revision),
                         "product_type": next_catalog.product_type,
+                        "resulting_revision": str(next_catalog.revision),
                         "status": next_catalog.status,
                     },
                 )
@@ -1641,6 +1680,8 @@ class DecisionApplicationService:
         *,
         policy: CreditPolicy,
         event_type: str,
+        operation_context: _PolicyOperationContext,
+        trusted_context: PropagatedContext,
         actor_subject_id: str,
         correlation_id: str,
         safe_details: dict[str, str],
@@ -1654,6 +1695,9 @@ class DecisionApplicationService:
                 policy_version_id=policy.policy_version_id,
                 correlation_id=correlation_id,
                 safe_details=safe_details,
+                tenant_isolation_tier=operation_context.tenant_isolation_tier,
+                request_id=trusted_context.request_id,
+                traceparent=trusted_context.traceparent,
             )
         )
 
@@ -1662,6 +1706,8 @@ class DecisionApplicationService:
         *,
         catalog: ReasonCodeCatalog,
         event_type: str,
+        operation_context: _PolicyOperationContext,
+        trusted_context: PropagatedContext,
         actor_subject_id: str,
         correlation_id: str,
         safe_details: dict[str, str],
@@ -1675,6 +1721,9 @@ class DecisionApplicationService:
                 catalog_version_id=catalog.catalog_version_id,
                 correlation_id=correlation_id,
                 safe_details=safe_details,
+                tenant_isolation_tier=operation_context.tenant_isolation_tier,
+                request_id=trusted_context.request_id,
+                traceparent=trusted_context.traceparent,
             )
         )
 
@@ -1683,6 +1732,8 @@ class DecisionApplicationService:
         *,
         simulation: PolicySimulationResult,
         event_type: str,
+        operation_context: _PolicyOperationContext,
+        trusted_context: PropagatedContext,
         actor_subject_id: str,
         correlation_id: str,
     ) -> None:
@@ -1696,6 +1747,9 @@ class DecisionApplicationService:
                 policy_version_id=simulation.policy_version_id,
                 correlation_id=correlation_id,
                 safe_details=_policy_simulation_safe_details(simulation),
+                tenant_isolation_tier=operation_context.tenant_isolation_tier,
+                request_id=trusted_context.request_id,
+                traceparent=trusted_context.traceparent,
             )
         )
 
@@ -1779,6 +1833,9 @@ class DecisionApplicationService:
                     policy_version_id=policy_version_id,
                     correlation_id=correlation_id,
                     safe_details=rejection_safe_details,
+                    tenant_isolation_tier=_trusted_tenant_isolation_tier_or_bridge(trusted_context),
+                    request_id=_trusted_request_id_or_unknown(trusted_context),
+                    traceparent=_trusted_traceparent_or_default(trusted_context),
                 )
             )
         except Exception:
@@ -1829,6 +1886,9 @@ class DecisionApplicationService:
                         "rejection_reason": getattr(error, "code", type(error).__name__),
                         "status": "rejected",
                     },
+                    tenant_isolation_tier=_trusted_tenant_isolation_tier_or_bridge(trusted_context),
+                    request_id=_trusted_request_id_or_unknown(trusted_context),
+                    traceparent=_trusted_traceparent_or_default(trusted_context),
                 )
             )
         except Exception:
@@ -1953,6 +2013,9 @@ class DecisionApplicationService:
                         "rejection_reason": getattr(error, "code", type(error).__name__),
                         "status": "rejected",
                     },
+                    tenant_isolation_tier=_trusted_tenant_isolation_tier_or_bridge(trusted_context),
+                    request_id=_trusted_request_id_or_unknown(trusted_context),
+                    traceparent=_trusted_traceparent_or_default(trusted_context),
                 )
             )
         except Exception:
@@ -2173,6 +2236,18 @@ def _trusted_actor_subject_id_or_unknown(trusted_context: object) -> str:
     if not isinstance(trusted_context, PropagatedContext):
         return "unknown_actor"
     return trusted_context.trusted.subject_id or "unknown_actor"
+
+
+def _trusted_request_id_or_unknown(trusted_context: object) -> str:
+    if not isinstance(trusted_context, PropagatedContext):
+        return "req_audit_context_unavailable"
+    return trusted_context.request_id
+
+
+def _trusted_traceparent_or_default(trusted_context: object) -> str:
+    if not isinstance(trusted_context, PropagatedContext):
+        return "00-11111111111111111111111111111111-2222222222222222-01"
+    return trusted_context.traceparent
 
 
 def _duration_ms(started_at: float) -> float:
@@ -2503,6 +2578,7 @@ def _policy_publication_safe_details(
     simulation: PolicySimulationResult,
 ) -> dict[str, str]:
     return {
+        "change_type": "published",
         "change_summary": change_summary,
         "effective_ends_at": (
             policy.applicability.ends_at.isoformat()
@@ -2515,8 +2591,10 @@ def _policy_publication_safe_details(
             else ""
         ),
         "operation": "credit_policy.publish",
+        "previous_revision": str(policy.changelog[-1].previous_revision),
         "product_type": policy.product_type,
         "revision": str(policy.revision),
+        "resulting_revision": str(policy.changelog[-1].resulting_revision),
         "simulation_id": simulation.simulation_id,
         "simulation_issue_count": str(simulation.summary.issue_count),
         "status": policy.status,

@@ -301,6 +301,7 @@ class AutomatedReviewApplicationService:
                 "automated_review.config.created",
                 config,
                 context,
+                trusted_context,
                 actor_subject_id,
             ),
         )
@@ -346,6 +347,7 @@ class AutomatedReviewApplicationService:
                 "automated_review.config.updated",
                 updated,
                 context,
+                trusted_context,
                 trusted_context.trusted.subject_id,
             ),
         )
@@ -388,6 +390,7 @@ class AutomatedReviewApplicationService:
                 "automated_review.config.published",
                 published,
                 context,
+                trusted_context,
                 trusted_context.trusted.subject_id,
             ),
         )
@@ -439,13 +442,16 @@ class AutomatedReviewApplicationService:
             change_summary=command.change_summary,
             now=self._clock(),
         )
-        self._publish_audit(
-            "automated_review.config.version_created",
+        self._repository.create(
             next_version,
-            context,
-            trusted_context.trusted.subject_id,
+            before_commit=lambda: self._publish_audit(
+                "automated_review.config.version_created",
+                next_version,
+                context,
+                trusted_context,
+                trusted_context.trusted.subject_id,
+            ),
         )
-        self._repository.create(next_version)
         log = self._log_operation(
             context=context,
             operation="automated_review.config.create_version",
@@ -809,6 +815,7 @@ class AutomatedReviewApplicationService:
         event_type: str,
         config: ReviewAgentConfiguration,
         context: ObservabilityContext,
+        trusted_context: PropagatedContext,
         actor_subject_id: str,
     ) -> None:
         last_change = config.changelog[-1]
@@ -825,6 +832,9 @@ class AutomatedReviewApplicationService:
                 previous_revision=last_change.previous_revision,
                 resulting_revision=last_change.resulting_revision,
                 safe_details=_safe_config_details(config),
+                tenant_isolation_tier=trusted_context.trusted.tenant_isolation_tier,
+                request_id=trusted_context.request_id,
+                traceparent=trusted_context.traceparent,
             )
         )
 

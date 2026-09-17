@@ -99,12 +99,15 @@ def test_publish_policy_requires_published_catalog_simulation_and_publish_scope(
     assert event.tenant_id == "tenant_alpha"
     assert event.actor_subject_id == "user_credit_manager"
     assert event.safe_details == {
+        "change_type": "published",
         "change_summary": "Publicação aprovada após simulação",
         "effective_ends_at": (NOW + timedelta(days=31)).isoformat(),
         "effective_starts_at": (NOW + timedelta(days=1)).isoformat(),
         "operation": "credit_policy.publish",
+        "previous_revision": "1",
         "product_type": "personal_credit",
         "revision": "2",
+        "resulting_revision": "2",
         "simulation_id": "sim_policy_publication_ready",
         "simulation_issue_count": "0",
         "status": "published",
