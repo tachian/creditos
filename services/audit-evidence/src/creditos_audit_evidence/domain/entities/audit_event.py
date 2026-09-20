@@ -25,6 +25,17 @@ from creditos_audit_evidence.domain.value_objects.audit_event import (
     validate_tenant_id,
     validate_trace_id,
 )
+from creditos_audit_evidence.domain.value_objects.audit_integrity import (
+    CANONICALIZATION_VERSION,
+    HASH_ALGORITHM,
+    INTEGRITY_SCOPE_TENANT,
+    validate_canonicalization_version,
+    validate_current_hash,
+    validate_hash_algorithm,
+    validate_integrity_chain_id,
+    validate_integrity_scope,
+    validate_previous_hash,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +80,12 @@ class AuditEvent:
     operational_evidence_refs: tuple[OperationalEvidenceReference, ...] = field(
         default_factory=tuple
     )
+    integrity_scope: str = INTEGRITY_SCOPE_TENANT
+    integrity_chain_id: str | None = None
+    previous_hash: str | None = None
+    current_hash: str | None = None
+    hash_algorithm: str = HASH_ALGORITHM
+    canonicalization_version: str = CANONICALIZATION_VERSION
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "event_id", validate_event_id(self.event_id))
@@ -101,6 +118,20 @@ class AuditEvent:
             "operational_evidence_refs",
             _validate_operational_evidence_refs(self.operational_evidence_refs),
         )
+        object.__setattr__(self, "integrity_scope", validate_integrity_scope(self.integrity_scope))
+        object.__setattr__(
+            self,
+            "integrity_chain_id",
+            validate_integrity_chain_id(self.integrity_chain_id, tenant_id=self.tenant_id),
+        )
+        object.__setattr__(self, "previous_hash", validate_previous_hash(self.previous_hash))
+        object.__setattr__(self, "current_hash", validate_current_hash(self.current_hash))
+        object.__setattr__(self, "hash_algorithm", validate_hash_algorithm(self.hash_algorithm))
+        object.__setattr__(
+            self,
+            "canonicalization_version",
+            validate_canonicalization_version(self.canonicalization_version),
+        )
         _reject_operational_only_event(
             aggregate_type=self.aggregate_type,
             event_type=self.event_type,
@@ -129,6 +160,12 @@ class AuditEvent:
         request_id: str | None = None,
         safe_details: Mapping[str, str] | None = None,
         operational_evidence_refs: tuple[OperationalEvidenceReference, ...] = (),
+        integrity_scope: str = INTEGRITY_SCOPE_TENANT,
+        integrity_chain_id: str | None = None,
+        previous_hash: str | None = None,
+        current_hash: str | None = None,
+        hash_algorithm: str = HASH_ALGORITHM,
+        canonicalization_version: str = CANONICALIZATION_VERSION,
     ) -> AuditEvent:
         return cls(
             event_id=event_id,
@@ -149,6 +186,12 @@ class AuditEvent:
             request_id=request_id,
             safe_details=safe_details or {},
             operational_evidence_refs=operational_evidence_refs,
+            integrity_scope=integrity_scope,
+            integrity_chain_id=integrity_chain_id,
+            previous_hash=previous_hash,
+            current_hash=current_hash,
+            hash_algorithm=hash_algorithm,
+            canonicalization_version=canonicalization_version,
         )
 
 

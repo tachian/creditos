@@ -10,6 +10,8 @@ Ele é separado de logs operacionais, traces, métricas e eventos de mensageria.
 - Exigir contexto confiável para tenant e ator.
 - Minimizar e mascarar dados em detalhes auditáveis.
 - Permitir referências operacionais complementares sem substituir a auditoria oficial.
+- Calcular `previous_hash` e `current_hash` por tenant sobre payload canônico determinístico.
+- Gerar e verificar checkpoints assinados de janelas fechadas usando digest minimizado.
 
 ## Limites
 
@@ -17,7 +19,7 @@ Ele é separado de logs operacionais, traces, métricas e eventos de mensageria.
 - Correções devem ser novos eventos compensatórios; eventos gravados não são alterados.
 - Payload bruto, prompt/output de IA, documentos, imagens, biometria, tokens, segredos e dados financeiros detalhados não são persistidos por padrão.
 - O adapter in-memory é a fundação testável desta story; SQLAlchemy/Alembic, grants `INSERT`-only e banco real append-only ficam registrados como trabalho posterior.
-- Hash encadeado, checkpoints, WORM/S3 Object Lock, gRPC/NATS reais e IaC ficam para histórias futuras do Epic 6.
+- KMS real, WORM/S3 Object Lock, jobs periódicos, gRPC/NATS reais e IaC ficam para histórias futuras do Epic 6.
 
 ## Auditoria de Decisões
 
@@ -38,6 +40,18 @@ A Story 6.3 amplia a trilha oficial para alterações sensíveis já materializa
 - `safe_details` continua fechado, minimizado e composto apenas por IDs técnicos, versões, revisões, fingerprints, contagens, status e justificativas seguras;
 - campos autoritativos de recurso não podem ser sobrescritos pelo payload seguro informado pelo serviço de origem;
 - manutenção, bypass, permissões, exportações/WORM e acesso sensível real ficam registrados como lacunas controladas até existirem fluxos materializados.
+
+## Integridade Verificável
+
+A Story 6.4 adiciona integridade lógica verificável à trilha oficial:
+
+- a cadeia canônica do MVP é por `tenant_id`, em ordem oficial de append;
+- o primeiro evento de cada tenant usa a gênese versionada `creditos-audit-chain-genesis:v1`;
+- o `current_hash` é `sha256` sobre payload canônico estável e inclui o `previous_hash`;
+- o payload canônico inclui somente campos oficiais, `safe_details` já normalizado e referências operacionais técnicas, nunca payload bruto, tokens, segredos, documentos completos ou evidência operacional completa;
+- checkpoints cobrem janelas fechadas e não vazias, registrando tenant, período, contagem, primeiro/último evento, digest do lote, algoritmo, versão de canonicalização, assinatura e referência de chave;
+- a assinatura atual é uma porta com adapter determinístico para testes; KMS/HSM/Secrets Manager reais permanecem fora do escopo desta story;
+- a verificação retorna divergências seguras, como hash divergente, predecessor ausente, checkpoint ausente, digest incompatível ou assinatura inválida, sem expor payload bruto ou PII.
 
 ## Camadas
 

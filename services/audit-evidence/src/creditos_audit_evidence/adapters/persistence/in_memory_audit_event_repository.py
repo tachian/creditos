@@ -6,12 +6,17 @@ from threading import RLock
 
 from creditos_audit_evidence.domain.entities import AuditEvent
 from creditos_audit_evidence.domain.errors import AuditEvidenceConflictError
+from creditos_audit_evidence.domain.services.audit_integrity import (
+    GENESIS_PREVIOUS_HASH,
+    apply_audit_event_integrity,
+)
 
 
 class InMemoryAuditEventRepository:
     def __init__(self) -> None:
         self._events: dict[tuple[str, str], AuditEvent] = {}
         self._by_aggregate: dict[tuple[str, str, str], tuple[str, ...]] = {}
+        self._by_tenant: dict[str, tuple[str, ...]] = {}
         self._lock = RLock()
 
     def append(
@@ -19,7 +24,7 @@ class InMemoryAuditEventRepository:
         event: AuditEvent,
         *,
         before_commit: Callable[[], None] | None = None,
-    ) -> None:
+    ) -> AuditEvent:
         key = _event_key(event.tenant_id, event.event_id)
         aggregate_key = _aggregate_key(event.tenant_id, event.aggregate_type, event.aggregate_id)
         with self._lock:
@@ -37,11 +42,20 @@ class InMemoryAuditEventRepository:
                     code="duplicate_audit_event",
                     field_path="event_id",
                 )
-            self._events[key] = event
+            event_with_integrity = apply_audit_event_integrity(
+                event,
+                previous_hash=self._last_hash_for_tenant(event.tenant_id),
+            )
+            self._events[key] = event_with_integrity
             self._by_aggregate[aggregate_key] = (
                 *self._by_aggregate.get(aggregate_key, ()),
                 event.event_id,
             )
+            self._by_tenant[event.tenant_id] = (
+                *self._by_tenant.get(event.tenant_id, ()),
+                event.event_id,
+            )
+            return event_with_integrity
 
     def get(self, *, tenant_id: str, event_id: str) -> AuditEvent | None:
         with self._lock:
@@ -84,6 +98,27 @@ class InMemoryAuditEventRepository:
                     key=lambda event: (event.occurred_at, event.event_id),
                 )
             )
+
+    def list_by_tenant_chain(self, *, tenant_id: str) -> tuple[AuditEvent, ...]:
+        with self._lock:
+            return tuple(
+                event
+                for event_id in self._by_tenant.get(tenant_id, ())
+                if (event := self._events.get(_event_key(tenant_id, event_id))) is not None
+            )
+
+    def _last_hash_for_tenant(self, tenant_id: str) -> str:
+        event_ids = self._by_tenant.get(tenant_id, ())
+        if not event_ids:
+            return GENESIS_PREVIOUS_HASH
+        last_event = self._events.get(_event_key(tenant_id, event_ids[-1]))
+        if last_event is None or last_event.current_hash is None:
+            raise AuditEvidenceConflictError(
+                "cadeia de auditoria inconsistente",
+                code="broken_audit_chain",
+                field_path="previous_hash",
+            )
+        return last_event.current_hash
 
 
 def _event_key(tenant_id: str, event_id: str) -> tuple[str, str]:

@@ -101,7 +101,7 @@ development_status:
   6-1-trilha-oficial-append-only-de-auditoria: done
   6-2-auditoria-de-decisoes-e-evidencias-criticas: done
   6-3-auditoria-de-alteracoes-sensiveis: done
-  6-4-integridade-verificavel-com-hash-encadeado-e-checkpoints: backlog
+  6-4-integridade-verificavel-com-hash-encadeado-e-checkpoints: done
   6-5-exportacao-imutavel-para-worm: backlog
   6-6-logs-estruturados-e-mascaramento-obrigatorio: backlog
   6-7-gates-de-auditoria-logs-e-dados-sensiveis: backlog
