@@ -17,6 +17,7 @@ from creditos_audit_evidence.domain.errors import (
     AuditEvidenceTenantContextError,
     AuditEvidenceValidationError,
 )
+from creditos_audit_evidence.domain.services.audit_integrity import GENESIS_PREVIOUS_HASH
 from creditos_observability import ObservabilityContext
 from creditos_security import PropagatedContext, TrustedContext
 
@@ -146,10 +147,17 @@ def test_repository_revalidates_duplicate_after_before_commit() -> None:
     repository = InMemoryAuditEventRepository()
     event = _audit_event(event_id="audit_evt_001")
 
-    with pytest.raises(AuditEvidenceConflictError):
-        repository.append(event, before_commit=lambda: repository.append(event))
+    def append_duplicate_before_commit() -> None:
+        repository.append(event)
 
-    assert repository.get(tenant_id="tenant_alpha", event_id="audit_evt_001") == event
+    with pytest.raises(AuditEvidenceConflictError):
+        repository.append(event, before_commit=append_duplicate_before_commit)
+
+    stored_event = repository.get(tenant_id="tenant_alpha", event_id="audit_evt_001")
+    assert stored_event is not None
+    assert stored_event.event_id == event.event_id
+    assert stored_event.previous_hash == GENESIS_PREVIOUS_HASH
+    assert stored_event.current_hash is not None
     assert [
         item.event_id
         for item in repository.list_by_aggregate(
