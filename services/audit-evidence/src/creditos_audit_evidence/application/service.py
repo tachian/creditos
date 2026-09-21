@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
@@ -36,6 +37,9 @@ from creditos_audit_evidence.domain.value_objects.audit_event import (
     validate_aggregate_id,
     validate_aggregate_type,
     validate_occurred_at,
+)
+from creditos_audit_evidence.domain.value_objects.audit_integrity import (
+    INTEGRITY_SCOPE_TENANT,
 )
 
 SERVICE_NAME = "audit-evidence"
@@ -256,55 +260,6 @@ class AuditEvidenceApplicationService:
             )
         )
 
-    def _append_integrity_verification_audit_event(
-        self,
-        *,
-        command: VerifyAuditIntegrityCommand,
-        trusted_context: PropagatedContext,
-        result: str,
-        outcome: str,
-        issue_codes: tuple[str, ...] = (),
-        event_count: int | None = None,
-        checkpoint_id: str | None = None,
-    ) -> None:
-        resource_id = _integrity_verification_resource_id(
-            occurred_from=command.occurred_from,
-            occurred_to=command.occurred_to,
-            checkpoint_id=checkpoint_id,
-        )
-        safe_details = {
-            "operation": "verify",
-            "outcome": outcome,
-            "issue_count": str(len(issue_codes)),
-            "resource_id": resource_id,
-            "status": outcome,
-            "validation_issue_count": str(len(issue_codes)),
-            "validation_issue_codes": ",".join(issue_codes) if issue_codes else "none",
-        }
-        if event_count is not None:
-            safe_details["event_count"] = str(event_count)
-        self._repository.append(
-            AuditEvent.create(
-                event_id=f"audit_evt_integrity_verify_{uuid4().hex}",
-                tenant_id=trusted_context.trusted.tenant_id,
-                aggregate_type="audit_integrity_window",
-                aggregate_id=resource_id,
-                event_type="audit_integrity.verify",
-                action="verify",
-                resource_type="audit_integrity_window",
-                resource_id=resource_id,
-                actor_subject_id=trusted_context.trusted.subject_id,
-                source_service=SERVICE_NAME,
-                source_kind="system",
-                result=result,
-                occurred_at=datetime.now(UTC),
-                correlation_id=trusted_context.correlation_id,
-                trace_id=trusted_context.trace_id,
-                request_id=trusted_context.request_id,
-                safe_details=safe_details,
-            )
-        )
-
     def list_by_aggregate(
         self,
         command: ListAuditEventsByAggregateCommand,
@@ -388,7 +343,13 @@ class AuditEvidenceApplicationService:
             command.occurred_from, command.occurred_to
         )
         created_at = validate_occurred_at(command.created_at)
-if created_at <= occurred_to or occurred_to >= datetime.now(UTC):
+        if occurred_to >= datetime.now(UTC):
+            raise AuditEvidenceValidationError(
+                "janela de checkpoint ainda não está fechada",
+                code="checkpoint_window_not_closed",
+                field_path="occurred_to",
+            )
+        if created_at <= occurred_to:
             raise AuditEvidenceValidationError(
                 "janela de checkpoint ainda não está fechada",
                 code="checkpoint_window_not_closed",
@@ -476,6 +437,20 @@ if created_at <= occurred_to or occurred_to >= datetime.now(UTC):
             occurred_from, occurred_to = _validate_time_window(
                 command.occurred_from, command.occurred_to
             )
+        except AuditEvidenceValidationError as exc:
+            self._append_integrity_verification_audit_event(
+                trusted_context=trusted_context,
+                occurred_from=validate_occurred_at(command.occurred_from),
+                occurred_to=validate_occurred_at(command.occurred_to),
+                checkpoint_id=command.checkpoint_id,
+                result="rejected",
+                outcome="validation_error",
+                event_count=0,
+                issue_count=1,
+                issue_codes=(exc.code,),
+            )
+            raise
+        try:
             tenant_chain = self._repository.list_by_tenant_chain(
                 tenant_id=trusted_context.trusted.tenant_id
             )
@@ -509,51 +484,107 @@ if created_at <= occurred_to or occurred_to >= datetime.now(UTC):
                         checkpoint_signer=checkpoint_signer,
                     )
                 )
-            valid = not issues
-            log = self._log_operation(
-                context=context,
-                operation="audit_evidence.integrity.verify",
-                status="accepted" if valid else "rejected",
-                duration_ms=_duration_ms(started_at),
-                payload=command,
-                extra={
-                    "occurred_from": occurred_from.isoformat(),
-                    "occurred_to": occurred_to.isoformat(),
-                    "event_count": str(len(events)),
-                    "issue_count": str(len(issues)),
-                    "checkpoint_id": command.checkpoint_id or "",
-                    "outcome": "valid" if valid else "invalid",
-                },
-            )
-            self._append_integrity_verification_audit_event(
-                command=command,
-                trusted_context=trusted_context,
-                result="accepted" if valid else "rejected",
-                outcome="valid" if valid else "invalid",
-                issue_codes=tuple(issue.code for issue in issues),
-                event_count=len(events),
-                checkpoint_id=checkpoint.checkpoint_id if checkpoint is not None else command.checkpoint_id,
-            )
-            return AuditIntegrityVerificationApplicationResult(
-                valid=valid,
-                status="valid" if valid else "invalid",
-                event_count=len(events),
-                checkpoint_id=checkpoint.checkpoint_id
-                if checkpoint is not None
-                else command.checkpoint_id,
-                issues=tuple(issues),
-                logs=(log,),
-            )
         except AuditEvidenceValidationError as exc:
             self._append_integrity_verification_audit_event(
-                command=command,
                 trusted_context=trusted_context,
+                occurred_from=occurred_from,
+                occurred_to=occurred_to,
+                checkpoint_id=command.checkpoint_id,
                 result="rejected",
                 outcome="validation_error",
+                event_count=0,
+                issue_count=1,
                 issue_codes=(exc.code,),
-                checkpoint_id=command.checkpoint_id,
             )
             raise
+        valid = not issues
+        verification_event = self._append_integrity_verification_audit_event(
+            trusted_context=trusted_context,
+            occurred_from=occurred_from,
+            occurred_to=occurred_to,
+            checkpoint_id=command.checkpoint_id,
+            result="accepted" if valid else "rejected",
+            outcome="valid" if valid else "invalid",
+            event_count=len(events),
+            issue_count=len(issues),
+            issue_codes=tuple(issue.code for issue in issues),
+        )
+        log = self._log_operation(
+            context=context,
+            operation="audit_evidence.integrity.verify",
+            status="accepted" if valid else "rejected",
+            duration_ms=_duration_ms(started_at),
+            payload=command,
+            extra={
+                "occurred_from": occurred_from.isoformat(),
+                "occurred_to": occurred_to.isoformat(),
+                "event_count": str(len(events)),
+                "issue_count": str(len(issues)),
+                "checkpoint_id": command.checkpoint_id or "",
+                "outcome": "valid" if valid else "invalid",
+                "verification_event_id": verification_event.event_id,
+            },
+        )
+        return AuditIntegrityVerificationApplicationResult(
+            valid=valid,
+            status="valid" if valid else "invalid",
+            event_count=len(events),
+            checkpoint_id=checkpoint.checkpoint_id
+            if checkpoint is not None
+            else command.checkpoint_id,
+            issues=tuple(issues),
+            logs=(log,),
+        )
+
+    def _append_integrity_verification_audit_event(
+        self,
+        *,
+        trusted_context: PropagatedContext,
+        occurred_from: datetime,
+        occurred_to: datetime,
+        checkpoint_id: str | None,
+        result: str,
+        outcome: str,
+        event_count: int,
+        issue_count: int,
+        issue_codes: tuple[str, ...] = (),
+    ) -> AuditEvent:
+        verification_resource_id = _verification_window_id(
+            tenant_id=trusted_context.trusted.tenant_id,
+            occurred_from=occurred_from,
+            occurred_to=occurred_to,
+            checkpoint_id=checkpoint_id,
+        )
+        return self._repository.append(
+            AuditEvent.create(
+                event_id=f"audit_evt_integrity_verify_{uuid4().hex}",
+                tenant_id=trusted_context.trusted.tenant_id,
+                aggregate_type="audit_integrity",
+                aggregate_id=verification_resource_id,
+                event_type="audit_integrity.verify",
+                action="verify",
+                resource_type="audit_integrity",
+                resource_id=verification_resource_id,
+                actor_subject_id=trusted_context.trusted.subject_id,
+                source_service=SERVICE_NAME,
+                source_kind="system",
+                result=result,
+                occurred_at=datetime.now(UTC),
+                correlation_id=trusted_context.correlation_id,
+                trace_id=trusted_context.trace_id,
+                request_id=trusted_context.request_id,
+                safe_details={
+                    "operation": "audit_evidence.integrity.verify",
+                    "outcome": outcome,
+                    "event_count": str(event_count),
+                    "issue_count": str(issue_count),
+                    "validation_issue_count": str(len(issue_codes)),
+                    "validation_issue_codes": ",".join(issue_codes) if issue_codes else "none",
+                    "resource_type": "audit_integrity",
+                    "resource_id": verification_resource_id,
+                },
+            )
+        )
 
     def _log_operation(
         self,
@@ -664,14 +695,17 @@ def _select_integrity_window(
     occurred_from: datetime,
     occurred_to: datetime,
 ) -> tuple[tuple[AuditEvent, ...], AuditEvent | None]:
-    selected: list[AuditEvent] = []
-    predecessor: AuditEvent | None = None
-    for event in tenant_chain:
-        if occurred_from <= event.occurred_at <= occurred_to:
-            selected.append(event)
-        elif event.occurred_at < occurred_from:
-            predecessor = event
-    return tuple(selected), predecessor
+    selected_positions = [
+        position
+        for position, event in enumerate(tenant_chain)
+        if occurred_from <= event.occurred_at <= occurred_to
+    ]
+    if not selected_positions:
+        return (), None
+    first_position = selected_positions[0]
+    last_position = selected_positions[-1]
+    predecessor = tenant_chain[first_position - 1] if first_position > 0 else None
+    return tuple(tenant_chain[first_position : last_position + 1]), predecessor
 
 
 def _verify_event_chain(
@@ -696,6 +730,17 @@ def _verify_event_chain(
             issues.append(
                 AuditIntegrityVerificationIssue(
                     code="audit_event_tenant_mismatch",
+                    event_id=event.event_id,
+                )
+            )
+        if (
+            event.integrity_scope != INTEGRITY_SCOPE_TENANT
+            or event.hash_algorithm != HASH_ALGORITHM
+            or event.canonicalization_version != CANONICALIZATION_VERSION
+        ):
+            issues.append(
+                AuditIntegrityVerificationIssue(
+                    code="audit_event_integrity_metadata_mismatch",
                     event_id=event.event_id,
                 )
             )
@@ -833,21 +878,6 @@ def _safe_event_details(event: AuditEvent) -> dict[str, Any]:
     }
 
 
-def _integrity_verification_resource_id(
-    *,
-    occurred_from: datetime,
-    occurred_to: datetime,
-    checkpoint_id: str | None,
-) -> str:
-    if checkpoint_id is not None:
-        return checkpoint_id
-    return (
-        f"audit_integrity_window:"
-        f"{occurred_from.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')}:"
-        f"{occurred_to.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')}"
-    )
-
-
 def _safe_checkpoint_details(checkpoint: AuditIntegrityCheckpoint) -> dict[str, Any]:
     return {
         "checkpoint_id": checkpoint.checkpoint_id,
@@ -858,6 +888,26 @@ def _safe_checkpoint_details(checkpoint: AuditIntegrityCheckpoint) -> dict[str, 
         "batch_digest": checkpoint.batch_digest,
         "signature_key_ref": checkpoint.signature_key_ref,
     }
+
+
+def _verification_window_id(
+    *,
+    tenant_id: str,
+    occurred_from: datetime,
+    occurred_to: datetime,
+    checkpoint_id: str | None,
+) -> str:
+    if checkpoint_id:
+        return checkpoint_id
+    material = "|".join(
+        (
+            tenant_id,
+            occurred_from.isoformat(),
+            occurred_to.isoformat(),
+        )
+    )
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
+    return f"audit_integrity_window_{digest}"
 
 
 def _duration_ms(started_at: float) -> float:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from creditos_audit_evidence.adapters.external import DeterministicAuditCheckpointSigner
@@ -139,12 +139,6 @@ def test_checkpoint_generation_and_verification_are_deterministic() -> None:
     assert verification_result.valid is True
     assert verification_result.status == "valid"
     assert verification_result.issues == ()
-    verification_audit_event = service._repository.list_by_tenant_chain(  # type: ignore[attr-defined]
-        tenant_id="tenant_alpha"
-    )[-1]
-    assert verification_audit_event.event_type == "audit_integrity.verify"
-    assert verification_audit_event.result == "accepted"
-    assert verification_audit_event.safe_details["outcome"] == "valid"
 
 
 def test_integrity_verification_accepts_partial_window_with_existing_predecessor() -> None:
@@ -238,6 +232,34 @@ def test_checkpoint_generation_rejects_open_window() -> None:
     assert exc_info.value.code == "checkpoint_window_not_closed"
 
 
+def test_checkpoint_generation_rejects_future_window_even_with_future_created_at() -> None:
+    service = _service()
+    future_window_start = datetime.now(UTC) + timedelta(hours=1)
+    future_window_end = future_window_start + timedelta(minutes=5)
+    service.register_event(
+        _register_command(
+            event_id="audit_evt_001",
+            occurred_at=future_window_start,
+        ),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    )
+
+    with pytest.raises(AuditEvidenceValidationError) as exc_info:
+        service.generate_integrity_checkpoint(
+            GenerateAuditIntegrityCheckpointCommand(
+                occurred_from=future_window_start,
+                occurred_to=future_window_end,
+                created_at=future_window_end + timedelta(minutes=1),
+            ),
+            context=_observability_context(),
+            trusted_context=_trusted_context(),
+        )
+
+    assert exc_info.value.code == "checkpoint_window_not_closed"
+    assert exc_info.value.field_path == "occurred_to"
+
+
 def test_checkpoint_generation_rejects_empty_window() -> None:
     service = _service()
 
@@ -327,12 +349,6 @@ def test_integrity_verification_reports_safe_divergence_without_payload() -> Non
     assert verification_result.issues[0].code == "audit_event_hash_mismatch"
     assert verification_result.issues[0].event_id == "audit_evt_001"
     assert "decision_tampered" not in repr(verification_result.issues[0])
-    verification_audit_event = repository.list_by_tenant_chain(tenant_id="tenant_alpha")[-1]
-    assert verification_audit_event.event_type == "audit_integrity.verify"
-    assert verification_audit_event.result == "rejected"
-    assert verification_audit_event.safe_details["validation_issue_codes"] == (
-        "audit_event_hash_mismatch"
-    )
 
 
 def test_integrity_verification_reports_tenant_predecessor_and_order_issues() -> None:
@@ -453,6 +469,95 @@ def test_checkpoint_verification_reports_signer_failure_safely() -> None:
     }
 
 
+def test_integrity_window_verifies_complete_append_segment_for_non_monotonic_events() -> None:
+    service = _service()
+    service.register_event(
+        _register_command(
+            event_id="audit_evt_001",
+            occurred_at=datetime(2026, 9, 14, 12, 0, tzinfo=UTC),
+        ),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    )
+    service.register_event(
+        _register_command(
+            event_id="audit_evt_002",
+            aggregate_id="decision_002",
+            resource_id="decision_002",
+            occurred_at=datetime(2026, 9, 14, 14, 0, tzinfo=UTC),
+        ),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    )
+    service.register_event(
+        _register_command(
+            event_id="audit_evt_003",
+            aggregate_id="decision_003",
+            resource_id="decision_003",
+            occurred_at=datetime(2026, 9, 14, 13, 0, tzinfo=UTC),
+        ),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    )
+
+    checkpoint_result = service.generate_integrity_checkpoint(
+        GenerateAuditIntegrityCheckpointCommand(
+            occurred_from=datetime(2026, 9, 14, 12, 0, tzinfo=UTC),
+            occurred_to=datetime(2026, 9, 14, 13, 0, tzinfo=UTC),
+            created_at=datetime(2026, 9, 14, 15, 0, tzinfo=UTC),
+        ),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    )
+    verification_result = service.verify_integrity(
+        VerifyAuditIntegrityCommand(
+            occurred_from=datetime(2026, 9, 14, 12, 0, tzinfo=UTC),
+            occurred_to=datetime(2026, 9, 14, 13, 0, tzinfo=UTC),
+            checkpoint_id=checkpoint_result.checkpoint.checkpoint_id,
+        ),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    )
+
+    assert checkpoint_result.checkpoint.event_count == 3
+    assert checkpoint_result.checkpoint.first_event_id == "audit_evt_001"
+    assert checkpoint_result.checkpoint.last_event_id == "audit_evt_003"
+    assert verification_result.valid is True
+    assert verification_result.event_count == 3
+
+
+def test_integrity_verification_records_official_audit_event_for_result() -> None:
+    repository = InMemoryAuditEventRepository()
+    service = _service(repository=repository)
+    service.register_event(
+        _register_command(event_id="audit_evt_001"),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    )
+
+    result = service.verify_integrity(
+        VerifyAuditIntegrityCommand(
+            occurred_from=datetime(2026, 9, 14, 12, 0, tzinfo=UTC),
+            occurred_to=datetime(2026, 9, 14, 12, 1, tzinfo=UTC),
+        ),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    )
+
+    verification_event_id = result.logs[0]["extra"]["verification_event_id"]
+    verification_event = repository.get(
+        tenant_id="tenant_alpha",
+        event_id=verification_event_id,
+    )
+    assert verification_event is not None
+    assert verification_event.aggregate_type == "audit_integrity"
+    assert verification_event.event_type == "audit_integrity.verify"
+    assert verification_event.result == "accepted"
+    assert verification_event.safe_details["outcome"] == "valid"
+    assert verification_event.safe_details["event_count"] == "1"
+    assert verification_event.safe_details["issue_count"] == "0"
+
+
 def test_integrity_verification_audits_controlled_validation_failure() -> None:
     repository = InMemoryAuditEventRepository()
     service = _service(repository=repository)
@@ -468,13 +573,37 @@ def test_integrity_verification_audits_controlled_validation_failure() -> None:
         )
 
     assert exc_info.value.code == "audit_evidence_invalid_time_window"
-    verification_audit_event = repository.list_by_tenant_chain(tenant_id="tenant_alpha")[-1]
-    assert verification_audit_event.event_type == "audit_integrity.verify"
-    assert verification_audit_event.result == "rejected"
-    assert verification_audit_event.safe_details["outcome"] == "validation_error"
-    assert verification_audit_event.safe_details["validation_issue_codes"] == (
+    verification_event = repository.list_by_tenant_chain(tenant_id="tenant_alpha")[-1]
+    assert verification_event.event_type == "audit_integrity.verify"
+    assert verification_event.result == "rejected"
+    assert verification_event.safe_details["outcome"] == "validation_error"
+    assert verification_event.safe_details["validation_issue_codes"] == (
         "audit_evidence_invalid_time_window"
     )
+
+
+def test_integrity_verification_rejects_altered_integrity_metadata() -> None:
+    service = _service()
+    event = service.register_event(
+        _register_command(event_id="audit_evt_001"),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    ).event
+    object.__setattr__(event, "hash_algorithm", "sha512")
+
+    verification_result = service.verify_integrity(
+        VerifyAuditIntegrityCommand(
+            occurred_from=datetime(2026, 9, 14, 12, 0, tzinfo=UTC),
+            occurred_to=datetime(2026, 9, 14, 12, 1, tzinfo=UTC),
+        ),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    )
+
+    assert verification_result.valid is False
+    assert "audit_event_integrity_metadata_mismatch" in {
+        issue.code for issue in verification_result.issues
+    }
 
 
 def test_list_by_time_window_keeps_chronological_order_for_read_model() -> None:
