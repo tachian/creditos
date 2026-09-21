@@ -115,6 +115,45 @@ def test_export_rejects_expired_retention_missing_checkpoint_and_missing_scope()
             context=_observability_context(),
             trusted_context=_trusted_context(scopes=("audit:read",)),
         )
+    assert (
+        _audit_events(service, event_type="audit_worm_export.created")[-1].safe_details[
+            "validation_issue_codes"
+        ]
+        == "audit_evidence_missing_scope_audit_worm_write"
+    )
+
+
+def test_export_verifies_checkpoint_integrity_before_worm_write() -> None:
+    checkpoint_repository = InMemoryAuditIntegrityCheckpointRepository()
+    worm_storage = InMemoryAuditWormStorage()
+    service = _service(
+        checkpoint_repository=checkpoint_repository,
+        worm_storage=worm_storage,
+    )
+    checkpoint_id = _create_checkpoint(service)
+    checkpoint = checkpoint_repository.get(tenant_id="tenant_alpha", checkpoint_id=checkpoint_id)
+    assert checkpoint is not None
+    object.__setattr__(checkpoint, "signature", "tampered-signature")
+
+    with pytest.raises(AuditEvidenceValidationError) as exc_info:
+        service.export_checkpoint_to_worm(
+            _export_command(checkpoint_id=checkpoint_id),
+            context=_observability_context(),
+            trusted_context=_trusted_context(),
+        )
+
+    assert exc_info.value.code == "invalid_worm_checkpoint_integrity"
+    assert (
+        worm_storage.get_object(
+            tenant_id="tenant_alpha",
+            object_key=(
+                "tenants/tenant_alpha/audit/year=2026/month=09/"
+                f"checkpoint={checkpoint_id}/manifest.json"
+            ),
+            object_version_id="v000001",
+        )
+        is None
+    )
 
 
 def test_reconciliation_reports_valid_object_and_official_audit_event() -> None:
@@ -139,6 +178,53 @@ def test_reconciliation_reports_valid_object_and_official_audit_event() -> None:
     assert reconciliation_event.safe_details["checkpoint_id"] == checkpoint_id
     assert reconciliation_event.safe_details["window_started_at"] == "2026-09-14T12:00:00+00:00"
     assert reconciliation_event.safe_details["window_ended_at"] == "2026-09-14T12:02:00+00:00"
+
+
+def test_reconciliation_requires_worm_scope_and_audits_denial() -> None:
+    service = _service()
+    checkpoint_id = _create_checkpoint(service)
+    export = service.export_checkpoint_to_worm(
+        _export_command(checkpoint_id=checkpoint_id),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    ).export
+
+    with pytest.raises(AuditEvidenceTenantContextError):
+        service.reconcile_worm_export(
+            ReconcileAuditWormExportCommand(export_id=export.export_id),
+            context=_observability_context(),
+            trusted_context=_trusted_context(scopes=("audit:write",)),
+        )
+
+    reconciliation_event = _audit_events(service, event_type="audit_worm_export.reconciled")[-1]
+    assert reconciliation_event.result == "rejected"
+    assert reconciliation_event.safe_details["validation_issue_codes"] == (
+        "audit_evidence_missing_scope_audit_worm_read_or_audit_read"
+    )
+
+
+def test_reconciliation_detects_tampered_checkpoint_proof_after_export() -> None:
+    checkpoint_repository = InMemoryAuditIntegrityCheckpointRepository()
+    service = _service(checkpoint_repository=checkpoint_repository)
+    checkpoint_id = _create_checkpoint(service)
+    export = service.export_checkpoint_to_worm(
+        _export_command(checkpoint_id=checkpoint_id),
+        context=_observability_context(),
+        trusted_context=_trusted_context(),
+    ).export
+    checkpoint = checkpoint_repository.get(tenant_id="tenant_alpha", checkpoint_id=checkpoint_id)
+    assert checkpoint is not None
+    object.__setattr__(checkpoint, "signature_key_ref", "tampered-key-ref")
+
+    result = service.reconcile_worm_export(
+        ReconcileAuditWormExportCommand(export_id=export.export_id),
+        context=_observability_context(),
+        trusted_context=_trusted_context(scopes=("audit:worm:read",)),
+    )
+
+    issue_codes = {issue.code for issue in result.issues}
+    assert "worm_manifest_checkpoint_proof_mismatch" in issue_codes
+    assert "worm_checkpoint_signature_mismatch" in issue_codes
 
 
 def test_reconciliation_reports_safe_divergence_without_payload() -> None:

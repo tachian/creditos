@@ -617,8 +617,8 @@ class AuditEvidenceApplicationService:
         started_at = perf_counter()
         worm_export_repository, worm_storage = self._require_worm_dependencies()
         _require_matching_context(context=context, trusted_context=trusted_context)
-        _require_scope(trusted_context=trusted_context, required_scope="audit:worm:write")
         try:
+            _require_scope(trusted_context=trusted_context, required_scope="audit:worm:write")
             trusted_now = datetime.now(UTC)
             occurred_from, occurred_to = _validate_time_window(
                 command.occurred_from, command.occurred_to
@@ -693,6 +693,7 @@ class AuditEvidenceApplicationService:
                         object_version_id=existing_export.object_version_id,
                     ),
                     checkpoint=checkpoint,
+                    checkpoint_signer=self._checkpoint_signer,
                 )
                 if replay_issues:
                     raise AuditEvidenceConflictError(
@@ -745,7 +746,11 @@ class AuditEvidenceApplicationService:
                     )
                 )
                 outcome = "accepted"
-        except (AuditEvidenceConflictError, AuditEvidenceValidationError) as exc:
+        except (
+            AuditEvidenceConflictError,
+            AuditEvidenceTenantContextError,
+            AuditEvidenceValidationError,
+        ) as exc:
             self._append_worm_export_audit_event(
                 trusted_context=trusted_context,
                 event_type="audit_worm_export.created",
@@ -825,10 +830,29 @@ class AuditEvidenceApplicationService:
         started_at = perf_counter()
         worm_export_repository, worm_storage = self._require_worm_dependencies()
         _require_matching_context(context=context, trusted_context=trusted_context)
-        _require_any_scope(
-            trusted_context=trusted_context,
-            required_scopes=("audit:worm:read", "audit:read"),
-        )
+        try:
+            _require_any_scope(
+                trusted_context=trusted_context,
+                required_scopes=("audit:worm:read", "audit:read"),
+            )
+        except AuditEvidenceTenantContextError as exc:
+            self._append_worm_export_audit_event(
+                trusted_context=trusted_context,
+                event_type="audit_worm_export.reconciled",
+                action="reconcile",
+                result="rejected",
+                outcome=exc.code,
+                checkpoint_id=command.export_id,
+                export_id=command.export_id,
+                occurred_from=None,
+                occurred_to=None,
+                object_key="",
+                object_version_id="",
+                manifest_digest="",
+                legal_hold_reason=None,
+                issue_codes=(exc.code,),
+            )
+            raise
         export = worm_export_repository.get(
             tenant_id=trusted_context.trusted.tenant_id,
             export_id=command.export_id,
@@ -893,6 +917,7 @@ class AuditEvidenceApplicationService:
             export=export,
             storage_object=storage_object,
             checkpoint=checkpoint,
+            checkpoint_signer=self._checkpoint_signer,
         )
         valid = not issues
         reconciliation_event = self._append_worm_export_audit_event(
@@ -1064,6 +1089,38 @@ class AuditEvidenceApplicationService:
             raise AuditEvidenceValidationError(
                 "janela de exportação WORM diverge do checkpoint",
                 code="worm_checkpoint_window_mismatch",
+                field_path="checkpoint_id",
+            )
+        if self._checkpoint_signer is None:
+            raise AuditEvidenceValidationError(
+                "assinador de checkpoint não configurado para exportação WORM",
+                code="worm_checkpoint_signer_missing",
+                field_path="checkpoint_signer",
+            )
+        tenant_chain = self._repository.list_by_tenant_chain(tenant_id=tenant_id)
+        events, predecessor = _select_integrity_window(
+            tenant_chain=tenant_chain,
+            occurred_from=occurred_from,
+            occurred_to=occurred_to,
+        )
+        chain_issues = _verify_event_chain(
+            events,
+            tenant_id=tenant_id,
+            predecessor=predecessor,
+        )
+        checkpoint_issues = _verify_checkpoint(
+            tenant_id=tenant_id,
+            occurred_from=occurred_from,
+            occurred_to=occurred_to,
+            events=events,
+            checkpoint=checkpoint,
+            checkpoint_id=checkpoint_id,
+            checkpoint_signer=self._checkpoint_signer,
+        )
+        if chain_issues or checkpoint_issues:
+            raise AuditEvidenceValidationError(
+                "checkpoint inválido para exportação WORM",
+                code="invalid_worm_checkpoint_integrity",
                 field_path="checkpoint_id",
             )
         return checkpoint
@@ -1522,6 +1579,7 @@ def _reconcile_worm_export(
     export: AuditWormExport,
     storage_object: Any,
     checkpoint: AuditIntegrityCheckpoint | None,
+    checkpoint_signer: AuditCheckpointSigner | None,
 ) -> tuple[AuditWormReconciliationIssue, ...]:
     issues: list[AuditWormReconciliationIssue] = []
     if storage_object is None:
@@ -1641,6 +1699,12 @@ def _reconcile_worm_export(
                 checkpoint_id=export.checkpoint_id,
             )
         )
+    _append_manifest_checkpoint_field_issues(
+        issues=issues,
+        manifest_payload=manifest_payload,
+        export=export,
+        checkpoint=checkpoint,
+    )
     if manifest_payload.get("retention_mode") != export.retention_mode.value:
         issues.append(
             AuditWormReconciliationIssue(
@@ -1713,12 +1777,63 @@ def _reconcile_worm_export(
                 checkpoint_id=export.checkpoint_id,
             )
         )
-    elif (
-        checkpoint.batch_digest != export.batch_digest
-        or checkpoint.event_count != export.event_count
-        or checkpoint.window_started_at != export.window_started_at
-        or checkpoint.window_ended_at != export.window_ended_at
+    else:
+        _append_checkpoint_export_issues(
+            issues=issues,
+            export=export,
+            checkpoint=checkpoint,
+            checkpoint_signer=checkpoint_signer,
+        )
+    return tuple(issues)
+
+
+def _append_manifest_checkpoint_field_issues(
+    *,
+    issues: list[AuditWormReconciliationIssue],
+    manifest_payload: dict[str, Any],
+    export: AuditWormExport,
+    checkpoint: AuditIntegrityCheckpoint | None,
+) -> None:
+    if checkpoint is None:
+        return
+    expected_manifest_fields = {
+        "first_event_id": checkpoint.first_event_id,
+        "last_event_id": checkpoint.last_event_id,
+        "first_event_hash": checkpoint.first_event_hash,
+        "last_event_hash": checkpoint.last_event_hash,
+        "checkpoint_signature": checkpoint.signature,
+        "checkpoint_signature_key_ref": checkpoint.signature_key_ref,
+        "checkpoint_signature_algorithm": checkpoint.signature_algorithm,
+        "hash_algorithm": checkpoint.hash_algorithm,
+        "canonicalization_version": checkpoint.canonicalization_version,
+    }
+    if any(
+        manifest_payload.get(field_name) != expected_value
+        for field_name, expected_value in expected_manifest_fields.items()
     ):
+        issues.append(
+            AuditWormReconciliationIssue(
+                code="worm_manifest_checkpoint_proof_mismatch",
+                export_id=export.export_id,
+                checkpoint_id=export.checkpoint_id,
+            )
+        )
+
+
+def _append_checkpoint_export_issues(
+    *,
+    issues: list[AuditWormReconciliationIssue],
+    export: AuditWormExport,
+    checkpoint: AuditIntegrityCheckpoint,
+    checkpoint_signer: AuditCheckpointSigner | None,
+) -> None:
+    metadata_mismatches = (
+        checkpoint.batch_digest != export.batch_digest,
+        checkpoint.event_count != export.event_count,
+        checkpoint.window_started_at != export.window_started_at,
+        checkpoint.window_ended_at != export.window_ended_at,
+    )
+    if any(metadata_mismatches):
         issues.append(
             AuditWormReconciliationIssue(
                 code="worm_checkpoint_metadata_mismatch",
@@ -1726,7 +1841,39 @@ def _reconcile_worm_export(
                 checkpoint_id=export.checkpoint_id,
             )
         )
-    return tuple(issues)
+    if checkpoint_signer is None:
+        issues.append(
+            AuditWormReconciliationIssue(
+                code="worm_checkpoint_signature_unavailable",
+                export_id=export.export_id,
+                checkpoint_id=export.checkpoint_id,
+            )
+        )
+        return
+    try:
+        signature_valid = checkpoint_signer.verify(
+            checkpoint.batch_digest.encode("utf-8"),
+            signature=checkpoint.signature,
+            key_ref=checkpoint.signature_key_ref,
+            algorithm=checkpoint.signature_algorithm,
+        )
+    except Exception:
+        signature_valid = False
+        issues.append(
+            AuditWormReconciliationIssue(
+                code="worm_checkpoint_signature_unavailable",
+                export_id=export.export_id,
+                checkpoint_id=export.checkpoint_id,
+            )
+        )
+    if not signature_valid:
+        issues.append(
+            AuditWormReconciliationIssue(
+                code="worm_checkpoint_signature_mismatch",
+                export_id=export.export_id,
+                checkpoint_id=export.checkpoint_id,
+            )
+        )
 
 
 def _safe_event_details(event: AuditEvent) -> dict[str, Any]:

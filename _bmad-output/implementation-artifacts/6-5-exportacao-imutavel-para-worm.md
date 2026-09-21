@@ -213,6 +213,10 @@ Codex GPT-5.1
 - Code review BMAD executado com Blind Hunter, Edge Case Hunter e Acceptance Auditor; 7 achados de patch aplicados.
 - Validação pós-review: `.venv/bin/pytest services/audit-evidence/tests/unit -q` — 71 passed.
 - Gates pós-review: `.venv/bin/ruff format --check .`, `.venv/bin/ruff check .` e `.venv/bin/pyright` — passaram.
+- Review do Codex no GitHub para o PR #58 analisado; 3 pontos reais corrigidos: integridade do checkpoint antes da exportação, prova completa do checkpoint na reconciliação e auditoria de recusas por escopo WORM.
+- Validação após correções do PR review: `.venv/bin/pytest services/audit-evidence/tests/unit -q` — 74 passed.
+- Gates após correções do PR review: `.venv/bin/ruff format --check .`, `.venv/bin/ruff check .`, `.venv/bin/pyright` e `git diff --check` — passaram.
+- Regressão completa fora do sandbox após correções do PR review: `.venv/bin/pytest -q` — 702 passed, 1 failed por `scripts/dev: line 47: uv: command not found`, limitação ambiental preexistente.
 
 ### Completion Notes List
 
@@ -225,6 +229,7 @@ Codex GPT-5.1
 - Auditoria oficial minimizada registrada para exportação aceita/rejeitada e reconciliação válida/inválida, separada de logs operacionais.
 - README e deferred work atualizados para deixar S3 Object Lock real, IaC, KMS, scheduler, runbooks e validação jurídica/contratual como trabalho futuro.
 - Patches de code review aplicados: reconciliação recompõe digest do corpo, valida manifesto/metadata governada, audita falhas esperadas/técnicas, inclui janela em evento oficial, exige `legal_hold_reason`, restringe object key por tenant/checkpoint e valida replay idempotente contra storage.
+- Correções do review do GitHub aplicadas no PR #58: exportação WORM valida assinatura/digest/metadata do checkpoint antes de gravar; reconciliação compara prova completa do manifesto contra checkpoint autoritativo e valida assinatura; recusas por escopo `audit:worm:*` geram evento oficial minimizado.
 
 ### File List
 
@@ -253,3 +258,4 @@ Codex GPT-5.1
 | 2026-09-21 | 0.1 | Story criada via `bmad-create-story`; contexto do Epic 6, Story 6.4, AD-8, OQ-11 e S3 Object Lock consolidado. | Codex |
 | 2026-09-21 | 1.0 | Exportação WORM lógica implementada com domínio, portas, adapters in-memory, casos de uso, auditoria oficial, documentação e testes. | Codex |
 | 2026-09-21 | 1.1 | Achados de `bmad-code-review` corrigidos e story marcada como `done`. | Codex |
+| 2026-09-21 | 1.2 | Pontos do review do GitHub no PR #58 corrigidos. | Codex |
