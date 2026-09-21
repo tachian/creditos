@@ -339,7 +339,7 @@ class AuditEvidenceApplicationService:
             command.occurred_from, command.occurred_to
         )
         created_at = validate_occurred_at(command.created_at)
-        if created_at <= occurred_to:
+if created_at <= occurred_to or occurred_to >= datetime.now(UTC):
             raise AuditEvidenceValidationError(
                 "janela de checkpoint ainda não está fechada",
                 code="checkpoint_window_not_closed",
