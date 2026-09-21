@@ -12,6 +12,7 @@ Ele é separado de logs operacionais, traces, métricas e eventos de mensageria.
 - Permitir referências operacionais complementares sem substituir a auditoria oficial.
 - Calcular `previous_hash` e `current_hash` por tenant sobre payload canônico determinístico.
 - Gerar e verificar checkpoints assinados de janelas fechadas usando digest minimizado.
+- Exportar checkpoints para manifesto WORM lógico por porta hexagonal e reconciliar metadados/digest de forma segura.
 
 ## Limites
 
@@ -19,7 +20,7 @@ Ele é separado de logs operacionais, traces, métricas e eventos de mensageria.
 - Correções devem ser novos eventos compensatórios; eventos gravados não são alterados.
 - Payload bruto, prompt/output de IA, documentos, imagens, biometria, tokens, segredos e dados financeiros detalhados não são persistidos por padrão.
 - O adapter in-memory é a fundação testável desta story; SQLAlchemy/Alembic, grants `INSERT`-only e banco real append-only ficam registrados como trabalho posterior.
-- KMS real, WORM/S3 Object Lock, jobs periódicos, gRPC/NATS reais e IaC ficam para histórias futuras do Epic 6.
+- KMS real, S3 Object Lock/bucket real, jobs periódicos, gRPC/NATS reais e IaC ficam para histórias futuras do Epic 6.
 
 ## Auditoria de Decisões
 
@@ -52,6 +53,18 @@ A Story 6.4 adiciona integridade lógica verificável à trilha oficial:
 - checkpoints cobrem janelas fechadas e não vazias, registrando tenant, período, contagem, primeiro/último evento, digest do lote, algoritmo, versão de canonicalização, assinatura e referência de chave;
 - a assinatura atual é uma porta com adapter determinístico para testes; KMS/HSM/Secrets Manager reais permanecem fora do escopo desta story;
 - a verificação retorna divergências seguras, como hash divergente, predecessor ausente, checkpoint ausente, digest incompatível ou assinatura inválida, sem expor payload bruto ou PII.
+
+## Exportação WORM Lógica
+
+A Story 6.5 adiciona o contrato testável de exportação imutável:
+
+- a exportação parte de checkpoint assinado existente e gera manifesto canônico `audit-worm-manifest.v1` com `sha256`;
+- o manifesto contém apenas metadados minimizados, hashes, IDs técnicos, assinatura do checkpoint, janela, contagens e política de retenção;
+- a porta `AuditWormStorage` representa gravação/leitura/head de objeto WORM sem acoplamento a `boto3`, S3 real, KMS, bucket ou scheduler;
+- o adapter in-memory simula versionamento e impede overwrite lógico divergente para provar idempotência e conflitos;
+- `GOVERNANCE` e `COMPLIANCE` são modelados como modos compatíveis com S3 Object Lock, mas a escolha produtiva depende de contrato, IaC e governança operacional;
+- toda exportação aceita/rejeitada e reconciliação válida/inválida gera evento oficial minimizado separado de logs operacionais;
+- a reconciliação valida digest do manifesto, checkpoint, versão do objeto, modo de retenção, `retain_until` e legal hold sem expor payload bruto.
 
 ## Camadas
 

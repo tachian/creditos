@@ -6,10 +6,22 @@ from creditos_audit_evidence.application.ports.audit_event_repository import Aud
 from creditos_audit_evidence.application.ports.audit_integrity_checkpoint_repository import (
     AuditIntegrityCheckpointRepository,
 )
+from creditos_audit_evidence.application.ports.audit_worm_export_repository import (
+    AuditWormExportRepository,
+)
+from creditos_audit_evidence.application.ports.audit_worm_storage import (
+    AuditWormStorage,
+    AuditWormStorageObject,
+    AuditWormStoragePutResult,
+)
 
 __all__ = [
     "AuditCheckpointSignature",
     "AuditCheckpointSigner",
     "AuditEventRepository",
     "AuditIntegrityCheckpointRepository",
+    "AuditWormExportRepository",
+    "AuditWormStorage",
+    "AuditWormStorageObject",
+    "AuditWormStoragePutResult",
 ]
