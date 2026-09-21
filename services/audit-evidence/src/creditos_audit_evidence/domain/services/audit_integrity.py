@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from creditos_audit_evidence.domain.entities.audit_event import AuditEvent
+from creditos_audit_evidence.domain.entities.audit_worm_export import AuditWormExportManifest
 from creditos_audit_evidence.domain.value_objects.audit_integrity import (
     CANONICALIZATION_VERSION,
     GENESIS_PREVIOUS_HASH,
@@ -87,6 +88,20 @@ def calculate_checkpoint_id(
         )
     )
     return f"audit_chk_{hashlib.sha256(material.encode('utf-8')).hexdigest()[:32]}"
+
+
+def canonicalize_worm_export_manifest(manifest: AuditWormExportManifest) -> str:
+    return json.dumps(
+        manifest.to_dict(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def calculate_worm_export_manifest_digest(manifest: AuditWormExportManifest) -> str:
+    canonical_payload = canonicalize_worm_export_manifest(manifest)
+    return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
 
 
 def _canonical_event_payload(event: AuditEvent, *, previous_hash: str | None) -> dict[str, Any]:

@@ -5,5 +5,15 @@ from creditos_audit_evidence.domain.entities.audit_event import (
 from creditos_audit_evidence.domain.entities.audit_integrity_checkpoint import (
     AuditIntegrityCheckpoint,
 )
+from creditos_audit_evidence.domain.entities.audit_worm_export import (
+    AuditWormExport,
+    AuditWormExportManifest,
+)
 
-__all__ = ["AuditEvent", "AuditIntegrityCheckpoint", "OperationalEvidenceReference"]
+__all__ = [
+    "AuditEvent",
+    "AuditIntegrityCheckpoint",
+    "AuditWormExport",
+    "AuditWormExportManifest",
+    "OperationalEvidenceReference",
+]
