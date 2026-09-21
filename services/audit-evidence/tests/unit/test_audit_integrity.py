@@ -139,6 +139,12 @@ def test_checkpoint_generation_and_verification_are_deterministic() -> None:
     assert verification_result.valid is True
     assert verification_result.status == "valid"
     assert verification_result.issues == ()
+    verification_audit_event = service._repository.list_by_tenant_chain(  # type: ignore[attr-defined]
+        tenant_id="tenant_alpha"
+    )[-1]
+    assert verification_audit_event.event_type == "audit_integrity.verify"
+    assert verification_audit_event.result == "accepted"
+    assert verification_audit_event.safe_details["outcome"] == "valid"
 
 
 def test_integrity_verification_accepts_partial_window_with_existing_predecessor() -> None:
@@ -321,6 +327,12 @@ def test_integrity_verification_reports_safe_divergence_without_payload() -> Non
     assert verification_result.issues[0].code == "audit_event_hash_mismatch"
     assert verification_result.issues[0].event_id == "audit_evt_001"
     assert "decision_tampered" not in repr(verification_result.issues[0])
+    verification_audit_event = repository.list_by_tenant_chain(tenant_id="tenant_alpha")[-1]
+    assert verification_audit_event.event_type == "audit_integrity.verify"
+    assert verification_audit_event.result == "rejected"
+    assert verification_audit_event.safe_details["validation_issue_codes"] == (
+        "audit_event_hash_mismatch"
+    )
 
 
 def test_integrity_verification_reports_tenant_predecessor_and_order_issues() -> None:
@@ -439,6 +451,30 @@ def test_checkpoint_verification_reports_signer_failure_safely() -> None:
     assert "audit_checkpoint_signature_unavailable" in {
         issue.code for issue in verification_result.issues
     }
+
+
+def test_integrity_verification_audits_controlled_validation_failure() -> None:
+    repository = InMemoryAuditEventRepository()
+    service = _service(repository=repository)
+
+    with pytest.raises(AuditEvidenceValidationError) as exc_info:
+        service.verify_integrity(
+            VerifyAuditIntegrityCommand(
+                occurred_from=datetime(2026, 9, 14, 12, 2, tzinfo=UTC),
+                occurred_to=datetime(2026, 9, 14, 12, 0, tzinfo=UTC),
+            ),
+            context=_observability_context(),
+            trusted_context=_trusted_context(),
+        )
+
+    assert exc_info.value.code == "audit_evidence_invalid_time_window"
+    verification_audit_event = repository.list_by_tenant_chain(tenant_id="tenant_alpha")[-1]
+    assert verification_audit_event.event_type == "audit_integrity.verify"
+    assert verification_audit_event.result == "rejected"
+    assert verification_audit_event.safe_details["outcome"] == "validation_error"
+    assert verification_audit_event.safe_details["validation_issue_codes"] == (
+        "audit_evidence_invalid_time_window"
+    )
 
 
 def test_list_by_time_window_keeps_chronological_order_for_read_model() -> None:
