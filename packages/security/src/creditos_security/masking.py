@@ -63,6 +63,7 @@ _PAYLOAD_KEYS = {
     "prompt",
     "completion",
     "output",
+    "raw_output",
     "model_output",
     "ai_output",
     "llm_output",

@@ -1,5 +1,5 @@
 # generated: 2026-07-30
-# last_updated: 2026-09-21
+# last_updated: 2026-09-22
 # project: CreditOS
 # project_key: CTOS
 # tracking_system: file-system
@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-30
-last_updated: 2026-09-21
+last_updated: 2026-09-22
 project: CreditOS
 project_key: CTOS
 tracking_system: file-system
@@ -104,7 +104,7 @@ development_status:
   6-4-integridade-verificavel-com-hash-encadeado-e-checkpoints: done
   6-5-exportacao-imutavel-para-worm: done
   6-6-logs-estruturados-e-mascaramento-obrigatorio: done
-  6-7-gates-de-auditoria-logs-e-dados-sensiveis: backlog
+  6-7-gates-de-auditoria-logs-e-dados-sensiveis: done
   epic-6-retrospective: optional
   epic-7: backlog
   7-1-instrumentacao-tecnica-base-com-opentelemetry: backlog
