@@ -149,6 +149,57 @@ def test_start_execution_creates_jobs_results_and_completed_fan_in() -> None:
     assert service.logged_events[-1]["extra"]["execution_status"] == "completed"
 
 
+def test_integration_execution_logs_calls_with_safe_traceability_attempts_and_timeout() -> None:
+    dispatcher = InMemoryIntegrationExecutionDispatcher()
+    service = _service(dispatcher=dispatcher)
+    plan = _ready_plan(service)
+
+    service.start_integration_execution(
+        StartIntegrationExecutionCommand(
+            plan=plan,
+            idempotency_key="integration-key-log-contract",
+            scopes=("integration_execution:start",),
+        ),
+        context=_context(),
+    )
+
+    job_logs = tuple(
+        event
+        for event in service.logged_events
+        if event["operation"] == "integration_execution.job_dispatched"
+    )
+
+    assert len(job_logs) == 4
+    first_log = next(log for log in job_logs if log["extra"]["integration_class"] == "kyc_kyb")
+    first_plan_item = next(item for item in plan.items if item.integration_class == "kyc_kyb")
+    assert first_log["service.name"] == "integration"
+    assert first_log["service.version"] == "0.1.0"
+    assert first_log["deployment.environment"] == "test"
+    assert first_log["source"] == "integration-catalog-command"
+    assert first_log["destination"] == "integration"
+    assert first_log["contract"] == "integration-catalog-application"
+    assert first_log["contract_version"] == "v1"
+    assert first_log["status"] == "accepted"
+    assert first_log["technical_result"] == "integration_execution.job_dispatched.accepted"
+    assert first_log["tenant_id"] == "tenant-bridge-001"
+    assert first_log["correlation_id"] == "corr-integration-001"
+    assert first_log["trace_id"] == "22222222222222222222222222222222"
+    assert first_log["payload"] == "[OMITIDO]"
+    assert first_log["extra"]["integration_class"] == "kyc_kyb"
+    assert first_log["extra"]["adapter_id"] == "mock-kyc-basic-v1"
+    assert first_log["extra"]["timeout_ms"] == first_plan_item.timeout_ms
+    assert first_log["extra"]["attempt_count"] == 1
+    assert first_log["extra"]["max_attempts"] == first_plan_item.max_attempts
+
+    serialized_logs = json.dumps(job_logs, sort_keys=True, ensure_ascii=False)
+    assert "provider_payload" not in serialized_logs
+    assert "request_body" not in serialized_logs
+    assert "response_body" not in serialized_logs
+    assert "authorization" not in serialized_logs.lower()
+    assert "00000000191" not in serialized_logs
+    assert "cliente.sensivel@example.com" not in serialized_logs
+
+
 def test_in_memory_dispatcher_respects_effective_concurrency_limit() -> None:
     adapters = tuple(
         SlowMockIntegrationAdapter(
