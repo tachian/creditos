@@ -18,8 +18,32 @@ repositories ou regras de bounded context.
 - Máscara forte é o padrão operacional.
 - Tokens, senhas, secrets, API keys, documentos, imagens e payloads brutos são
   omitidos por padrão.
+- Headers, request body, response body, payload externo, prompts, completions e
+  embeddings são omitidos quando chegam a logs, traces, métricas, erros ou
+  respostas operacionais.
+- CPF, CNPJ, e-mail e telefone em texto livre são mascarados; quando aparecem em
+  chaves estruturadas identificáveis, são omitidos para evitar correlação direta.
+- Dados financeiros detalhados são substituídos por
+  `[DADO_FINANCEIRO_OMITIDO]`.
+- Caracteres de controle e quebras de linha são normalizados antes da emissão
+  operacional para reduzir risco de log injection.
 - Hash simples sem chave é proibido para valores enumeráveis.
 - Testes e exemplos devem usar somente dados sintéticos.
+
+## Correlação segura
+
+Use `hmac_sha256_identifier` quando for necessário correlacionar CPF, CNPJ,
+e-mail, telefone ou outro valor enumerável sem expor o valor original. A função
+exige `secret_key`; não use SHA simples, hash sem chave, valor parcialmente
+visível ou máscara moderada em logs operacionais.
+
+## Limite entre logs e auditoria
+
+Logs operacionais ajudam troubleshooting e observabilidade, mas não substituem a
+trilha oficial append-only do `Audit & Evidence`. Operações sensíveis devem
+gerar evento oficial de auditoria minimizado e, quando também logadas, manter
+apenas contexto técnico seguro como `correlation_id`, `trace_id`, tenant
+confiável, operação, status e duração.
 
 ## Contexto confiável propagável
 

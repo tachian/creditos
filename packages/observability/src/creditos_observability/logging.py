@@ -5,11 +5,16 @@ from datetime import UTC, datetime
 from math import isfinite
 from typing import Any
 
-from creditos_security.masking import mask_sensitive_data
+from creditos_security.masking import (
+    mask_sensitive_data,
+    sanitize_log_text,
+    sanitize_technical_field,
+)
 
 from creditos_observability.context import ObservabilityContext
 
 _SAFE_ERROR_TYPE_PATTERN = re.compile(r"[^A-Za-z0-9_.-]")
+_MAX_TECHNICAL_FIELD_LENGTH = 160
 
 
 def build_structured_log(
@@ -27,6 +32,7 @@ def build_structured_log(
     duration_ms: float,
     status_code: int | None = None,
     error_type: str | None = None,
+    technical_result: str | None = None,
     payload: Any | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -36,15 +42,22 @@ def build_structured_log(
 
     event: dict[str, Any] = {
         "timestamp": datetime.now(UTC).isoformat(),
-        "service.name": service_name,
-        "service.version": service_version,
-        "deployment.environment": environment,
-        "operation": operation,
-        "source": source,
-        "destination": destination,
-        "contract": contract,
-        "contract_version": contract_version,
-        "status": status,
+        "service.name": _safe_required_field(service_name, field_name="service_name"),
+        "service.version": _safe_required_field(service_version, field_name="service_version"),
+        "deployment.environment": _safe_required_field(environment, field_name="environment"),
+        "operation": _safe_required_field(operation, field_name="operation"),
+        "source": _safe_required_field(source, field_name="source"),
+        "destination": _safe_required_field(destination, field_name="destination"),
+        "contract": _safe_required_field(contract, field_name="contract"),
+        "contract_version": _safe_required_field(
+            contract_version,
+            field_name="contract_version",
+        ),
+        "status": _safe_required_field(status, field_name="status"),
+        "technical_result": _safe_required_field(
+            technical_result or status,
+            field_name="technical_result",
+        ),
         "duration_ms": duration_ms,
         **context.to_log_fields(),
     }
@@ -74,7 +87,19 @@ def _validate_status_code(status_code: int) -> None:
         raise ValueError("status_code HTTP deve estar entre 100 e 599")
 
 
+def _safe_required_field(value: str, *, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} deve ser string obrigatória")
+
+    safe_value = sanitize_technical_field(str(mask_sensitive_data(value)))[
+        :_MAX_TECHNICAL_FIELD_LENGTH
+    ]
+    if not safe_value:
+        raise ValueError(f"{field_name} é obrigatório")
+    return safe_value
+
+
 def _safe_error_type(error_type: str) -> str:
     masked = str(mask_sensitive_data(error_type))
-    safe_value = _SAFE_ERROR_TYPE_PATTERN.sub("_", masked.strip())[:120]
+    safe_value = _SAFE_ERROR_TYPE_PATTERN.sub("_", sanitize_log_text(masked))[:120]
     return safe_value or "error"

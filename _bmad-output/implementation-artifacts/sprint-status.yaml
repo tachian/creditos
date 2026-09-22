@@ -103,7 +103,7 @@ development_status:
   6-3-auditoria-de-alteracoes-sensiveis: done
   6-4-integridade-verificavel-com-hash-encadeado-e-checkpoints: done
   6-5-exportacao-imutavel-para-worm: done
-  6-6-logs-estruturados-e-mascaramento-obrigatorio: backlog
+  6-6-logs-estruturados-e-mascaramento-obrigatorio: done
   6-7-gates-de-auditoria-logs-e-dados-sensiveis: backlog
   epic-6-retrospective: optional
   epic-7: backlog
