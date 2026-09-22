@@ -32,6 +32,7 @@ _CONTROL_CHARS_PATTERN = re.compile(r"[\x00-\x1f\x7f\u0085\u2028\u2029]+")
 _TECHNICAL_DELIMITER_PATTERN = re.compile(r"""[=:"'`|{}[\]<>;\\]+""")
 _MAX_MASKING_DEPTH = 12
 _MAX_SAFE_REFERENCE_LENGTH = 160
+_SAFE_DIGEST_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 
 _SECRET_KEYS = {
     "authorization",
@@ -102,6 +103,9 @@ _SAFE_REFERENCE_KEYS = {
     "body_digest",
     "manifest_digest",
 }
+_SAFE_TECHNICAL_KEYS = {
+    "prompt_version",
+}
 _SECRET_KEY_FRAGMENTS = (
     "authorization",
     "credential",
@@ -152,7 +156,8 @@ _FINANCIAL_KEY_FRAGMENTS = (
 
 
 def mask_text(value: str) -> str:
-    masked = _CNPJ_PATTERN.sub(_mask_cnpj_match, value)
+    masked = unicodedata.normalize("NFKC", value)
+    masked = _CNPJ_PATTERN.sub(_mask_cnpj_match, masked)
     masked = _CPF_PATTERN.sub(_mask_cpf_match, masked)
     masked = _EMAIL_PATTERN.sub(_mask_email_match, masked)
     masked = _PHONE_PATTERN.sub(_mask_phone_match, masked)
@@ -195,9 +200,9 @@ def _mask_sensitive_data(
     normalized_key = _normalize_key(key)
 
     if _is_safe_reference_key(normalized_key):
-        if not isinstance(value, str):
-            return OMITTED
-        return sanitize_technical_field(value)[:_MAX_SAFE_REFERENCE_LENGTH] or OMITTED
+        return _safe_reference_value(value)
+    if _is_safe_technical_key(normalized_key):
+        return _safe_technical_value(value)
     elif (
         _is_secret_key(normalized_key)
         or _is_payload_key(normalized_key)
@@ -336,6 +341,25 @@ def _is_identifier_key(normalized_key: str) -> bool:
 
 def _is_safe_reference_key(normalized_key: str) -> bool:
     return normalized_key in _SAFE_REFERENCE_KEYS
+
+
+def _is_safe_technical_key(normalized_key: str) -> bool:
+    return normalized_key in _SAFE_TECHNICAL_KEYS
+
+
+def _safe_reference_value(value: Any) -> str:
+    if not isinstance(value, str):
+        return OMITTED
+    safe_value = sanitize_technical_field(value).casefold()
+    if _SAFE_DIGEST_PATTERN.fullmatch(safe_value):
+        return safe_value
+    return OMITTED
+
+
+def _safe_technical_value(value: Any) -> str:
+    if not isinstance(value, str):
+        return OMITTED
+    return sanitize_technical_field(value)[:_MAX_SAFE_REFERENCE_LENGTH] or OMITTED
 
 
 def _is_financial_key(normalized_key: str) -> bool:

@@ -18,7 +18,9 @@ def test_mask_text_masks_identifiers_secrets_and_control_characters() -> None:
         "cnpj=00.000.000/0001-91\r"
         "email=Cliente.Sensivel@Example.com\t"
         "telefone=(11) 99999-4321 authorization: Bearer raw-token "
-        'secret="multi token secret"'
+        'secret="multi token secret" '
+        "compat=cliente＠example.com "
+        "compat_cpf=０００．０００．００１－９１"
     )
 
     assert "\n" not in masked
@@ -29,6 +31,9 @@ def test_mask_text_masks_identifiers_secrets_and_control_characters() -> None:
     assert "Cliente.Sensivel@Example.com" not in masked
     assert "raw-token" not in masked
     assert "multi token secret" not in masked
+    assert "cliente@example.com" not in masked
+    assert "０００．０００．００１－９１" not in masked
+    assert "000.000.001-91" not in masked
     assert "***.***.***-91" in masked
     assert "**.***.***/****-91" in masked
     assert "c***@example.com" in masked
@@ -56,7 +61,10 @@ def test_mask_sensitive_data_omits_dangerous_containers_and_sensitive_keys() -> 
             "phone": "(11) 99999-4321",
             "document_number": "00000000191",
             "payload_digest": {"raw_payload": "00000000191"},
-            "prompt_fingerprint": "abc123\n",
+            "body_digest": "cliente@example.com",
+            "manifest_digest": "00000000191",
+            "prompt_fingerprint": f"{'A' * 64}\n",
+            "prompt_version": "prompt_credit_review_v1",
             "monthly_income": 500000,
             "safe_result": "accepted",
         }
@@ -80,7 +88,10 @@ def test_mask_sensitive_data_omits_dangerous_containers_and_sensitive_keys() -> 
     assert masked["phone"] == OMITTED
     assert masked["document_number"] == OMITTED
     assert masked["payload_digest"] == OMITTED
-    assert masked["prompt_fingerprint"] == "abc123"
+    assert masked["body_digest"] == OMITTED
+    assert masked["manifest_digest"] == OMITTED
+    assert masked["prompt_fingerprint"] == "a" * 64
+    assert masked["prompt_version"] == "prompt_credit_review_v1"
     assert masked["monthly_income"] == FINANCIAL_OMITTED
     assert masked["safe_result"] == "accepted"
 
