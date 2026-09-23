@@ -83,7 +83,7 @@ def _validate_duration_ms(duration_ms: float) -> None:
 
 
 def _validate_status_code(status_code: int) -> None:
-    if status_code < 100 or status_code > 599:
+    if type(status_code) is not int or status_code < 100 or status_code > 599:
         raise ValueError("status_code HTTP deve estar entre 100 e 599")
 
 

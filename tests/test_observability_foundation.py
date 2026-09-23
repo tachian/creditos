@@ -7,7 +7,7 @@ import pytest
 from creditos_observability.context import ObservabilityContext
 from creditos_observability.health import health_response, readiness_response
 from creditos_observability.logging import build_structured_log
-from creditos_observability.telemetry import InMemoryTelemetry
+from creditos_observability.telemetry import InMemoryTelemetry, TelemetryOperationType
 
 
 def test_http_context_does_not_trust_tenant_from_external_headers() -> None:
@@ -32,6 +32,48 @@ def test_http_context_does_not_trust_tenant_from_external_headers() -> None:
     assert generated.correlation_id
     assert generated.request_id
     assert len(generated.trace_id) == 32
+
+
+def test_operation_telemetry_does_not_reintroduce_untrusted_http_tenant() -> None:
+    context = ObservabilityContext.from_http_headers(
+        {
+            "x-correlation-id": "corr-http-untrusted",
+            "x-request-id": "req-http-untrusted",
+            "x-tenant-id": "tenant-spoofed",
+            "x-tenant-isolation-tier": "silo",
+            "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        }
+    )
+    telemetry = InMemoryTelemetry(service_name="proposal-intake", service_version="0.1.0")
+
+    event = telemetry.record_operation(
+        context=context,
+        operation_type=TelemetryOperationType.HTTP,
+        operation="submit_proposal",
+        status="accepted",
+        duration_ms=4.2,
+        source="public-api",
+        destination="proposal-intake",
+        contract="proposal-intake-public-api",
+        contract_version="v1",
+        attributes={
+            "tenant_id": "tenant-spoofed",
+            "tenant_isolation_tier": "silo",
+        },
+    )
+
+    serialized_spans = json.dumps(
+        [dict(span.attributes or {}) for span in telemetry.finished_spans()],
+        ensure_ascii=False,
+    )
+    serialized_metrics = str(telemetry.metrics_data())
+
+    assert "tenant_id" not in event
+    assert "tenant_isolation_tier" not in event
+    assert "tenant-spoofed" not in serialized_spans
+    assert "tenant-spoofed" not in serialized_metrics
+    assert "silo" not in serialized_spans
+    assert "silo" not in serialized_metrics
 
 
 def test_grpc_and_cloudevent_contexts_can_use_trusted_tenant_metadata() -> None:

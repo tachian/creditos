@@ -12,6 +12,8 @@ middleware, interceptors, workers e bootstrap dos futuros microsserviços.
 - Emitir métricas e traces via OpenTelemetry sem exigir Collector local nos
   testes.
 - Padronizar respostas seguras de health/readiness.
+- Instrumentar operações HTTP, gRPC, evento, job e integração com uma API
+  framework-agnostic e testável.
 
 ## Logs estruturados seguros
 
@@ -37,6 +39,32 @@ Logs de integração devem preservar origem, destino, contrato, versão, tenant,
 trace, status, tentativas, timeout, duração e resultado seguro, sem payload bruto
 do provedor. Para correlação por CPF, CNPJ ou e-mail, gere identificador técnico
 por HMAC em fluxo explícito no pacote de segurança; não registre o valor original.
+
+## Instrumentação técnica de operações
+
+Use `InMemoryTelemetry.record_operation` para instrumentar operações técnicas em
+adapters, middleware, interceptors, workers e integrações. A API aceita
+`TelemetryOperationType.HTTP`, `GRPC`, `EVENT`, `JOB` e `INTEGRATION`, valida o
+envelope antes de emitir qualquer sinal e retorna o log estruturado seguro.
+
+O helper emite:
+
+- span OpenTelemetry com `correlation_id`, `request_id`, `trace_id`, tenant
+  confiável e atributos técnicos sanitizados;
+- métricas `creditos.requests.total` e `creditos.request.duration` com labels de
+  baixa cardinalidade;
+- log estruturado mascarado via `build_structured_log`.
+
+Labels de métricas permitem apenas `channel`, `contract`, `contract_version`,
+`destination`, `operation`, `operation_type`, `product_type`, `source`, `status`
+e `tenant_isolation_tier`. Não use `tenant_id`, `correlation_id`, `request_id`,
+`trace_id`, `proposal_id`, `decision_id`, CPF, CNPJ, e-mail, payload,
+prompt/output, erro bruto, token ou segredo como label.
+
+Use `technical_signal_taxonomy()` para consultar programaticamente a taxonomia
+mínima de sinais permitidos nesta fase. Dashboards customer-facing ficam fora
+deste pacote e devem consumir apenas projeções agregadas e autorizadas por
+tenant.
 
 ## Limites
 
