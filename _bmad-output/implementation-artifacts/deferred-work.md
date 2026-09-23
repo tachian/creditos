@@ -60,3 +60,10 @@
 - IaC de retenção imutável: bucket, versionamento, Object Lock, KMS, bucket policy, lifecycle, replicação, alarmes e permissões mínimas devem ser criados por IaC no ciclo dedicado de infraestrutura, sem configuração manual.
 - Scheduler/worker de exportação periódica: a story expõe casos de uso síncronos/testáveis, mas não cria job real, NATS JetStream, gRPC, DLQ ou orquestração operacional para janelas fechadas.
 - Runbooks e governança contratual: a escolha produtiva entre `COMPLIANCE` e `GOVERNANCE`, retenções mínimas por tenant/produto, legal hold, recuperação, auditoria de bypass e evidências para auditor externo exigem validação jurídica/contratual antes de produção.
+
+## Deferred from: retrospective of Epic 6 — Auditoria, Evidências e Rastreabilidade (2026-09-23)
+
+- Persistência operacional real do `Audit & Evidence`: consolidar em história/ADR específica a implementação com banco relacional, migrations, grants `INSERT`-only, índices por tenant/janela, proteção contra update/delete e reconciliação transacional da cadeia/checkpoints.
+- WORM real e infraestrutura: materializar S3 Object Lock ou alternativa aprovada por IaC, com KMS, bucket policy, versionamento, retenção, legal hold, scheduler/worker, DLQ, alarmes e runbooks operacionais/jurídicos.
+- Caminho local completo de validação: estabilizar ou documentar o comando único recomendado para execução completa com `uv`/harness, removendo dependência de conhecimento tribal e reduzindo ruído em `tests/test_local_harness.py`.
+- Executor consultivo ausente no `Automated Review`: resolver a borda já registrada em que ausência de executor pode deixar reserva órfã antes de depender de executor/provider real em ambiente operacional.
