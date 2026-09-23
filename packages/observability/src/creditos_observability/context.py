@@ -17,6 +17,16 @@ class ObservabilityContext:
     trace_id: str
     tenant_id: str | None = None
     tenant_isolation_tier: str | None = None
+    parent_span_id: str | None = None
+    trace_flags: str = "01"
+
+    def __post_init__(self) -> None:
+        if not _is_valid_trace_id(self.trace_id):
+            raise ValueError("trace_id deve ser hexadecimal, não zerado e ter 32 caracteres")
+        if self.parent_span_id is not None and not _is_valid_span_id(self.parent_span_id):
+            raise ValueError("parent_span_id deve ser hexadecimal, não zerado e ter 16 caracteres")
+        if not _TRACE_FLAGS_PATTERN.fullmatch(self.trace_flags):
+            raise ValueError("trace_flags deve ser hexadecimal e ter 2 caracteres")
 
     @classmethod
     def new(
@@ -27,16 +37,21 @@ class ObservabilityContext:
         trace_id: str | None = None,
         tenant_id: str | None = None,
         tenant_isolation_tier: str | None = None,
+        parent_span_id: str | None = None,
+        trace_flags: str = "01",
     ) -> ObservabilityContext:
         safe_trace_id = token_hex(16)
         if trace_id is not None and _is_valid_trace_id(trace_id):
             safe_trace_id = trace_id
+        safe_parent_span_id = parent_span_id if _is_valid_span_id(parent_span_id) else None
         return cls(
             correlation_id=correlation_id or token_hex(16),
             request_id=request_id or token_hex(16),
             trace_id=safe_trace_id,
             tenant_id=tenant_id,
             tenant_isolation_tier=tenant_isolation_tier,
+            parent_span_id=safe_parent_span_id,
+            trace_flags=trace_flags,
         )
 
     @classmethod
@@ -47,7 +62,10 @@ class ObservabilityContext:
         trusted_tenant: bool = False,
     ) -> ObservabilityContext:
         normalized_carrier = {key.lower(): value for key, value in carrier.items()}
-        trace_id = _trace_id_from_traceparent(normalized_carrier.get("traceparent"))
+        trace_context = _trace_context_from_traceparent(normalized_carrier.get("traceparent"))
+        trace_id = trace_context[0] if trace_context is not None else None
+        parent_span_id = trace_context[1] if trace_context is not None else None
+        trace_flags = trace_context[2] if trace_context is not None else "01"
         tenant_id = None
         tenant_isolation_tier = None
         if trusted_tenant:
@@ -70,6 +88,8 @@ class ObservabilityContext:
             trace_id=trace_id,
             tenant_id=tenant_id,
             tenant_isolation_tier=tenant_isolation_tier,
+            parent_span_id=parent_span_id,
+            trace_flags=trace_flags,
         )
 
     @classmethod
@@ -113,7 +133,7 @@ class ObservabilityContext:
         return carrier
 
 
-def _trace_id_from_traceparent(traceparent: str | None) -> str | None:
+def _trace_context_from_traceparent(traceparent: str | None) -> tuple[str, str, str] | None:
     if not traceparent:
         return None
 
@@ -125,7 +145,7 @@ def _trace_id_from_traceparent(traceparent: str | None) -> str | None:
         and _is_valid_span_id(parts[2])
         and _TRACE_FLAGS_PATTERN.fullmatch(parts[3])
     ):
-        return parts[1]
+        return parts[1], parts[2], parts[3]
 
     return None
 
