@@ -122,6 +122,11 @@ técnicos de baixa cardinalidade. Esses atributos continuam sanitizados e
 mascarados, e não devem conter payload, headers completos ou mensagens brutas de
 erro.
 
+Quando houver `traceparent` válido recebido, o span usa o parent remoto real.
+Quando houver apenas `trace_id` local sem `parent_span_id`, o span inicia como
+root span OpenTelemetry e preserva o `trace_id` do CreditOS apenas como atributo
+sanitizado, sem fabricar parent remoto artificial.
+
 Métricas usam allowlist de atributos de baixa cardinalidade. `correlation_id`,
 `tenant_id`, `proposal_id`, CPF, CNPJ, e-mail, payloads, erro bruto e demais
 identificadores livres não devem virar labels de métricas.

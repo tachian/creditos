@@ -168,19 +168,21 @@ Codex
 - 2026-09-23 — Gates finais executados: Ruff format/check, Pyright, regressões focadas e suíte ampla `services packages tests/test_observability_foundation.py tests/test_epic6_audit_logs_sensitive_data_gates.py`.
 - 2026-09-23 — `uv lock --check` não executou localmente porque o binário `uv` não está instalado no ambiente; nenhuma dependência foi adicionada e `uv.lock` não foi alterado.
 - 2026-09-23 — `bmad-code-review` Step 02 executado com Blind Hunter, Edge Case Hunter e Acceptance Auditor; sete findings de patch aplicados e revalidados.
+- 2026-09-23 — Code Review do PR #62 analisado; corrigidos quatro pontos sobre atributos livres de operação, duração real de spans, bloqueio de erros brutos em `extra` e remoção de parent remoto artificial para root spans locais.
 
 ### Completion Notes List
 
 - Story criada após merge do PR #61 de fechamento do Epic 6.
 - Taxonomia técnica mínima definida para logs, métricas, traces/spans e projeções futuras, com métricas restritas a labels de baixa cardinalidade e sem `tenant_id`.
 - `InMemoryTelemetry.record_operation` implementado como helper framework-agnostic para HTTP, gRPC, evento, job e integração, com validação antes de emissão de span/métrica/log.
-- Spans agora preservam o `trace_id` do `ObservabilityContext` no contexto OpenTelemetry real e também nos atributos sanitizados permitidos.
+- Spans com `traceparent` válido preservam o parent remoto real; spans locais sem `parent_span_id` iniciam como root spans e preservam o `trace_id` do CreditOS como atributo sanitizado permitido.
 - Testes cobrem taxonomia, HTTP/gRPC/evento/job/integração, ausência de payload bruto e exclusão de IDs de alta cardinalidade em métricas.
 - Documentação operacional atualizada com taxonomia, API de instrumentação, atributos permitidos/proibidos e limites entre observabilidade, auditoria e dashboards customer-facing.
 - Gates executados com sucesso: `.venv/bin/ruff format --check .`, `.venv/bin/ruff check .`, `.venv/bin/pyright`, testes focados de observabilidade/mascaramento e suíte ampla com 701 testes.
 - Não houve limitação de `tests/test_local_harness.py`; a única limitação ambiental foi ausência local do binário `uv` para `uv lock --check`.
 - Review adversarial corrigiu bloqueio de tenant/tier via atributos livres, separou labels de métricas e spans, validou cardinalidade, filtrou `extra`, preservou hierarquia de spans e ampliou testes foundation/borda.
 - Gates pós-review executados com sucesso: `.venv/bin/ruff format --check .`, `.venv/bin/ruff check .`, `.venv/bin/pyright`, regressões de mascaramento/Epic 6 e suíte ampla com 706 testes.
+- Correções do Code Review do PR #62 revalidadas com sucesso: `.venv/bin/ruff format --check .`, `.venv/bin/ruff check .`, `.venv/bin/pyright`, testes focados de observabilidade, regressões de mascaramento/Epic 6 e suíte ampla com 707 testes.
 
 ### File List
 
@@ -203,3 +205,4 @@ Codex
 | 2026-09-23 | 0.2 | Taxonomia técnica mínima e API transversal inicial de operação observável adicionadas. | Codex |
 | 2026-09-23 | 1.0 | Story implementada e movida para review após gates focados e suíte ampla passarem. | Codex |
 | 2026-09-23 | 1.1 | Achados do code review adversarial corrigidos; story marcada como done. | Codex |
+| 2026-09-23 | 1.2 | Correções do Code Review do PR #62 aplicadas e revalidadas no mesmo PR. | Codex |

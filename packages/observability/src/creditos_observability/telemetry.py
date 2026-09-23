@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite
+from time import time_ns
 from types import TracebackType
 from typing import Any
 
@@ -49,6 +50,7 @@ _METRIC_ATTRIBUTE_ALLOWLIST = {
 _SPAN_ATTRIBUTE_ALLOWLIST = _METRIC_ATTRIBUTE_ALLOWLIST | {
     "agent_version",
     "correlation_id",
+    "duration_ms",
     "model_ref",
     "model_version",
     "prompt_version",
@@ -72,6 +74,7 @@ _OPERATION_METRIC_ATTRIBUTES = (
 )
 _OPERATION_SPAN_ATTRIBUTES = _OPERATION_METRIC_ATTRIBUTES + (
     "correlation_id",
+    "duration_ms",
     "request_id",
     "tenant_id",
     "trace_id",
@@ -102,24 +105,26 @@ _RESERVED_CONTEXT_ATTRIBUTES = frozenset(
         "tenant_isolation_tier",
     }
 )
-_FORBIDDEN_LOG_EXTRA_KEYS = frozenset(
+_DERIVED_OPERATION_ATTRIBUTE_KEYS = frozenset(
     {
-        "authorization",
-        "headers",
-        "payload",
-        "prompt",
-        "completion",
-        "output",
-        "raw_output",
-        "raw_error",
-        "error_message",
-        "exception",
-        "tenant_id",
-        "tenant_isolation_tier",
-        "correlation_id",
-        "request_id",
-        "trace_id",
         "operation_type",
+        "operation",
+        "status",
+        "source",
+        "destination",
+        "contract",
+        "contract_version",
+    }
+)
+_OPTIONAL_OPERATION_ATTRIBUTE_KEYS = frozenset({"channel", "product_type"})
+_SAFE_OPERATION_LOG_EXTRA_KEYS = frozenset(
+    {
+        "attempts",
+        "integration_class",
+        "provider_ref",
+        "retry_count",
+        "technical_result",
+        "timeout_ms",
     }
 )
 _LOW_CARDINALITY_ATTRIBUTE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,79}$")
@@ -247,6 +252,7 @@ class InMemoryTelemetry:
         extra: Mapping[str, Any] | None = None,
         attributes: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        _validate_duration_ms(duration_ms)
         operation_type_value = _operation_type_value(operation_type)
         safe_operation = _safe_low_cardinality_attribute(operation, field_name="operation")
         safe_status = _safe_low_cardinality_attribute(status, field_name="status")
@@ -263,6 +269,7 @@ class InMemoryTelemetry:
             attributes=attributes,
             allowlist=set(_OPERATION_SPAN_ATTRIBUTES),
         )
+        safe_span_attributes["duration_ms"] = duration_ms
         safe_metric_attributes = _operation_attributes(
             operation_type=operation_type_value,
             operation=safe_operation,
@@ -297,18 +304,19 @@ class InMemoryTelemetry:
             extra=safe_log_extra,
         )
 
-        with self.start_span(
+        self._record_completed_operation_span(
             f"{operation_type_value}.{safe_operation}",
             context=context,
-            attributes=safe_span_attributes,
-        ):
-            self.record_request(
-                context=context,
-                operation=safe_operation,
-                status=safe_status,
-                duration_ms=duration_ms,
-                attributes=safe_metric_attributes,
-            )
+            attributes=_safe_span_attributes(context, safe_span_attributes),
+            duration_ms=duration_ms,
+        )
+        self.record_request(
+            context=context,
+            operation=safe_operation,
+            status=safe_status,
+            duration_ms=duration_ms,
+            attributes=safe_metric_attributes,
+        )
 
         return event
 
@@ -350,6 +358,27 @@ class InMemoryTelemetry:
 
     def metrics_data(self) -> object:
         return self._metric_reader.get_metrics_data()
+
+    def _record_completed_operation_span(
+        self,
+        name: str,
+        *,
+        context: ObservabilityContext,
+        attributes: Mapping[str, str | int | float | bool],
+        duration_ms: float,
+    ) -> None:
+        end_time = time_ns()
+        duration_ns = int(duration_ms * 1_000_000)
+        start_time = max(0, end_time - duration_ns)
+        span = self._tracer.start_span(
+            name,
+            context=_parent_context_from_observability_context(context),
+            attributes=dict(attributes),
+            record_exception=False,
+            set_status_on_exception=False,
+            start_time=start_time,
+        )
+        span.end(end_time=end_time)
 
 
 class _SpanContextManager:
@@ -472,7 +501,10 @@ def _operation_attributes(
     attributes: Mapping[str, Any] | None,
     allowlist: set[str],
 ) -> dict[str, str | int | float | bool]:
-    operation_attributes: dict[str, Any] = _without_reserved_context_attributes(attributes)
+    operation_attributes = _safe_optional_operation_attributes(
+        attributes=attributes,
+        allowlist=allowlist,
+    )
     operation_attributes.update(
         {
             "operation_type": operation_type,
@@ -517,7 +549,10 @@ def _parent_context_from_observability_context(context: ObservabilityContext) ->
     if current_span_context.is_valid:
         return None
 
-    parent_span_id = int(context.parent_span_id, 16) if context.parent_span_id else 1
+    if context.parent_span_id is None:
+        return None
+
+    parent_span_id = int(context.parent_span_id, 16)
     span_context = SpanContext(
         trace_id=int(context.trace_id, 16),
         span_id=parent_span_id,
@@ -560,16 +595,34 @@ def _without_reserved_context_attributes(
     }
 
 
+def _safe_optional_operation_attributes(
+    *,
+    attributes: Mapping[str, Any] | None,
+    allowlist: set[str],
+) -> dict[str, Any]:
+    safe_attributes: dict[str, Any] = {}
+    for key, value in _without_reserved_context_attributes(attributes).items():
+        if (
+            key not in allowlist
+            or key in _DERIVED_OPERATION_ATTRIBUTE_KEYS
+            or key not in _OPTIONAL_OPERATION_ATTRIBUTE_KEYS
+        ):
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"{key} deve ser string técnica de baixa cardinalidade")
+        safe_attributes[key] = _safe_low_cardinality_attribute(value, field_name=key)
+    return safe_attributes
+
+
 def _safe_operation_log_extra(
     *,
     operation_type: str,
     extra: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    safe_extra = {
-        key: value
-        for key, value in dict(extra or {}).items()
-        if key not in _FORBIDDEN_LOG_EXTRA_KEYS
-    }
+    safe_extra = {}
+    for key, value in dict(extra or {}).items():
+        if key in _SAFE_OPERATION_LOG_EXTRA_KEYS and isinstance(value, str | int | float | bool):
+            safe_extra[key] = value
     safe_extra["operation_type"] = operation_type
     return safe_extra
 

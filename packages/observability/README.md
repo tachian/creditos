@@ -55,6 +55,11 @@ O helper emite:
   baixa cardinalidade;
 - log estruturado mascarado via `build_structured_log`.
 
+Se o contexto trouxer `traceparent` válido, o span herda o parent remoto real.
+Se houver apenas `trace_id` local, o helper inicia um root span OpenTelemetry e
+mantém o `trace_id` do CreditOS como atributo sanitizado, sem criar parent
+artificial.
+
 Labels de métricas permitem apenas `channel`, `contract`, `contract_version`,
 `destination`, `operation`, `operation_type`, `product_type`, `source`, `status`
 e `tenant_isolation_tier`. Não use `tenant_id`, `correlation_id`, `request_id`,

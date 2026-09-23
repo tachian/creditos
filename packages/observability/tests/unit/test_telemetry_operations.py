@@ -93,12 +93,9 @@ def test_record_operation_emits_safe_log_metric_and_span_for_all_operation_types
         ensure_ascii=False,
     )
     serialized_metrics = str(telemetry.metrics_data())
-    first_span_context = telemetry.finished_spans()[0].get_span_context()
 
     assert len(events) == len(tuple(TelemetryOperationType))
     assert len(telemetry.finished_spans()) == len(tuple(TelemetryOperationType))
-    assert first_span_context is not None
-    assert f"{first_span_context.trace_id:032x}" == TRACE_ID
     assert events[0]["service.name"] == "integration-service"
     assert events[0]["service.version"] == "0.1.0"
     assert events[0]["deployment.environment"] == "test"
@@ -112,9 +109,16 @@ def test_record_operation_emits_safe_log_metric_and_span_for_all_operation_types
     assert "creditos.requests.total" in serialized_metrics
     assert "creditos.request.duration" in serialized_metrics
     assert '"trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"' in serialized_spans
+    assert '"duration_ms": 12.5' in serialized_spans
     assert '"request_id": "req-op-001"' in serialized_spans
     assert '"tenant_id": "tenant-alpha"' in serialized_spans
     assert '"tenant_isolation_tier": "bridge"' in serialized_spans
+    first_span = telemetry.finished_spans()[0]
+    assert first_span.get_span_context() is not None
+    assert first_span.parent is None
+    assert first_span.start_time is not None
+    assert first_span.end_time is not None
+    assert (first_span.end_time - first_span.start_time) / 1_000_000 == pytest.approx(12.5)
 
     for forbidden in (
         "123.456.789-09",
@@ -185,6 +189,20 @@ def test_record_operation_rejects_high_cardinality_operation_attributes_atomical
             contract_version="v1",
         )
 
+    with pytest.raises(ValueError, match="channel"):
+        telemetry.record_operation(
+            context=ObservabilityContext.new(trace_id=TRACE_ID),
+            operation_type=TelemetryOperationType.HTTP,
+            operation="submit_proposal",
+            status="accepted",
+            duration_ms=1,
+            source="public-api",
+            destination="proposal-intake",
+            contract="proposal-intake-public-api",
+            contract_version="v1",
+            attributes={"channel": "550e8400-e29b-41d4-a716-446655440000"},
+        )
+
     assert telemetry.finished_spans() == ()
     assert "creditos.requests.total" not in str(telemetry.metrics_data())
 
@@ -211,8 +229,10 @@ def test_record_operation_ignores_reserved_and_out_of_taxonomy_attributes() -> N
         contract_version="v1",
         extra={
             "operation_type": "spoofed",
+            "rawError": "provider returned synthetic camel-case failure text",
             "raw_error": "provider returned synthetic failure text",
             "headers": {"authorization": "Bearer valor-local"},
+            "nested": {"raw_error": "nested synthetic failure text"},
             "attempts": 1,
         },
         attributes={
@@ -233,8 +253,11 @@ def test_record_operation_ignores_reserved_and_out_of_taxonomy_attributes() -> N
     assert event["tenant_isolation_tier"] == "bridge"
     assert event["extra"]["operation_type"] == "integration"
     assert event["extra"]["attempts"] == 1
+    assert "rawError" not in event["extra"]
     assert "raw_error" not in event["extra"]
     assert "headers" not in event["extra"]
+    assert "nested" not in event["extra"]
+    assert "provider returned" not in json.dumps(event, ensure_ascii=False)
     assert "evil-tenant" not in serialized_spans
     assert "evil-tier" not in serialized_spans
     assert "evil-tenant" not in serialized_metrics
@@ -266,6 +289,20 @@ def test_start_span_preserves_current_span_hierarchy_when_nested() -> None:
     assert spans["inner"].parent is not None
     assert outer_context is not None
     assert spans["inner"].parent.span_id == outer_context.span_id
+
+
+def test_start_span_without_parent_context_starts_root_span() -> None:
+    context = ObservabilityContext.new(trace_id=TRACE_ID)
+    telemetry = InMemoryTelemetry(service_name="proposal-intake", service_version="0.1.0")
+
+    with telemetry.start_span("root", context=context):
+        pass
+
+    spans = telemetry.finished_spans()
+
+    assert len(spans) == 1
+    assert spans[0].parent is None
+    assert dict(spans[0].attributes or {})["trace_id"] == TRACE_ID
 
 
 def test_context_and_log_reject_invalid_trace_id_and_status_code_types() -> None:
