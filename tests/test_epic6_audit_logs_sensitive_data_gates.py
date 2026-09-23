@@ -48,6 +48,7 @@ VALUE_PATTERNS = (
     ("email", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
     ("telefone", re.compile(r"\(?\b\d{2}\)?\s?\d{4,5}-?\d{4}\b")),
     ("authorization_bearer", re.compile(r"(?i)\bauthorization\s*[:=]\s*bearer\s+\S+")),
+    ("bearer_token", re.compile(r"(?i)\bbearer\s+[^\s,;}\]]+")),
     (
         "secret_assignment",
         re.compile(
@@ -68,6 +69,7 @@ SENSITIVE_PATH_TOKENS = {
     "headers",
     "payload",
     "raw",
+    "raw_output",
     "external_payload",
     "request_body",
     "response_body",
@@ -113,7 +115,6 @@ SENSITIVE_PATH_FRAGMENTS = (
     "provider_payload",
     "prompt",
     "completion",
-    "output",
     "embedding",
     "document",
     "documento",
@@ -209,6 +210,51 @@ def test_sensitive_leak_gate_normalizes_anomalous_types_without_raw_output() -> 
     }
 
     assert_artifact_has_no_sensitive_leaks("safe_anomalous_types", safe_artifact)
+
+
+def test_sensitive_leak_gate_rejects_safe_key_names_inside_sensitive_containers() -> None:
+    raw_artifact = {
+        "payload": {
+            "status": "conteúdo bruto do cliente",
+            "tenant_id": "tenant_alpha",
+        }
+    }
+
+    with pytest.raises(AssertionError) as error:
+        assert_artifact_has_no_sensitive_leaks("raw_fixture", raw_artifact)
+
+    message = str(error.value)
+    assert "raw_fixture.payload.status" in message
+    assert "conteúdo bruto" not in message
+    assert "raw_fixture.payload.tenant_id" not in message
+
+
+def test_sensitive_leak_gate_redacts_sensitive_mapping_keys_from_findings() -> None:
+    raw_artifact = {"payload": {"000.000.000-00": "valor sintético"}}
+
+    with pytest.raises(AssertionError) as error:
+        assert_artifact_has_no_sensitive_leaks("raw_fixture", raw_artifact)
+
+    message = str(error.value)
+    assert "raw_fixture.payload.[cpf_key]" in message
+    assert "000.000.000-00" not in message
+
+
+def test_sensitive_leak_gate_scans_textual_bytes_for_sensitive_values() -> None:
+    raw_artifact = {"message": b"Bearer valor-local"}
+
+    with pytest.raises(AssertionError) as error:
+        assert_artifact_has_no_sensitive_leaks("raw_fixture", raw_artifact)
+
+    message = str(error.value)
+    assert "bearer_token em raw_fixture.message" in message
+    assert "valor-local" not in message
+
+
+def test_sensitive_leak_gate_allows_safe_output_metadata_fields() -> None:
+    safe_artifact = {"output_validation_status": "accepted"}
+
+    assert_artifact_has_no_sensitive_leaks("safe_output_metadata", safe_artifact)
 
 
 def test_transversal_gate_keeps_logs_traces_events_and_safe_details_free_of_sensitive_data() -> (
@@ -379,13 +425,29 @@ def _is_allowed_sensitive_placeholder(path: tuple[str, ...], value: Any) -> bool
     leaf_key = _normalize_path_segment(path[-1]) if path else ""
     if normalized_value in ALLOWED_PLACEHOLDERS:
         return True
-    if leaf_key in SAFE_TECHNICAL_KEYS:
+    has_sensitive_ancestor = _has_sensitive_ancestor(path)
+    if leaf_key in SAFE_TECHNICAL_KEYS and (
+        not has_sensitive_ancestor or _is_safe_technical_scalar(value)
+    ):
         return True
     if leaf_key in {"prompt_version", "prompt_fingerprint", "output_fingerprint"}:
         return True
-    if _has_sensitive_ancestor(path):
+    if has_sensitive_ancestor:
         return False
     return bool(leaf_key.endswith(SAFE_TECHNICAL_SUFFIXES))
+
+
+def _is_safe_technical_scalar(value: Any) -> bool:
+    if isinstance(value, bool | int | float | Decimal | UUID):
+        return True
+    if not isinstance(value, str):
+        return False
+    normalized_value = unicodedata.normalize("NFKC", value).strip()
+    return bool(
+        normalized_value
+        and len(normalized_value) <= 128
+        and re.fullmatch(r"[A-Za-z0-9._:/-]+", normalized_value)
+    )
 
 
 def _has_sensitive_ancestor(path: tuple[str, ...]) -> bool:
@@ -402,7 +464,15 @@ def _normalize_path_segment(segment: str) -> str:
 
 
 def _format_path(path: tuple[str, ...]) -> str:
-    return "".join(f".{segment}" for segment in path)
+    return "".join(f".{_format_path_segment(segment)}" for segment in path)
+
+
+def _format_path_segment(segment: str) -> str:
+    normalized_segment = unicodedata.normalize("NFKC", segment)
+    for pattern_name, pattern in VALUE_PATTERNS:
+        if pattern.search(normalized_segment):
+            return f"[{pattern_name}_key]"
+    return normalized_segment
 
 
 def _normalize_artifact(value: Any) -> Any:
@@ -425,7 +495,7 @@ def _normalize_artifact(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, bytes | bytearray | memoryview):
-        return "[BYTES]"
+        return bytes(value).decode("utf-8", errors="replace")
     return value
 
 
