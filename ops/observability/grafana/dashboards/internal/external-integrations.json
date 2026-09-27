@@ -1,0 +1,341 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Falhas por classe técnica de integração.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "events/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (service, integration_class, status) (rate(creditos_requests_total{environment=~\"$environment\",service=~\"$service\",operation_type=\"integration\",destination=~\"$destination\",product_type=~\"$product_type\",status=~\"failed|timeout|fallback\"}[5m]))",
+          "legendFormat": "{{service}} {{operation}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Falhas por classe",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Latência de adapters externos.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (service, destination, le) (rate(creditos_request_duration_bucket{environment=~\"$environment\",service=~\"$service\",operation_type=\"integration\",destination=~\"$destination\"}[5m])))",
+          "legendFormat": "{{service}} {{operation}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Latência por adapter",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Sinais operacionais de resiliência por destino.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "events/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (service, destination, status) (rate(creditos_requests_total{environment=~\"$environment\",service=~\"$service\",operation_type=\"integration\",destination=~\"$destination\",status=~\"timeout|retry|fallback\"}[5m]))",
+          "legendFormat": "{{service}} {{operation}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Timeout, retry e fallback",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Custo técnico agregado de integrações quando disponível.\n\nPlaceholder: Métrica de custo será consolidada quando providers reais forem configurados.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cost_units/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (service, destination, product_type) (rate(creditos_integration_cost_units_total{environment=~\"$environment\",service=~\"$service\",destination=~\"$destination\",product_type=~\"$product_type\"}[5m]))",
+          "legendFormat": "{{service}} {{operation}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Custo estimado e real",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "creditos",
+    "internal",
+    "technical",
+    "mvp"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(environment)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Ambiente",
+        "multi": true,
+        "name": "environment",
+        "options": [],
+        "query": "label_values(environment)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(service)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Serviço",
+        "multi": true,
+        "name": "service",
+        "options": [],
+        "query": "label_values(service)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(integration_class)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Classe de integração",
+        "multi": true,
+        "name": "integration_class",
+        "options": [],
+        "query": "label_values(integration_class)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(destination)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Adapter/destino",
+        "multi": true,
+        "name": "destination",
+        "options": [],
+        "query": "label_values(destination)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(product_type)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Produto",
+        "multi": true,
+        "name": "product_type",
+        "options": [],
+        "query": "label_values(product_type)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(status)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Status",
+        "multi": true,
+        "name": "status",
+        "options": [],
+        "query": "label_values(status)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "CreditOS — External Integrations",
+  "uid": "ctos-internal-external-integrations",
+  "version": 1
+}
