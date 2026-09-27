@@ -42,7 +42,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (operation, status) (rate(creditos_requests_total{environment=~\"$environment\",service=~\"$service\",operation=~\"$operation\",status=~\"$status\",channel=~\"$channel\",product_type=~\"$product_type\"}[5m]))",
+          "expr": "sum by (operation, status) (rate(creditos_requests_total{environment=~\"$environment\",service=~\"$service\",operation_type=\"http\",operation=~\"$operation\",status=~\"$status\",channel=~\"$channel\",product_type=~\"$product_type\"}[5m]))",
           "legendFormat": "{{service}} {{operation}} {{status}}",
           "refId": "A"
         }
@@ -85,7 +85,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum by (operation, le) (rate(creditos_request_duration_bucket{environment=~\"$environment\",service=~\"$service\",operation=~\"$operation\"}[5m])))",
+          "expr": "histogram_quantile(0.50, sum by (operation, le) (rate(creditos_request_duration_bucket{environment=~\"$environment\",service=~\"$service\",operation_type=\"http\",operation=~\"$operation\"}[5m])))",
           "legendFormat": "{{operation}} p50",
           "refId": "A"
         },
@@ -94,7 +94,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (operation, le) (rate(creditos_request_duration_bucket{environment=~\"$environment\",service=~\"$service\",operation=~\"$operation\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (operation, le) (rate(creditos_request_duration_bucket{environment=~\"$environment\",service=~\"$service\",operation_type=\"http\",operation=~\"$operation\"}[5m])))",
           "legendFormat": "{{operation}} p95",
           "refId": "B"
         },
@@ -103,7 +103,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum by (operation, le) (rate(creditos_request_duration_bucket{environment=~\"$environment\",service=~\"$service\",operation=~\"$operation\"}[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (operation, le) (rate(creditos_request_duration_bucket{environment=~\"$environment\",service=~\"$service\",operation_type=\"http\",operation=~\"$operation\"}[5m])))",
           "legendFormat": "{{operation}} p99",
           "refId": "C"
         }
@@ -116,7 +116,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Erros categorizados por status técnico.",
+      "description": "Erros categorizados por status técnico.\n\nPlaceholder: Depende da promoção de uma classe HTTP segura para métricas, sem status code livre.",
       "fieldConfig": {
         "defaults": {
           "unit": "req/s"
@@ -189,7 +189,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (operation, status) (rate(creditos_api_guardrail_total{environment=~\"$environment\",operation=~\"$operation\"}[5m]))",
+          "expr": "sum by (operation, status) (rate(creditos_api_guardrail_total{environment=~\"$environment\",operation_type=\"http\",operation=~\"$operation\"}[5m]))",
           "legendFormat": "{{service}} {{operation}} {{status}}",
           "refId": "A"
         }

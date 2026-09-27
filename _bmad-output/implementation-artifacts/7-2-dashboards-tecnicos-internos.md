@@ -231,6 +231,7 @@ Codex
 - 2026-09-23 — `pytest -q` completo passou fora do sandbox exceto `tests/test_local_harness.py::test_dev_script_harness_check_uses_documented_command`, por `uv` ausente no PATH local; sem dependências novas e sem alteração de `uv.lock`.
 - 2026-09-23 — `CTOS-383` movida para `Concluído`; `CTOS-61` movida para `Em análise` para `bmad-code-review`.
 - 2026-09-27 — `bmad-code-review` executado com Blind Hunter, Edge Case Hunter e Acceptance Auditor; 10 patches aplicados e validados.
+- 2026-09-27 — Code Review do GitHub no PR #63 analisado; pontos P1/P2 corrigidos e validados.
 
 ### Completion Notes List
 
@@ -245,6 +246,8 @@ Codex
 - Limitação ambiental registrada: `pytest -q` completo falha apenas no harness local por `uv` ausente no PATH desta sessão; rerun escalado confirmou sockets ok e 713 testes passaram antes dessa falha.
 - Review findings resolvidos: validação PromQL fortalecida, percentis completados, CPU/memória/saturação separados, commit/digest adicionado, isolamento por serviço nas integrações, variável `tenant_isolation_tier`, limites de exportação, placeholders explícitos, normalização OTel→Prometheus documentada e legendas ajustadas.
 - Gates pós-review passaram: `ruff format`, `ruff check`, `pyright`, 24 testes focados de observabilidade, 16 regressões de masking/Epic 6 e suíte ampliada com 713 testes.
+- Code Review do GitHub resolvido: rejeição de PII real em metadados, validação PromQL para `on/ignoring/label_join/count_values`, filtros HTTP/gRPC/integrações corrigidos, health separado de readiness, dashboard técnico de bancos adicionado e unidade de CPU ajustada.
+- Gates pós-Code Review do GitHub passaram: `ruff format`, `ruff check`, `pyright`, 25 testes focados de observabilidade, 16 regressões de masking/Epic 6 e suíte ampliada com 714 testes.
 
 ### File List
 
@@ -257,6 +260,7 @@ Codex
 - `packages/observability/src/creditos_observability/dashboards.py`
 - `packages/observability/tests/unit/test_internal_dashboards.py`
 - `ops/observability/grafana/dashboards/internal/audit-security.json`
+- `ops/observability/grafana/dashboards/internal/database-health.json`
 - `ops/observability/grafana/dashboards/internal/deploy-release-health.json`
 - `ops/observability/grafana/dashboards/internal/external-integrations.json`
 - `ops/observability/grafana/dashboards/internal/internal-grpc.json`
@@ -272,3 +276,4 @@ Codex
 | 2026-09-23 | 0.1 | Story criada via `bmad-create-story`; contexto do Epic 7, OQ-9, Story 7.1, Epic 6 e fontes técnicas oficiais consolidado. | Codex |
 | 2026-09-23 | 1.0 | Dashboards técnicos internos implementados como catálogo validável, exportação Grafana determinística, JSONs versionados e documentação operacional. | Codex |
 | 2026-09-27 | 1.1 | Achados do `bmad-code-review` corrigidos e validados antes de commit/push/draft PR. | Codex |
+| 2026-09-27 | 1.2 | Achados do Code Review do GitHub no PR #63 corrigidos e validados. | Codex |

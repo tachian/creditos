@@ -24,6 +24,7 @@ Grafana determinísticos sem depender de uma instância Grafana local.
 | `nats-jetstream-dlq` | Backlog, lag, retries, DLQ, idade de mensagens e reprocessamento. |
 | `external-integrations` | Falhas, latência, timeout, retry, fallback e custo técnico de integrações. |
 | `audit-security` | Sinais operacionais de falha de auditoria e segurança sem substituir a trilha oficial. |
+| `database-health` | Disponibilidade, latência, saturação de conexões e erros técnicos de bancos. |
 | `deploy-release-health` | Saúde pós-deploy, versão ativa e regressão operacional por serviço. |
 
 ## Fontes de Dados
@@ -44,9 +45,9 @@ Mapeamento esperado nesta fase:
 - `creditos.request.duration` → `creditos_request_duration_bucket`;
 - `creditos.ai.*` → família `creditos_ai_*`, quando aplicável.
 
-Métricas de NATS, deploys, health/readiness, segurança e custo podem aparecer
-como placeholders explícitos até a infraestrutura ou adapters reais publicarem
-os sinais correspondentes.
+Métricas de NATS, bancos, deploys, health/readiness, segurança e custo podem
+aparecer como placeholders explícitos até a infraestrutura ou adapters reais
+publicarem os sinais correspondentes.
 
 ## Privacidade e Cardinalidade
 
@@ -61,9 +62,10 @@ Dashboards internos não podem expor:
 Dimensões permitidas devem ser técnicas e de baixa cardinalidade, como
 `environment`, `service`, `operation`, `operation_type`, `status`, `source`,
 `destination`, `channel`, `product_type`, `tenant_isolation_tier` e
-`integration_class`. O dashboard de deploy também pode usar `release_ref` como
-metadado técnico controlado de release para commit/digest publicado pela
-pipeline.
+`integration_class`. A visão de banco usa `pool` apenas como identificador
+lógico de baixa cardinalidade, sem host, schema, conexão ou credencial. O
+dashboard de deploy também pode usar `release_ref` como metadado técnico
+controlado de release para commit/digest publicado pela pipeline.
 
 ## Limites
 

@@ -47,6 +47,7 @@ def test_internal_dashboard_catalog_covers_required_technical_views() -> None:
         "nats-jetstream-dlq",
         "external-integrations",
         "audit-security",
+        "database-health",
         "deploy-release-health",
     }
     assert all(dashboard.scope is DashboardScope.INTERNAL for dashboard in dashboards.values())
@@ -61,6 +62,7 @@ def test_internal_dashboard_catalog_covers_required_technical_views() -> None:
     audit_variables = {variable.name for variable in dashboards["audit-security"].variables}
     deploy_panel_titles = {panel.title for panel in dashboards["deploy-release-health"].panels}
     nats_panel_titles = {panel.title for panel in dashboards["nats-jetstream-dlq"].panels}
+    database_panel_titles = {panel.title for panel in dashboards["database-health"].panels}
 
     assert {
         "Taxa de erro por serviço",
@@ -76,6 +78,12 @@ def test_internal_dashboard_catalog_covers_required_technical_views() -> None:
     assert "service" in integration_variables
     assert "tenant_isolation_tier" in audit_variables
     assert "Commit/digest publicado" in deploy_panel_titles
+    assert {
+        "Disponibilidade de banco",
+        "Latência p95 de banco",
+        "Saturação de conexões",
+        "Erros de banco",
+    }.issubset(database_panel_titles)
     assert {
         "Backlog por stream",
         "Lag por consumer",
@@ -120,6 +128,10 @@ def test_dashboard_validation_rejects_sensitive_or_high_cardinality_queries() ->
         'sum(rate(creditos_requests_total{tenant_id="$tenant"}[5m]))',
         'sum by (tenant_id) (rate(creditos_requests_total{service=~"$service"}[5m]))',
         "label_values(tenant_id)",
+        "sum(foo) + on(user_id) sum(bar)",
+        "sum(foo) + ignoring(user_id) sum(bar)",
+        'label_join(foo, "user_id", "-", "service", "status")',
+        'count_values("user_id", foo)',
     ):
         unsafe_dashboard = DashboardDefinition(
             uid="ctos-internal-unsafe",
@@ -146,7 +158,7 @@ def test_dashboard_validation_rejects_sensitive_or_high_cardinality_queries() ->
             ),
         )
 
-        with pytest.raises(ValueError, match="tenant_id"):
+        with pytest.raises(ValueError, match="tenant_id|user_id"):
             validate_dashboard_catalog((unsafe_dashboard,))
 
 
@@ -212,6 +224,23 @@ def test_dashboard_validation_rejects_unsafe_metadata_and_export_options() -> No
             ),
         ),
     )
+    unsafe_pii_dashboard = DashboardDefinition(
+        uid="ctos-internal-unsafe",
+        slug="unsafe",
+        title="Unsafe",
+        description="Contato alice@example.com",
+        scope=DashboardScope.INTERNAL,
+        tags=("creditos", "internal"),
+        variables=(),
+        panels=(
+            DashboardPanel(
+                title="Seguro",
+                description="Painel válido",
+                query="sum by (service) (creditos_requests_total)",
+                unit="req/s",
+            ),
+        ),
+    )
 
     with pytest.raises(ValueError, match="include_all"):
         validate_dashboard_catalog((unsafe_boolean_dashboard,))
@@ -219,6 +248,33 @@ def test_dashboard_validation_rejects_unsafe_metadata_and_export_options() -> No
         validate_dashboard_catalog((unsafe_refresh_dashboard,))
     with pytest.raises(ValueError, match="visualização"):
         validate_dashboard_catalog((unsafe_visualization_dashboard,))
+    with pytest.raises(ValueError, match="sensível identificável"):
+        validate_dashboard_catalog((unsafe_pii_dashboard,))
+
+
+def test_dashboard_queries_bind_declared_operational_filters() -> None:
+    dashboards = {dashboard.slug: dashboard for dashboard in internal_dashboard_catalog()}
+
+    public_api_queries = _panel_queries(dashboards["public-api"])
+    grpc_queries = _panel_queries(dashboards["internal-grpc"])
+    integration_queries = _panel_queries(dashboards["external-integrations"])
+    health_panel = next(
+        panel
+        for panel in dashboards["platform-overview"].panels
+        if panel.title == "Health e readiness"
+    )
+    cpu_panel = next(
+        panel
+        for panel in dashboards["platform-overview"].panels
+        if panel.title == "CPU por serviço"
+    )
+
+    assert all('operation_type="http"' in query for query in public_api_queries)
+    assert all('service=~"$service"' in query for query in grpc_queries)
+    assert any('integration_class=~"$integration_class"' in query for query in integration_queries)
+    assert len(health_panel.extra_targets) == 1
+    assert "creditos_service_health" in health_panel.extra_targets[0].query
+    assert cpu_panel.query.startswith("100 * ")
 
 
 def test_grafana_export_is_deterministic_internal_and_safe() -> None:
@@ -271,3 +327,11 @@ def test_versioned_grafana_dashboard_files_match_catalog_exports() -> None:
     for filename, expected in expected_files.items():
         actual = json.loads((root / filename).read_text(encoding="utf-8"))
         assert actual == expected
+
+
+def _panel_queries(dashboard: DashboardDefinition) -> tuple[str, ...]:
+    queries: list[str] = []
+    for panel in dashboard.panels:
+        queries.append(panel.query)
+        queries.extend(target.query for target in panel.extra_targets)
+    return tuple(queries)

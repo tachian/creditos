@@ -148,8 +148,8 @@ usam apenas fonte Prometheus planejada nesta fase e são validados localmente se
 Grafana, Prometheus, Loki, Tempo, NATS, Docker, rede ou credenciais.
 
 Esses dashboards cobrem saúde geral, API pública, gRPC interno, NATS/DLQ,
-integrações externas, auditoria/segurança operacional e deploys. Eles não devem
-ser expostos a clientes nem usados como fonte de verdade de auditoria.
+bancos, integrações externas, auditoria/segurança operacional e deploys. Eles
+não devem ser expostos a clientes nem usados como fonte de verdade de auditoria.
 
 As queries PromQL versionadas assumem a normalização do exporter Prometheus para
 nomes como `creditos_requests_total` e `creditos_request_duration_bucket`, a

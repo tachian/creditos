@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from creditos_security.masking import sanitize_log_text
+from creditos_security.masking import mask_text, sanitize_log_text
 
 
 class DashboardScope(StrEnum):
@@ -155,6 +155,7 @@ _ALLOWED_LABELS = frozenset(
         "destination",
         "environment",
         "integration_class",
+        "pool",
         "operation",
         "operation_type",
         "product_type",
@@ -176,6 +177,7 @@ _SAFE_VARIABLE_NAMES = frozenset(
         "integration_class",
         "operation",
         "operation_type",
+        "pool",
         "product_type",
         "service",
         "source",
@@ -186,10 +188,15 @@ _SAFE_VARIABLE_NAMES = frozenset(
 )
 _LABEL_PATTERN = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*(?:=~|!~|=|!=)")
 _GROUPING_PATTERN = re.compile(r"\b(?:by|without)\s*\(([^)]*)\)")
+_VECTOR_MATCHING_PATTERN = re.compile(r"\b(?:on|ignoring)\s*\(([^)]*)\)")
 _LABEL_VALUES_PATTERN = re.compile(r"\blabel_values\s*\(([^)]*)\)")
 _LABEL_REPLACE_PATTERN = re.compile(
     r'\blabel_replace\s*\([^,]+,\s*"([^"]+)"\s*,[^,]+,\s*"([^"]+)"',
 )
+_LABEL_JOIN_PATTERN = re.compile(
+    r'\blabel_join\s*\([^,]+,\s*"([^"]+)"\s*,[^,]+,\s*((?:"[^"]+"\s*,?\s*)+)\)',
+)
+_COUNT_VALUES_PATTERN = re.compile(r'\bcount_values\s*\(\s*"([^"]+)"')
 _ALLOWED_REFRESHES = frozenset({"30s", "1m", "5m"})
 _ALLOWED_TIME_RANGES = frozenset({"now-1h", "now-6h", "now-12h", "now-24h"})
 _ALLOWED_VISUALIZATIONS = frozenset({"timeseries", "stat", "table"})
@@ -240,7 +247,7 @@ def internal_dashboard_catalog() -> tuple[DashboardDefinition, ...]:
                 _panel(
                     "CPU por serviço",
                     "Uso de CPU de runtime/processo por serviço quando o Collector publicar essas métricas.",
-                    'sum by (service) (rate(process_cpu_time_seconds_total{environment=~"$environment",service=~"$service"}[5m]))',
+                    '100 * sum by (service) (rate(process_cpu_time_seconds_total{environment=~"$environment",service=~"$service"}[5m]))',
                     "percent",
                     legend_format="{{service}} cpu",
                     placeholder=True,
@@ -269,6 +276,13 @@ def internal_dashboard_catalog() -> tuple[DashboardDefinition, ...]:
                     "Status agregado de health/readiness por serviço.",
                     'min by (service) (creditos_service_readiness{environment=~"$environment",service=~"$service"})',
                     "state",
+                    legend_format="{{service}} readiness",
+                    extra_targets=(
+                        DashboardTarget(
+                            query='min by (service) (creditos_service_health{environment=~"$environment",service=~"$service"})',
+                            legend_format="{{service}} health",
+                        ),
+                    ),
                     placeholder=True,
                     placeholder_reason="Métrica será materializada quando endpoints reais forem expostos por serviço.",
                 ),
@@ -299,22 +313,22 @@ def internal_dashboard_catalog() -> tuple[DashboardDefinition, ...]:
                 _panel(
                     "Requisições por operação",
                     "Throughput HTTP por operação e status.",
-                    'sum by (operation, status) (rate(creditos_requests_total{environment=~"$environment",service=~"$service",operation=~"$operation",status=~"$status",channel=~"$channel",product_type=~"$product_type"}[5m]))',
+                    'sum by (operation, status) (rate(creditos_requests_total{environment=~"$environment",service=~"$service",operation_type="http",operation=~"$operation",status=~"$status",channel=~"$channel",product_type=~"$product_type"}[5m]))',
                     "req/s",
                 ),
                 _panel(
                     "Latência p50/p95/p99 por operação",
                     "Percentis de latência das operações públicas.",
-                    'histogram_quantile(0.50, sum by (operation, le) (rate(creditos_request_duration_bucket{environment=~"$environment",service=~"$service",operation=~"$operation"}[5m])))',
+                    'histogram_quantile(0.50, sum by (operation, le) (rate(creditos_request_duration_bucket{environment=~"$environment",service=~"$service",operation_type="http",operation=~"$operation"}[5m])))',
                     "ms",
                     legend_format="{{operation}} p50",
                     extra_targets=(
                         DashboardTarget(
-                            query='histogram_quantile(0.95, sum by (operation, le) (rate(creditos_request_duration_bucket{environment=~"$environment",service=~"$service",operation=~"$operation"}[5m])))',
+                            query='histogram_quantile(0.95, sum by (operation, le) (rate(creditos_request_duration_bucket{environment=~"$environment",service=~"$service",operation_type="http",operation=~"$operation"}[5m])))',
                             legend_format="{{operation}} p95",
                         ),
                         DashboardTarget(
-                            query='histogram_quantile(0.99, sum by (operation, le) (rate(creditos_request_duration_bucket{environment=~"$environment",service=~"$service",operation=~"$operation"}[5m])))',
+                            query='histogram_quantile(0.99, sum by (operation, le) (rate(creditos_request_duration_bucket{environment=~"$environment",service=~"$service",operation_type="http",operation=~"$operation"}[5m])))',
                             legend_format="{{operation}} p99",
                         ),
                     ),
@@ -324,11 +338,13 @@ def internal_dashboard_catalog() -> tuple[DashboardDefinition, ...]:
                     "Erros categorizados por status técnico.",
                     'sum by (operation, status) (rate(creditos_requests_total{environment=~"$environment",operation_type="http",status=~"client_error|server_error"}[5m]))',
                     "req/s",
+                    placeholder=True,
+                    placeholder_reason="Depende da promoção de uma classe HTTP segura para métricas, sem status code livre.",
                 ),
                 _panel(
                     "Rate limiting e idempotência",
                     "Sinais futuros de proteção de borda e idempotência.",
-                    'sum by (operation, status) (rate(creditos_api_guardrail_total{environment=~"$environment",operation=~"$operation"}[5m]))',
+                    'sum by (operation, status) (rate(creditos_api_guardrail_total{environment=~"$environment",operation_type="http",operation=~"$operation"}[5m]))',
                     "events/s",
                     placeholder=True,
                     placeholder_reason="Métrica será materializada em adapters HTTP reais.",
@@ -350,19 +366,19 @@ def internal_dashboard_catalog() -> tuple[DashboardDefinition, ...]:
                 _panel(
                     "Latência por método",
                     "Latência gRPC por operação interna.",
-                    'histogram_quantile(0.95, sum by (operation, le) (rate(creditos_request_duration_bucket{environment=~"$environment",operation_type="grpc",operation=~"$operation"}[5m])))',
+                    'histogram_quantile(0.95, sum by (service, operation, le) (rate(creditos_request_duration_bucket{environment=~"$environment",service=~"$service",operation_type="grpc",operation=~"$operation"}[5m])))',
                     "ms",
                 ),
                 _panel(
                     "Erros por método",
                     "Falhas de chamadas internas gRPC.",
-                    'sum by (service, operation, status) (rate(creditos_requests_total{environment=~"$environment",operation_type="grpc",operation=~"$operation",status=~"$status"}[5m]))',
+                    'sum by (service, operation, status) (rate(creditos_requests_total{environment=~"$environment",service=~"$service",operation_type="grpc",operation=~"$operation",status=~"$status"}[5m]))',
                     "req/s",
                 ),
                 _panel(
                     "Deadlines e timeouts",
                     "Timeouts internos quando métricas dedicadas existirem.",
-                    'sum by (service, operation) (rate(creditos_grpc_timeout_total{environment=~"$environment",operation=~"$operation"}[5m]))',
+                    'sum by (service, operation) (rate(creditos_grpc_timeout_total{environment=~"$environment",service=~"$service",operation=~"$operation"}[5m]))',
                     "events/s",
                     placeholder=True,
                     placeholder_reason="Depende de interceptors gRPC reais e métricas de timeout.",
@@ -370,7 +386,7 @@ def internal_dashboard_catalog() -> tuple[DashboardDefinition, ...]:
                 _panel(
                     "Propagação de contexto",
                     "Falhas futuras de propagação de contexto interno.",
-                    'sum by (service, operation) (rate(creditos_context_propagation_failure_total{environment=~"$environment",operation=~"$operation"}[5m]))',
+                    'sum by (service, operation) (rate(creditos_context_propagation_failure_total{environment=~"$environment",service=~"$service",operation=~"$operation"}[5m]))',
                     "events/s",
                     placeholder=True,
                     placeholder_reason="Métrica será adicionada quando interceptors reais validarem contexto.",
@@ -457,25 +473,31 @@ def internal_dashboard_catalog() -> tuple[DashboardDefinition, ...]:
                 _panel(
                     "Falhas por classe",
                     "Falhas por classe técnica de integração.",
-                    'sum by (service, integration_class, status) (rate(creditos_requests_total{environment=~"$environment",service=~"$service",operation_type="integration",destination=~"$destination",product_type=~"$product_type",status=~"failed|timeout|fallback"}[5m]))',
+                    'sum by (service, integration_class, status) (rate(creditos_requests_total{environment=~"$environment",service=~"$service",operation_type="integration",integration_class=~"$integration_class",destination=~"$destination",product_type=~"$product_type",status=~"failed|timeout|fallback"}[5m]))',
                     "events/s",
+                    placeholder=True,
+                    placeholder_reason="Depende da promoção segura de integration_class para métrica de baixa cardinalidade.",
                 ),
                 _panel(
                     "Latência por adapter",
                     "Latência de adapters externos.",
-                    'histogram_quantile(0.95, sum by (service, destination, le) (rate(creditos_request_duration_bucket{environment=~"$environment",service=~"$service",operation_type="integration",destination=~"$destination"}[5m])))',
+                    'histogram_quantile(0.95, sum by (service, integration_class, destination, le) (rate(creditos_request_duration_bucket{environment=~"$environment",service=~"$service",operation_type="integration",integration_class=~"$integration_class",destination=~"$destination"}[5m])))',
                     "ms",
+                    placeholder=True,
+                    placeholder_reason="Depende da promoção segura de integration_class para métrica de baixa cardinalidade.",
                 ),
                 _panel(
                     "Timeout, retry e fallback",
                     "Sinais operacionais de resiliência por destino.",
-                    'sum by (service, destination, status) (rate(creditos_requests_total{environment=~"$environment",service=~"$service",operation_type="integration",destination=~"$destination",status=~"timeout|retry|fallback"}[5m]))',
+                    'sum by (service, integration_class, destination, status) (rate(creditos_requests_total{environment=~"$environment",service=~"$service",operation_type="integration",integration_class=~"$integration_class",destination=~"$destination",status=~"timeout|retry|fallback"}[5m]))',
                     "events/s",
+                    placeholder=True,
+                    placeholder_reason="Depende da promoção segura de integration_class para métrica de baixa cardinalidade.",
                 ),
                 _panel(
                     "Custo estimado e real",
                     "Custo técnico agregado de integrações quando disponível.",
-                    'sum by (service, destination, product_type) (rate(creditos_integration_cost_units_total{environment=~"$environment",service=~"$service",destination=~"$destination",product_type=~"$product_type"}[5m]))',
+                    'sum by (service, integration_class, destination, product_type) (rate(creditos_integration_cost_units_total{environment=~"$environment",service=~"$service",integration_class=~"$integration_class",destination=~"$destination",product_type=~"$product_type"}[5m]))',
                     "cost_units/s",
                     placeholder=True,
                     placeholder_reason="Métrica de custo será consolidada quando providers reais forem configurados.",
@@ -529,6 +551,56 @@ def internal_dashboard_catalog() -> tuple[DashboardDefinition, ...]:
                     "events/s",
                     placeholder=True,
                     placeholder_reason="Métrica depende de integração futura dos gates ao pipeline.",
+                ),
+            ),
+        ),
+        _dashboard(
+            uid="ctos-internal-database-health",
+            slug="database-health",
+            title="CreditOS — Database Health",
+            description="Saúde técnica de bancos, conexões e latência de dependências de dados.",
+            variables=(
+                _query_variable("environment", "Ambiente", "label_values(environment)"),
+                _query_variable("service", "Serviço", "label_values(service)"),
+                _query_variable("pool", "Pool lógico", "label_values(pool)"),
+                _query_variable("status", "Status", "label_values(status)"),
+            ),
+            panels=(
+                _panel(
+                    "Disponibilidade de banco",
+                    "Estado agregado de disponibilidade de bancos por serviço e pool lógico.",
+                    'min by (service, pool) (creditos_database_availability{environment=~"$environment",service=~"$service",pool=~"$pool"})',
+                    "state",
+                    legend_format="{{service}} {{pool}} availability",
+                    placeholder=True,
+                    placeholder_reason="Depende de health checks reais de banco sem expor host, schema ou credenciais.",
+                ),
+                _panel(
+                    "Latência p95 de banco",
+                    "Latência técnica agregada de operações de banco.",
+                    'histogram_quantile(0.95, sum by (service, pool, le) (rate(creditos_database_operation_duration_bucket{environment=~"$environment",service=~"$service",pool=~"$pool"}[5m])))',
+                    "ms",
+                    legend_format="{{service}} {{pool}} p95",
+                    placeholder=True,
+                    placeholder_reason="Depende de instrumentação agregada do adapter de persistência.",
+                ),
+                _panel(
+                    "Saturação de conexões",
+                    "Uso agregado do pool de conexões por serviço.",
+                    'max by (service, pool) (creditos_database_connection_pool_usage_ratio{environment=~"$environment",service=~"$service",pool=~"$pool"})',
+                    "percentunit",
+                    legend_format="{{service}} {{pool}} pool usage",
+                    placeholder=True,
+                    placeholder_reason="Depende de métricas agregadas de pool sem labels de host ou conexão.",
+                ),
+                _panel(
+                    "Erros de banco",
+                    "Falhas técnicas agregadas de dependências de dados.",
+                    'sum by (service, pool, status) (rate(creditos_database_operation_total{environment=~"$environment",service=~"$service",pool=~"$pool",status=~"$status"}[5m]))',
+                    "events/s",
+                    legend_format="{{service}} {{pool}} {{status}}",
+                    placeholder=True,
+                    placeholder_reason="Depende de adapter real de persistência e classificação técnica segura.",
                 ),
             ),
         ),
@@ -750,6 +822,9 @@ def _validate_safe_query(query: str) -> None:
     for labels in _GROUPING_PATTERN.findall(query):
         for label in _split_label_list(labels):
             _validate_prometheus_label(label)
+    for labels in _VECTOR_MATCHING_PATTERN.findall(query):
+        for label in _split_label_list(labels):
+            _validate_prometheus_label(label)
     for label in _extract_label_values_labels(query):
         _validate_prometheus_label(label)
         if label not in _SAFE_VARIABLE_NAMES:
@@ -757,6 +832,12 @@ def _validate_safe_query(query: str) -> None:
     for destination_label, source_label in _LABEL_REPLACE_PATTERN.findall(query):
         _validate_prometheus_label(destination_label)
         _validate_prometheus_label(source_label)
+    for destination_label, source_labels in _LABEL_JOIN_PATTERN.findall(query):
+        _validate_prometheus_label(destination_label)
+        for source_label in _extract_quoted_labels(source_labels):
+            _validate_prometheus_label(source_label)
+    for label in _COUNT_VALUES_PATTERN.findall(query):
+        _validate_prometheus_label(label)
 
 
 def _validate_prometheus_label(label: str) -> None:
@@ -784,6 +865,14 @@ def _extract_label_values_labels(query: str) -> tuple[str, ...]:
     return tuple(extracted)
 
 
+def _extract_quoted_labels(value: str) -> tuple[str, ...]:
+    return tuple(
+        label
+        for label in re.findall(r'"([^"]+)"', value)
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", label)
+    )
+
+
 def _validate_identifier(value: str, *, field_name: str) -> None:
     _validate_safe_text(value, field_name=field_name)
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,80}", value):
@@ -796,6 +885,9 @@ def _validate_safe_text(value: str, *, field_name: str) -> None:
     sanitized = sanitize_log_text(value)
     if sanitized != value or not value:
         raise ValueError(f"{field_name} contém texto inseguro")
+    masked = mask_text(value)
+    if masked != value:
+        raise ValueError(f"{field_name} contém dado sensível identificável")
     lower_value = value.lower()
     for forbidden in _FORBIDDEN_DASHBOARD_TERMS:
         if forbidden in lower_value:

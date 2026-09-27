@@ -12,7 +12,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Falhas por classe técnica de integração.",
+      "description": "Falhas por classe técnica de integração.\n\nPlaceholder: Depende da promoção segura de integration_class para métrica de baixa cardinalidade.",
       "fieldConfig": {
         "defaults": {
           "unit": "events/s"
@@ -42,7 +42,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (service, integration_class, status) (rate(creditos_requests_total{environment=~\"$environment\",service=~\"$service\",operation_type=\"integration\",destination=~\"$destination\",product_type=~\"$product_type\",status=~\"failed|timeout|fallback\"}[5m]))",
+          "expr": "sum by (service, integration_class, status) (rate(creditos_requests_total{environment=~\"$environment\",service=~\"$service\",operation_type=\"integration\",integration_class=~\"$integration_class\",destination=~\"$destination\",product_type=~\"$product_type\",status=~\"failed|timeout|fallback\"}[5m]))",
           "legendFormat": "{{service}} {{operation}} {{status}}",
           "refId": "A"
         }
@@ -55,7 +55,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Latência de adapters externos.",
+      "description": "Latência de adapters externos.\n\nPlaceholder: Depende da promoção segura de integration_class para métrica de baixa cardinalidade.",
       "fieldConfig": {
         "defaults": {
           "unit": "ms"
@@ -85,7 +85,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (service, destination, le) (rate(creditos_request_duration_bucket{environment=~\"$environment\",service=~\"$service\",operation_type=\"integration\",destination=~\"$destination\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (service, integration_class, destination, le) (rate(creditos_request_duration_bucket{environment=~\"$environment\",service=~\"$service\",operation_type=\"integration\",integration_class=~\"$integration_class\",destination=~\"$destination\"}[5m])))",
           "legendFormat": "{{service}} {{operation}} {{status}}",
           "refId": "A"
         }
@@ -98,7 +98,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Sinais operacionais de resiliência por destino.",
+      "description": "Sinais operacionais de resiliência por destino.\n\nPlaceholder: Depende da promoção segura de integration_class para métrica de baixa cardinalidade.",
       "fieldConfig": {
         "defaults": {
           "unit": "events/s"
@@ -128,7 +128,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (service, destination, status) (rate(creditos_requests_total{environment=~\"$environment\",service=~\"$service\",operation_type=\"integration\",destination=~\"$destination\",status=~\"timeout|retry|fallback\"}[5m]))",
+          "expr": "sum by (service, integration_class, destination, status) (rate(creditos_requests_total{environment=~\"$environment\",service=~\"$service\",operation_type=\"integration\",integration_class=~\"$integration_class\",destination=~\"$destination\",status=~\"timeout|retry|fallback\"}[5m]))",
           "legendFormat": "{{service}} {{operation}} {{status}}",
           "refId": "A"
         }
@@ -171,7 +171,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (service, destination, product_type) (rate(creditos_integration_cost_units_total{environment=~\"$environment\",service=~\"$service\",destination=~\"$destination\",product_type=~\"$product_type\"}[5m]))",
+          "expr": "sum by (service, integration_class, destination, product_type) (rate(creditos_integration_cost_units_total{environment=~\"$environment\",service=~\"$service\",integration_class=~\"$integration_class\",destination=~\"$destination\",product_type=~\"$product_type\"}[5m]))",
           "legendFormat": "{{service}} {{operation}} {{status}}",
           "refId": "A"
         }

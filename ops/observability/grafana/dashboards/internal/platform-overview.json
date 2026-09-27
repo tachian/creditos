@@ -180,7 +180,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (service) (rate(process_cpu_time_seconds_total{environment=~\"$environment\",service=~\"$service\"}[5m]))",
+          "expr": "100 * sum by (service) (rate(process_cpu_time_seconds_total{environment=~\"$environment\",service=~\"$service\"}[5m]))",
           "legendFormat": "{{service}} cpu",
           "refId": "A"
         }
@@ -310,8 +310,17 @@
             "uid": "prometheus"
           },
           "expr": "min by (service) (creditos_service_readiness{environment=~\"$environment\",service=~\"$service\"})",
-          "legendFormat": "{{service}} {{operation}} {{status}}",
+          "legendFormat": "{{service}} readiness",
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "min by (service) (creditos_service_health{environment=~\"$environment\",service=~\"$service\"})",
+          "legendFormat": "{{service}} health",
+          "refId": "B"
         }
       ],
       "title": "Health e readiness",
