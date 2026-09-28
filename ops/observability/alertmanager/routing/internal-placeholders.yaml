@@ -1,0 +1,15 @@
+route_placeholders:
+  - name: "critical-platform-operations"
+    purpose: "Alertas técnicos internos críticos para operação da plataforma."
+    matchers:
+      severity: "critical"
+    contact_point_ref: "configure-with-iac-critical"
+    integration_ref: "future-incident-tooling"
+    enabled: "false"
+  - name: "warning-platform-operations"
+    purpose: "Alertas técnicos internos de degradação sustentada."
+    matchers:
+      severity: "warning"
+    contact_point_ref: "configure-with-iac-warning"
+    integration_ref: "future-incident-tooling"
+    enabled: "false"

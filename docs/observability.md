@@ -158,6 +158,27 @@ partir dos instrumentos OpenTelemetry `creditos.requests.total` e
 controlada `service.name` e `deployment.environment` para labels de baixa
 cardinalidade `service` e `environment`.
 
+## Alertas técnicos e SLO Watch
+
+Os alertas técnicos internos são versionados como código em
+`ops/observability/prometheus/rules/internal/technical-alerts.yaml`, possuem
+placeholders seguros de roteamento em
+`ops/observability/alertmanager/routing/internal-placeholders.yaml` e são descritos
+em `docs/observability-alerts.md`. Eles são classificados como `internal`, usam
+apenas métricas Prometheus planejadas nesta fase e são validados localmente sem
+Prometheus, Alertmanager, Grafana, Loki, Tempo, NATS, Docker, rede ou
+credenciais.
+
+Esses alertas cobrem erro, latência, saturação, health/readiness, NATS/DLQ,
+reprocessamento, integrações externas, banco, auditoria, segurança operacional e
+regressões pós-deploy. O SLO watch usa `version` e `release_ref` como
+metadados técnicos controlados para apoiar análise de rollback ou roll-forward.
+
+As regras e placeholders não versionam contact points reais, webhooks,
+endpoints externos, tokens ou credenciais. A configuração real de roteamento de
+incidentes deve ser feita em IaC e gestão de segredos nas etapas operacionais
+futuras.
+
 ## Health e Readiness
 
 Health indica se o processo está vivo. Readiness indica se o componente está
