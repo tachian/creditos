@@ -1,0 +1,295 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Estado agregado de disponibilidade de bancos por serviço e pool lógico.\n\nPlaceholder: Depende de health checks reais de banco sem expor host, schema ou credenciais.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "state"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "min by (service, pool) (creditos_database_availability{environment=~\"$environment\",service=~\"$service\",pool=~\"$pool\"})",
+          "legendFormat": "{{service}} {{pool}} availability",
+          "refId": "A"
+        }
+      ],
+      "title": "Disponibilidade de banco",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Latência técnica agregada de operações de banco.\n\nPlaceholder: Depende de instrumentação agregada do adapter de persistência.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (service, pool, le) (rate(creditos_database_operation_duration_bucket{environment=~\"$environment\",service=~\"$service\",pool=~\"$pool\"}[5m])))",
+          "legendFormat": "{{service}} {{pool}} p95",
+          "refId": "A"
+        }
+      ],
+      "title": "Latência p95 de banco",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Uso agregado do pool de conexões por serviço.\n\nPlaceholder: Depende de métricas agregadas de pool sem labels de host ou conexão.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (service, pool) (creditos_database_connection_pool_usage_ratio{environment=~\"$environment\",service=~\"$service\",pool=~\"$pool\"})",
+          "legendFormat": "{{service}} {{pool}} pool usage",
+          "refId": "A"
+        }
+      ],
+      "title": "Saturação de conexões",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Falhas técnicas agregadas de dependências de dados.\n\nPlaceholder: Depende de adapter real de persistência e classificação técnica segura.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "events/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (service, pool, status) (rate(creditos_database_operation_total{environment=~\"$environment\",service=~\"$service\",pool=~\"$pool\",status=~\"$status\"}[5m]))",
+          "legendFormat": "{{service}} {{pool}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Erros de banco",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "creditos",
+    "internal",
+    "technical",
+    "mvp"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(environment)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Ambiente",
+        "multi": true,
+        "name": "environment",
+        "options": [],
+        "query": "label_values(environment)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(service)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Serviço",
+        "multi": true,
+        "name": "service",
+        "options": [],
+        "query": "label_values(service)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(pool)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Pool lógico",
+        "multi": true,
+        "name": "pool",
+        "options": [],
+        "query": "label_values(pool)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(status)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Status",
+        "multi": true,
+        "name": "status",
+        "options": [],
+        "query": "label_values(status)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "CreditOS — Database Health",
+  "uid": "ctos-internal-database-health",
+  "version": 1
+}

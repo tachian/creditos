@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: creditos-internal-technical
+    orgId: 1
+    folder: CreditOS Internal Technical
+    type: file
+    disableDeletion: true
+    editable: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: ops/observability/grafana/dashboards/internal
+      foldersFromFilesStructure: false

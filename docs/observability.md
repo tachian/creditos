@@ -139,6 +139,25 @@ Dashboards customer-facing não consomem logs crus, traces crus nem séries brut
 de Prometheus. Eles devem consumir projeções agregadas, autorizadas e isoladas
 por tenant, definidas nas stories posteriores do Epic 7.
 
+## Dashboards técnicos internos
+
+Os dashboards técnicos internos são versionados como código em
+`ops/observability/grafana/dashboards/internal/` e descritos em
+`docs/observability-dashboards.md`. Eles são classificados como `internal`,
+usam apenas fonte Prometheus planejada nesta fase e são validados localmente sem
+Grafana, Prometheus, Loki, Tempo, NATS, Docker, rede ou credenciais.
+
+Esses dashboards cobrem saúde geral, API pública, gRPC interno, NATS/DLQ,
+bancos, integrações externas, auditoria/segurança operacional e deploys. Eles
+não devem ser expostos a clientes nem usados como fonte de verdade de auditoria.
+
+As queries PromQL versionadas assumem a normalização do exporter Prometheus para
+nomes como `creditos_requests_total` e `creditos_request_duration_bucket`, a
+partir dos instrumentos OpenTelemetry `creditos.requests.total` e
+`creditos.request.duration`. O Collector também deve promover de forma
+controlada `service.name` e `deployment.environment` para labels de baixa
+cardinalidade `service` e `environment`.
+
 ## Health e Readiness
 
 Health indica se o processo está vivo. Readiness indica se o componente está

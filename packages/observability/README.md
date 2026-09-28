@@ -71,6 +71,22 @@ mínima de sinais permitidos nesta fase. Dashboards customer-facing ficam fora
 deste pacote e devem consumir apenas projeções agregadas e autorizadas por
 tenant.
 
+## Dashboards técnicos internos
+
+Use `internal_dashboard_catalog()` para consultar o catálogo de dashboards
+técnicos internos e `export_grafana_dashboard()` para gerar JSON determinístico
+compatível com provisionamento futuro do Grafana.
+
+O catálogo é validado por `validate_dashboard_catalog()` e bloqueia queries,
+variáveis e metadados que tentem usar payloads, logs crus, traces crus, dados
+pessoais, segredos ou identificadores de alta cardinalidade como labels.
+
+Os dashboards assumem que o Collector/exporter Prometheus normaliza os
+instrumentos OpenTelemetry `creditos.requests.total` e
+`creditos.request.duration` para `creditos_requests_total` e
+`creditos_request_duration_bucket`, promovendo `service.name` e
+`deployment.environment` para labels controladas `service` e `environment`.
+
 ## Limites
 
 - Não contém domínio de produto.

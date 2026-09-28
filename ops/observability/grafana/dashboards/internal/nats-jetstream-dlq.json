@@ -1,0 +1,338 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Mensagens pendentes por stream lógico.\n\nPlaceholder: Depende da integração real com NATS JetStream.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "messages"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (source, destination) (creditos_event_backlog{environment=~\"$environment\",source=~\"$source\",destination=~\"$destination\"})",
+          "legendFormat": "{{source}} → {{destination}} backlog",
+          "refId": "A"
+        }
+      ],
+      "title": "Backlog por stream",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Atraso de consumidores duráveis.\n\nPlaceholder: Depende da integração real com NATS JetStream.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "messages"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (source, destination) (creditos_event_consumer_lag{environment=~\"$environment\",source=~\"$source\",destination=~\"$destination\"})",
+          "legendFormat": "{{source}} → {{destination}} lag",
+          "refId": "A"
+        }
+      ],
+      "title": "Lag por consumer",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Retries, falhas e mensagens enviadas para DLQ.\n\nPlaceholder: Métrica será materializada nos publishers/consumers reais.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "events/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (source, destination, status) (rate(creditos_event_delivery_total{environment=~\"$environment\",source=~\"$source\",destination=~\"$destination\",status=~\"retry|dlq\"}[5m]))",
+          "legendFormat": "{{source}} → {{destination}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Retries e DLQ",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Idade máxima de mensagem pendente.\n\nPlaceholder: Depende de consumers reais.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (source, destination) (creditos_event_message_age_seconds{environment=~\"$environment\",source=~\"$source\",destination=~\"$destination\"})",
+          "legendFormat": "{{source}} → {{destination}} age",
+          "refId": "A"
+        }
+      ],
+      "title": "Idade de mensagens",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Volume de replay/reprocessamento controlado.\n\nPlaceholder: Depende de fluxo operacional real de reprocessamento.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "events/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (source, destination, status) (rate(creditos_event_reprocess_total{environment=~\"$environment\",source=~\"$source\",destination=~\"$destination\"}[5m]))",
+          "legendFormat": "{{source}} → {{destination}} reprocess",
+          "refId": "A"
+        }
+      ],
+      "title": "Replay e reprocessamento",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "creditos",
+    "internal",
+    "technical",
+    "mvp"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(environment)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Ambiente",
+        "multi": true,
+        "name": "environment",
+        "options": [],
+        "query": "label_values(environment)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(service)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Serviço",
+        "multi": true,
+        "name": "service",
+        "options": [],
+        "query": "label_values(service)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(source)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Origem",
+        "multi": true,
+        "name": "source",
+        "options": [],
+        "query": "label_values(source)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(destination)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Destino",
+        "multi": true,
+        "name": "destination",
+        "options": [],
+        "query": "label_values(destination)",
+        "refresh": 1,
+        "skipUrlSync": true,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "CreditOS — NATS JetStream and DLQ",
+  "uid": "ctos-internal-nats-jetstream-dlq",
+  "version": 1
+}
