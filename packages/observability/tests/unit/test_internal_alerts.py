@@ -9,6 +9,7 @@ from creditos_observability import (
     AlertSeverity,
     export_incident_routing_placeholders_yaml,
     export_prometheus_alert_rules,
+    export_prometheus_alert_rules_yaml,
     internal_alert_catalog,
     internal_incident_routing_placeholders,
     validate_alert_catalog,
@@ -244,6 +245,61 @@ def test_prometheus_alert_export_is_deterministic_internal_and_safe() -> None:
         assert forbidden not in serialized
 
 
+def test_alert_rules_use_existing_observability_metric_contracts() -> None:
+    catalog = internal_alert_catalog()
+    serialized = json.dumps(
+        [group.to_dict() for group in catalog],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+    expected_metrics = {
+        "creditos_service_saturation_ratio",
+        "creditos_service_readiness",
+        "creditos_service_health",
+        "creditos_event_backlog",
+        "creditos_event_consumer_lag",
+        "creditos_event_delivery_total",
+        "creditos_event_message_age_seconds",
+        "creditos_audit_critical_failure_total",
+        "creditos_cross_tenant_attempt_total",
+        "creditos_privacy_gate_total",
+        "creditos_requests_total",
+    }
+    stale_metrics = {
+        "creditos_service_resource_saturation_ratio",
+        "creditos_service_ready",
+        "creditos_nats_backlog_messages",
+        "creditos_nats_consumer_lag_messages",
+        "creditos_dlq_messages_total",
+        "creditos_reprocess_oldest_age_seconds",
+        "creditos_audit_critical_failures_total",
+        "creditos_cross_boundary_attempts_total",
+        "creditos_privacy_gate_failures_total",
+        "creditos_integration_requests_total",
+        "creditos_integration_timeouts_total",
+        "creditos_integration_fallbacks_total",
+    }
+
+    for expected_metric in expected_metrics:
+        assert expected_metric in serialized
+    for stale_metric in stale_metrics:
+        assert stale_metric not in serialized
+
+
+def test_prometheus_yaml_export_escapes_backslashes_in_scalars() -> None:
+    catalog = _single_rule_catalog(
+        expression=(
+            "sum by (service) (rate(creditos_requests_total"
+            '{operation=~"api\\.v[0-9]+",service=~".+"}[5m])) > 1'
+        ),
+    )
+
+    exported = export_prometheus_alert_rules_yaml(catalog)
+
+    assert 'operation=~\\"api\\\\.v[0-9]+\\"' in exported
+
+
 def test_versioned_prometheus_alert_files_match_catalog_export() -> None:
     root = Path("ops/observability/prometheus/rules/internal")
     rules_file = root / "technical-alerts.yaml"
@@ -317,6 +373,7 @@ def _single_rule_catalog(
                         "summary": "Safe",
                         "description": "Safe alert",
                         "dashboard": "dashboards/internal/platform-overview",
+                        "runbook": "runbooks/observability/safe-alert.md",
                     },
                     uses_raw_logs=uses_raw_logs,
                 ),
@@ -371,5 +428,5 @@ def _format_list(value: list[object], *, indent: int) -> str:
 def _format_scalar(value: object) -> str:
     if not isinstance(value, str):
         return str(value)
-    escaped = value.replace('"', '\\"')
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'

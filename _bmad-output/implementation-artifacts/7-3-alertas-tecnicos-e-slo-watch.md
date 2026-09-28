@@ -198,6 +198,7 @@ Codex CLI — bmad-dev-story
 - 2026-09-28 — Validações executadas: 37 testes focados/regressões, Ruff format/check, Pyright e suíte ampla com shim temporário de `uv` (`714 passed`).
 - 2026-09-28 — Code review adversarial resolveu 7 findings: proporções de erro, métricas de banco, SLO watch com `version`, validação PromQL, denylist sensível e placeholder de roteamento.
 - 2026-09-28 — Validações pós-review: 38 testes focados/regressões, Ruff format/check, Ruff check, Pyright e suíte ampla com shim temporário de `uv` (`714 passed`).
+- 2026-09-28 — Review do GitHub no PR #64 corrigido: alertas realinhados aos contratos de métricas dos dashboards e serialização YAML passou a escapar contrabarras em regex PromQL.
 
 ### File List
 
@@ -215,3 +216,4 @@ Codex CLI — bmad-dev-story
 
 - 2026-09-28 — Implementada Story 7.3: catálogo de alertas técnicos internos, SLO watch, exportação Prometheus determinística, documentação operacional e testes de privacidade/cardinalidade.
 - 2026-09-28 — Aplicados patches do `bmad-code-review` para endurecer alertas, validações PromQL, roteamento placeholder e consistência com dashboards.
+- 2026-09-28 — Aplicados patches do review do GitHub para alinhar métricas dos alertas ao catálogo versionado de dashboards e corrigir escaping YAML de contrabarras.

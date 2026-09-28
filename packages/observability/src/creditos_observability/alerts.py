@@ -234,7 +234,7 @@ def internal_alert_catalog() -> tuple[PrometheusRuleGroup, ...]:
                 ),
                 _rule(
                     alert="ServiceSaturation",
-                    expression='max by (service, environment, operation) (creditos_service_resource_saturation_ratio{environment=~".+"}) > 0.85',
+                    expression='max by (service, environment) (creditos_service_saturation_ratio{environment=~".+"}) > 0.85',
                     for_duration="10m",
                     severity=AlertSeverity.WARNING,
                     service="{{ $labels.service }}",
@@ -246,7 +246,7 @@ def internal_alert_catalog() -> tuple[PrometheusRuleGroup, ...]:
                 ),
                 _rule(
                     alert="HealthReadinessDown",
-                    expression='min by (service, environment, operation) (creditos_service_ready{environment=~".+"}) < 1',
+                    expression='min by (service, environment) (creditos_service_readiness{environment=~".+"}) < 1 or min by (service, environment) (creditos_service_health{environment=~".+"}) < 1',
                     for_duration="2m",
                     severity=AlertSeverity.CRITICAL,
                     service="{{ $labels.service }}",
@@ -263,10 +263,10 @@ def internal_alert_catalog() -> tuple[PrometheusRuleGroup, ...]:
             (
                 _rule(
                     alert="NatsJetStreamBacklogHigh",
-                    expression='sum by (service, environment, source) (creditos_nats_backlog_messages{environment=~".+"}) > 1000',
+                    expression='sum by (environment, source, destination) (creditos_event_backlog{environment=~".+"}) > 1000',
                     for_duration="10m",
                     severity=AlertSeverity.WARNING,
-                    service="{{ $labels.service }}",
+                    service="messaging",
                     signal_class="messaging",
                     runbook="runbooks/observability/nats-backlog.md",
                     summary="Backlog elevado em mensageria",
@@ -275,10 +275,10 @@ def internal_alert_catalog() -> tuple[PrometheusRuleGroup, ...]:
                 ),
                 _rule(
                     alert="NatsConsumerLagHigh",
-                    expression='max by (service, environment, destination) (creditos_nats_consumer_lag_messages{environment=~".+"}) > 500',
+                    expression='max by (environment, source, destination) (creditos_event_consumer_lag{environment=~".+"}) > 500',
                     for_duration="10m",
                     severity=AlertSeverity.WARNING,
-                    service="{{ $labels.service }}",
+                    service="messaging",
                     signal_class="messaging",
                     runbook="runbooks/observability/nats-consumer-lag.md",
                     summary="Lag elevado em consumer",
@@ -287,10 +287,10 @@ def internal_alert_catalog() -> tuple[PrometheusRuleGroup, ...]:
                 ),
                 _rule(
                     alert="DeadLetterQueueGrowing",
-                    expression='sum by (service, environment, destination) (increase(creditos_dlq_messages_total{environment=~".+"}[15m])) > 0',
+                    expression='sum by (environment, source, destination) (increase(creditos_event_delivery_total{environment=~".+",status="dlq"}[15m])) > 0',
                     for_duration="5m",
                     severity=AlertSeverity.CRITICAL,
-                    service="{{ $labels.service }}",
+                    service="messaging",
                     signal_class="dlq",
                     runbook="runbooks/observability/dead-letter-queue.md",
                     summary="DLQ crescendo",
@@ -299,10 +299,10 @@ def internal_alert_catalog() -> tuple[PrometheusRuleGroup, ...]:
                 ),
                 _rule(
                     alert="ReplayOrReprocessStalled",
-                    expression='max by (service, environment, operation) (creditos_reprocess_oldest_age_seconds{environment=~".+"}) > 1800',
+                    expression='max by (environment, source, destination) (creditos_event_message_age_seconds{environment=~".+"}) > 1800',
                     for_duration="15m",
                     severity=AlertSeverity.WARNING,
-                    service="{{ $labels.service }}",
+                    service="messaging",
                     signal_class="reprocess",
                     runbook="runbooks/observability/reprocess-stalled.md",
                     summary="Reprocessamento parado",
@@ -316,7 +316,7 @@ def internal_alert_catalog() -> tuple[PrometheusRuleGroup, ...]:
             (
                 _rule(
                     alert="AuditCriticalFailure",
-                    expression='sum by (service, environment, operation) (increase(creditos_audit_critical_failures_total{environment=~".+"}[5m])) > 0',
+                    expression='sum by (service, environment, status) (increase(creditos_audit_critical_failure_total{environment=~".+"}[5m])) > 0',
                     for_duration="1m",
                     severity=AlertSeverity.CRITICAL,
                     service="{{ $labels.service }}",
@@ -328,7 +328,7 @@ def internal_alert_catalog() -> tuple[PrometheusRuleGroup, ...]:
                 ),
                 _rule(
                     alert="CrossTenantAttemptDetected",
-                    expression='sum by (service, environment, tenant_isolation_tier) (increase(creditos_cross_boundary_attempts_total{environment=~".+"}[5m])) > 0',
+                    expression='sum by (service, environment, tenant_isolation_tier) (increase(creditos_cross_tenant_attempt_total{environment=~".+"}[5m])) > 0',
                     for_duration="1m",
                     severity=AlertSeverity.CRITICAL,
                     service="{{ $labels.service }}",
@@ -340,7 +340,7 @@ def internal_alert_catalog() -> tuple[PrometheusRuleGroup, ...]:
                 ),
                 _rule(
                     alert="SensitiveDataLeakPotential",
-                    expression='sum by (service, environment, operation) (increase(creditos_privacy_gate_failures_total{environment=~".+"}[5m])) > 0',
+                    expression='sum by (service, environment, status) (increase(creditos_privacy_gate_total{environment=~".+",status=~"failed|blocked"}[5m])) > 0',
                     for_duration="1m",
                     severity=AlertSeverity.CRITICAL,
                     service="{{ $labels.service }}",
@@ -357,7 +357,7 @@ def internal_alert_catalog() -> tuple[PrometheusRuleGroup, ...]:
             (
                 _rule(
                     alert="ExternalIntegrationFailureRateHigh",
-                    expression='sum by (service, environment, integration_class, destination) (rate(creditos_integration_requests_total{environment=~".+",status=~"error|failed"}[5m])) / sum by (service, environment, integration_class, destination) (rate(creditos_integration_requests_total{environment=~".+"}[5m])) > 0.10',
+                    expression='sum by (service, environment, integration_class, destination) (rate(creditos_requests_total{environment=~".+",operation_type="integration",status=~"failed|timeout"}[5m])) / clamp_min(sum by (service, environment, integration_class, destination) (rate(creditos_requests_total{environment=~".+",operation_type="integration"}[5m])), 0.001) > 0.10',
                     for_duration="10m",
                     severity=AlertSeverity.WARNING,
                     service="{{ $labels.service }}",
@@ -369,7 +369,7 @@ def internal_alert_catalog() -> tuple[PrometheusRuleGroup, ...]:
                 ),
                 _rule(
                     alert="ExternalIntegrationTimeoutHigh",
-                    expression='sum by (service, environment, integration_class, destination) (increase(creditos_integration_timeouts_total{environment=~".+"}[10m])) > 5',
+                    expression='sum by (service, environment, integration_class, destination) (increase(creditos_requests_total{environment=~".+",operation_type="integration",status="timeout"}[10m])) > 5',
                     for_duration="10m",
                     severity=AlertSeverity.WARNING,
                     service="{{ $labels.service }}",
@@ -381,7 +381,7 @@ def internal_alert_catalog() -> tuple[PrometheusRuleGroup, ...]:
                 ),
                 _rule(
                     alert="ExternalIntegrationFallbackHigh",
-                    expression='sum by (service, environment, integration_class, destination) (increase(creditos_integration_fallbacks_total{environment=~".+"}[15m])) > 10',
+                    expression='sum by (service, environment, integration_class, destination) (increase(creditos_requests_total{environment=~".+",operation_type="integration",status="fallback"}[15m])) > 10',
                     for_duration="15m",
                     severity=AlertSeverity.INFO,
                     service="{{ $labels.service }}",
@@ -899,5 +899,5 @@ def _format_list(value: list[Any], *, indent: int) -> str:
 def _format_scalar(value: Any) -> str:
     if not isinstance(value, str):
         return str(value)
-    escaped = value.replace('"', '\\"')
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'

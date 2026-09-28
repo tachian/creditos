@@ -45,7 +45,7 @@ groups:
           runbook: "runbooks/observability/high-latency.md"
           summary: "Latência p99 crítica por serviço"
       - alert: "ServiceSaturation"
-        expr: "max by (service, environment, operation) (creditos_service_resource_saturation_ratio{environment=~\".+\"}) > 0.85"
+        expr: "max by (service, environment) (creditos_service_saturation_ratio{environment=~\".+\"}) > 0.85"
         for: "10m"
         keep_firing_for: "5m"
         labels:
@@ -59,7 +59,7 @@ groups:
           runbook: "runbooks/observability/service-saturation.md"
           summary: "Saturação elevada por serviço"
       - alert: "HealthReadinessDown"
-        expr: "min by (service, environment, operation) (creditos_service_ready{environment=~\".+\"}) < 1"
+        expr: "min by (service, environment) (creditos_service_readiness{environment=~\".+\"}) < 1 or min by (service, environment) (creditos_service_health{environment=~\".+\"}) < 1"
         for: "2m"
         keep_firing_for: "5m"
         labels:
@@ -76,12 +76,12 @@ groups:
     interval: "30s"
     rules:
       - alert: "NatsJetStreamBacklogHigh"
-        expr: "sum by (service, environment, source) (creditos_nats_backlog_messages{environment=~\".+\"}) > 1000"
+        expr: "sum by (environment, source, destination) (creditos_event_backlog{environment=~\".+\"}) > 1000"
         for: "10m"
         keep_firing_for: "5m"
         labels:
           environment: "{{ $labels.environment }}"
-          service: "{{ $labels.service }}"
+          service: "messaging"
           severity: "warning"
           signal_class: "messaging"
         annotations:
@@ -90,12 +90,12 @@ groups:
           runbook: "runbooks/observability/nats-backlog.md"
           summary: "Backlog elevado em mensageria"
       - alert: "NatsConsumerLagHigh"
-        expr: "max by (service, environment, destination) (creditos_nats_consumer_lag_messages{environment=~\".+\"}) > 500"
+        expr: "max by (environment, source, destination) (creditos_event_consumer_lag{environment=~\".+\"}) > 500"
         for: "10m"
         keep_firing_for: "5m"
         labels:
           environment: "{{ $labels.environment }}"
-          service: "{{ $labels.service }}"
+          service: "messaging"
           severity: "warning"
           signal_class: "messaging"
         annotations:
@@ -104,12 +104,12 @@ groups:
           runbook: "runbooks/observability/nats-consumer-lag.md"
           summary: "Lag elevado em consumer"
       - alert: "DeadLetterQueueGrowing"
-        expr: "sum by (service, environment, destination) (increase(creditos_dlq_messages_total{environment=~\".+\"}[15m])) > 0"
+        expr: "sum by (environment, source, destination) (increase(creditos_event_delivery_total{environment=~\".+\",status=\"dlq\"}[15m])) > 0"
         for: "5m"
         keep_firing_for: "5m"
         labels:
           environment: "{{ $labels.environment }}"
-          service: "{{ $labels.service }}"
+          service: "messaging"
           severity: "critical"
           signal_class: "dlq"
         annotations:
@@ -118,12 +118,12 @@ groups:
           runbook: "runbooks/observability/dead-letter-queue.md"
           summary: "DLQ crescendo"
       - alert: "ReplayOrReprocessStalled"
-        expr: "max by (service, environment, operation) (creditos_reprocess_oldest_age_seconds{environment=~\".+\"}) > 1800"
+        expr: "max by (environment, source, destination) (creditos_event_message_age_seconds{environment=~\".+\"}) > 1800"
         for: "15m"
         keep_firing_for: "5m"
         labels:
           environment: "{{ $labels.environment }}"
-          service: "{{ $labels.service }}"
+          service: "messaging"
           severity: "warning"
           signal_class: "reprocess"
         annotations:
@@ -135,7 +135,7 @@ groups:
     interval: "30s"
     rules:
       - alert: "AuditCriticalFailure"
-        expr: "sum by (service, environment, operation) (increase(creditos_audit_critical_failures_total{environment=~\".+\"}[5m])) > 0"
+        expr: "sum by (service, environment, status) (increase(creditos_audit_critical_failure_total{environment=~\".+\"}[5m])) > 0"
         for: "1m"
         keep_firing_for: "5m"
         labels:
@@ -149,7 +149,7 @@ groups:
           runbook: "runbooks/observability/audit-critical-failure.md"
           summary: "Falha crítica de auditoria"
       - alert: "CrossTenantAttemptDetected"
-        expr: "sum by (service, environment, tenant_isolation_tier) (increase(creditos_cross_boundary_attempts_total{environment=~\".+\"}[5m])) > 0"
+        expr: "sum by (service, environment, tenant_isolation_tier) (increase(creditos_cross_tenant_attempt_total{environment=~\".+\"}[5m])) > 0"
         for: "1m"
         keep_firing_for: "5m"
         labels:
@@ -163,7 +163,7 @@ groups:
           runbook: "runbooks/observability/cross-boundary-attempt.md"
           summary: "Tentativa de acesso entre tenants detectada"
       - alert: "SensitiveDataLeakPotential"
-        expr: "sum by (service, environment, operation) (increase(creditos_privacy_gate_failures_total{environment=~\".+\"}[5m])) > 0"
+        expr: "sum by (service, environment, status) (increase(creditos_privacy_gate_total{environment=~\".+\",status=~\"failed|blocked\"}[5m])) > 0"
         for: "1m"
         keep_firing_for: "5m"
         labels:
@@ -180,7 +180,7 @@ groups:
     interval: "30s"
     rules:
       - alert: "ExternalIntegrationFailureRateHigh"
-        expr: "sum by (service, environment, integration_class, destination) (rate(creditos_integration_requests_total{environment=~\".+\",status=~\"error|failed\"}[5m])) / sum by (service, environment, integration_class, destination) (rate(creditos_integration_requests_total{environment=~\".+\"}[5m])) > 0.10"
+        expr: "sum by (service, environment, integration_class, destination) (rate(creditos_requests_total{environment=~\".+\",operation_type=\"integration\",status=~\"failed|timeout\"}[5m])) / clamp_min(sum by (service, environment, integration_class, destination) (rate(creditos_requests_total{environment=~\".+\",operation_type=\"integration\"}[5m])), 0.001) > 0.10"
         for: "10m"
         keep_firing_for: "5m"
         labels:
@@ -194,7 +194,7 @@ groups:
           runbook: "runbooks/observability/external-integration-failures.md"
           summary: "Falhas elevadas em integração externa"
       - alert: "ExternalIntegrationTimeoutHigh"
-        expr: "sum by (service, environment, integration_class, destination) (increase(creditos_integration_timeouts_total{environment=~\".+\"}[10m])) > 5"
+        expr: "sum by (service, environment, integration_class, destination) (increase(creditos_requests_total{environment=~\".+\",operation_type=\"integration\",status=\"timeout\"}[10m])) > 5"
         for: "10m"
         keep_firing_for: "5m"
         labels:
@@ -208,7 +208,7 @@ groups:
           runbook: "runbooks/observability/external-integration-timeouts.md"
           summary: "Timeout elevado em integração externa"
       - alert: "ExternalIntegrationFallbackHigh"
-        expr: "sum by (service, environment, integration_class, destination) (increase(creditos_integration_fallbacks_total{environment=~\".+\"}[15m])) > 10"
+        expr: "sum by (service, environment, integration_class, destination) (increase(creditos_requests_total{environment=~\".+\",operation_type=\"integration\",status=\"fallback\"}[15m])) > 10"
         for: "15m"
         keep_firing_for: "5m"
         labels:
