@@ -179,6 +179,31 @@ endpoints externos, tokens ou credenciais. A configuração real de roteamento d
 incidentes deve ser feita em IaC e gestão de segredos nas etapas operacionais
 futuras.
 
+## Projeções de métricas de negócio
+
+As métricas de negócio customer-facing devem ser produzidas pelo
+`Reporting & Insights Service` a partir de eventos minimizados e autorizados,
+mantendo read models curados por tenant/produto/canal/período. Essas projeções
+não são telemetria técnica e não devem consultar bancos transacionais de outros
+serviços.
+
+A primeira base de projeção cobre funil, decisões, reason codes governados,
+integrações, custos em unidades inteiras, latência, erros e freshness. A
+freshness usa `last_event_time`, `last_processed_at`, `lag_seconds` e status,
+permitindo medir o objetivo interno de atualização das visões operacionais sem
+transformá-lo em SLA contratual nesta etapa.
+
+`tenant_id` é dimensão permitida no read model de negócio porque a consulta é
+isolada por tenant. Isso não autoriza usar `tenant_id`, `proposal_id`,
+`decision_id`, `correlation_id`, `request_id`, `trace_id`, CPF, CNPJ, e-mail,
+payload, prompt/output ou erro bruto como label técnica, dimensão livre de
+dashboard ou campo de agregação customer-facing.
+
+Duplicatas devem ser ignoradas antes de alterar contadores, usando `source +
+event_id` e `idempotency_key` quando disponível. Eventos fora de ordem podem
+atualizar contadores históricos, mas não devem reduzir `last_event_time` nem
+`last_processed_at` da projeção.
+
 ## Health e Readiness
 
 Health indica se o processo está vivo. Readiness indica se o componente está
