@@ -136,8 +136,10 @@ o contrato operacional de logs estruturados fica no próprio CreditOS; integraç
 com Collector pode evoluir sem trocar o formato seguro dos eventos.
 
 Dashboards customer-facing não consomem logs crus, traces crus nem séries brutas
-de Prometheus. Eles devem consumir projeções agregadas, autorizadas e isoladas
-por tenant, definidas nas stories posteriores do Epic 7.
+de Prometheus. Eles consomem apenas projeções agregadas, autorizadas e isoladas
+por tenant, montadas no `Reporting & Insights` por contrato interno testável.
+Essa visão é separada dos dashboards Grafana internos e não carrega queries,
+datasources, credenciais, payloads, traces ou métricas de infraestrutura.
 
 ## Dashboards técnicos internos
 
@@ -203,6 +205,37 @@ Duplicatas devem ser ignoradas antes de alterar contadores, usando `source +
 event_id` e `tenant + event_type + schema_version + idempotency_key` quando
 disponível. Eventos fora de ordem podem atualizar contadores históricos, mas
 não devem reduzir `last_event_time` nem `last_processed_at` da projeção.
+
+## Dashboards customer-facing curados
+
+O dashboard customer-facing do MVP é uma visão de leitura curada por tenant,
+derivada das projeções de negócio do `Reporting & Insights`. Ele deve ser
+consultado com contexto confiável e escopo mínimo `dashboard:read` ou
+`reporting:read`; o tenant não pode vir de payload livre nem de parâmetro
+externo com autoridade própria.
+
+Campos permitidos nessa visão:
+
+- tenant de referência seguro, produto, canal e período;
+- funil, decisões e reason codes governados;
+- integrações agregadas por classe, callbacks, revisão automatizada e custos em
+  unidades inteiras;
+- latência agregada, erros agregados, freshness e saúde operacional curada;
+- incidentes/degradações descritos por impacto ao tenant, sem detalhes de
+  infraestrutura.
+
+Campos proibidos nessa visão:
+
+- dados pessoais, documentos, endereço, identificadores livres de proposta ou
+  decisão, tokens, credenciais, payloads, prompts/outputs e evidências
+  restritas;
+- logs crus, traces crus, spans, PromQL, nomes de pods/nós/hosts, CPU, memória,
+  topologia, stack trace, datasource real ou URLs internas;
+- moeda, preço comercial, tarifa, fatura ou billing derivado.
+
+A UI final, layout, linguagem visual, navegação e jornadas de cliente ainda
+dependem de uma etapa posterior com `bmad-ux`. A entrega atual é o contrato de
+dados e os gates locais que garantem isolamento, autorização e minimização.
 
 ## Health e Readiness
 
