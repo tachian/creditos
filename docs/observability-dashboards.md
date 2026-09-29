@@ -1,4 +1,4 @@
-# Dashboards Técnicos Internos
+# Dashboards Técnicos Internos e Visões Customer-facing
 
 Esta documentação descreve os dashboards técnicos internos versionados para o
 CreditOS. Eles são artefatos operacionais internos e não devem ser usados como
@@ -75,3 +75,28 @@ controlado de release para commit/digest publicado pela pipeline.
 - Dashboards customer-facing devem consumir projeções curadas do
   `Reporting & Insights`, nunca estes dashboards internos ou telemetria bruta.
 - Alertas, SLO watch e regras do Alertmanager são responsabilidade da Story 7.3.
+
+## Visão customer-facing curada
+
+A visão customer-facing do Epic 7 não é um dashboard Grafana nesta etapa. Ela é
+um view model do `Reporting & Insights`, criado a partir de snapshots de negócio
+por tenant e validado localmente sem Grafana, Prometheus, Loki, Tempo, banco
+real, rede ou credenciais.
+
+Essa visão expõe apenas cards agregados e seguros:
+
+- funil, decisões, reason codes governados, revisão automatizada e callbacks;
+- integrações por classe, custo em unidades inteiras, latência agregada, erros e
+  freshness;
+- saúde operacional por componente lógico (`api`, `callbacks`, `integrations`)
+  com estados `operational`, `degraded`, `unavailable` ou `unknown`;
+- incidentes/degradações por impacto visível ao tenant, sem topologia interna.
+
+Essa visão não pode conter PromQL, datasource real, queries de telemetria bruta,
+logs, traces, payloads, dados pessoais, identificadores livres, segredos, nomes
+de pods/nós/hosts, CPU, memória, stack traces, moeda, preço comercial ou
+faturamento.
+
+O refinamento visual, layout, navegação, textos de interface e jornada do
+cliente devem ser tratados posteriormente no fluxo `bmad-ux`. Até lá, o contrato
+backend/view model é a referência para futura API ou UI.

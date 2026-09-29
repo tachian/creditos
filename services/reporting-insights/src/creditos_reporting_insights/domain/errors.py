@@ -38,3 +38,14 @@ class BusinessProjectionTenantError(ReportingInsightsDomainError):
 class BusinessProjectionNotFoundError(ReportingInsightsDomainError):
     code = "business_projection_not_found"
     safe_message = "projeção de negócio não encontrada"
+
+
+class CustomerDashboardAuthorizationError(ReportingInsightsDomainError):
+    code = "customer_dashboard_authorization_error"
+    safe_message = "acesso ao dashboard customer-facing negado"
+    grpc_status = "PERMISSION_DENIED"
+
+
+class CustomerDashboardPrivacyError(ReportingInsightsDomainError):
+    code = "customer_dashboard_privacy_error"
+    safe_message = "dashboard customer-facing contém dado não permitido"
