@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from creditos_observability import validate_customer_facing_observability_payload
 from creditos_reporting_insights.adapters.persistence import (
     in_memory_business_projection_repository as projection_repositories,
 )
@@ -89,6 +90,32 @@ def test_builds_customer_dashboard_from_curated_projection_only() -> None:
     assert sections["operational_health"]["cards"]["api"]["status"] == "unknown"
     assert "tenant-beta" not in serialized
     assert all(term not in serialized.lower() for term in _forbidden_terms())
+
+
+def test_customer_dashboard_output_passes_epic7_exposure_gate() -> None:
+    repository = projection_repositories.InMemoryBusinessProjectionRepository()
+    reporting_service = _reporting_service(repository)
+    dashboard_service = CustomerDashboardService(repository=repository)
+
+    _record_complete_flow(
+        reporting_service,
+        tenant_id="tenant-alpha",
+        occurred_at=_utc_now() - timedelta(seconds=60),
+    )
+
+    dashboard = dashboard_service.build_dashboard(
+        context=CustomerDashboardAccessContext(
+            tenant_id="tenant-alpha",
+            scopes=frozenset({"dashboard:read"}),
+        )
+    )
+
+    validate_customer_facing_observability_payload(
+        dashboard.to_dict(),
+        expected_tenant_ref="tenant-alpha",
+        granted_scopes=frozenset({"dashboard:read"}),
+        curated_source="reporting_insights_projection",
+    )
 
 
 def test_customer_dashboard_denies_missing_scope_before_loading_projection() -> None:

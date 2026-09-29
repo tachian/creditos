@@ -23,6 +23,14 @@ from creditos_observability.dashboards import (
     internal_dashboard_catalog,
     validate_dashboard_catalog,
 )
+from creditos_observability.gates import (
+    ObservabilityCapability,
+    ObservabilitySignal,
+    observability_gate_catalog,
+    validate_customer_facing_observability_payload,
+    validate_observability_exposure_payload,
+    validate_observability_gate_catalog,
+)
 from creditos_observability.health import health_response, readiness_response
 from creditos_observability.logging import build_structured_log
 from creditos_observability.telemetry import (
@@ -44,19 +52,25 @@ __all__ = [
     "internal_alert_catalog",
     "validate_alert_catalog",
     "InMemoryTelemetry",
+    "ObservabilityCapability",
     "DashboardDefinition",
     "DashboardPanel",
     "DashboardScope",
     "DashboardTarget",
     "DashboardVariable",
     "ObservabilityContext",
+    "ObservabilitySignal",
     "TechnicalSignal",
     "TelemetryOperationType",
     "build_structured_log",
     "export_grafana_dashboard",
     "health_response",
     "internal_dashboard_catalog",
+    "observability_gate_catalog",
     "readiness_response",
+    "validate_customer_facing_observability_payload",
+    "validate_observability_exposure_payload",
+    "validate_observability_gate_catalog",
     "technical_signal_taxonomy",
     "validate_dashboard_catalog",
 ]
