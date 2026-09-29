@@ -13,6 +13,7 @@ members = [
     "creditos-integration",
     "creditos-observability",
     "creditos-proposal-intake",
+    "creditos-reporting-insights",
     "creditos-security",
     "creditos-service-template",
 ]
@@ -169,6 +170,23 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "creditos-observability", editable = "packages/observability" },
+    { name = "creditos-security", editable = "packages/security" },
+]
+
+[[package]]
+name = "creditos-reporting-insights"
+version = "0.1.0"
+source = { editable = "services/reporting-insights" }
+dependencies = [
+    { name = "creditos-contracts" },
+    { name = "creditos-observability" },
+    { name = "creditos-security" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "creditos-contracts", editable = "packages/contracts" },
     { name = "creditos-observability", editable = "packages/observability" },
     { name = "creditos-security", editable = "packages/security" },
 ]
