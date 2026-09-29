@@ -39,6 +39,17 @@ _OPERATION_REQUIRED_SIGNALS = frozenset(
     }
 )
 _REQUIRED_SERVICE_SIGNALS = frozenset({ObservabilitySignal.HEALTH, ObservabilitySignal.READINESS})
+_CRITICAL_SERVICE_NAMES = frozenset(
+    {
+        "audit-evidence",
+        "automated-review",
+        "decision",
+        "identity-tenant",
+        "integration",
+        "proposal-intake",
+        "reporting-insights",
+    }
+)
 _SAFE_REDACTED_VALUES = frozenset({"[OMITIDO]", "[DADO_FINANCEIRO_OMITIDO]"})
 _CUSTOMER_FACING_SCOPES = frozenset({"dashboard:read", "reporting:read"})
 _CURATED_CUSTOMER_FACING_SOURCES = frozenset(
@@ -50,6 +61,7 @@ _MAX_SCAN_DEPTH = 12
 _RAW_CPF_PATTERN = re.compile(r"(?<!\d)(?:\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?!\d)")
 _RAW_CNPJ_PATTERN = re.compile(r"(?<!\d)(?:\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})(?!\d)")
 _RAW_EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_RAW_PHONE_PATTERN = re.compile(r"(?<!\d)(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}-?\d{4}(?!\d)")
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"(?i)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
     r"password|senha|secret|token)\s*[:=]\s*[^\s,;]}]+"
@@ -167,31 +179,37 @@ _SAFE_CUSTOMER_KEY_VALUES = frozenset({"tenant_ref", "tenant_isolation_tier"})
 def observability_gate_catalog() -> tuple[ObservabilityCapability, ...]:
     operation_capabilities = tuple(
         ObservabilityCapability(
-            name=f"{operation_type.value}_operation",
-            service_name="creditos-services",
+            name=f"{service_name}_{operation_type.value}_operation",
+            service_name=service_name,
             operation_type=operation_type,
             required_signals=tuple(sorted(_OPERATION_REQUIRED_SIGNALS, key=str)),
             description=(
                 "Operações críticas devem emitir log estruturado, métrica, span e "
-                "correlation ID com validação local."
+                "correlation ID com validação local por serviço."
             ),
         )
+        for service_name in sorted(_CRITICAL_SERVICE_NAMES)
         for operation_type in TelemetryOperationType
     )
-    return operation_capabilities + (
-        ObservabilityCapability(
-            name="service_health",
-            service_name="creditos-services",
-            required_signals=(ObservabilitySignal.HEALTH,),
-            description="Todo serviço deve expor health seguro e minimizado.",
-        ),
-        ObservabilityCapability(
-            name="service_readiness",
-            service_name="creditos-services",
-            required_signals=(ObservabilitySignal.READINESS,),
-            description="Todo serviço deve expor readiness seguro e minimizado.",
-        ),
+    service_capabilities = tuple(
+        capability
+        for service_name in sorted(_CRITICAL_SERVICE_NAMES)
+        for capability in (
+            ObservabilityCapability(
+                name=f"{service_name}_service_health",
+                service_name=service_name,
+                required_signals=(ObservabilitySignal.HEALTH,),
+                description="Todo serviço deve expor health seguro e minimizado.",
+            ),
+            ObservabilityCapability(
+                name=f"{service_name}_service_readiness",
+                service_name=service_name,
+                required_signals=(ObservabilitySignal.READINESS,),
+                description="Todo serviço deve expor readiness seguro e minimizado.",
+            ),
+        )
     )
+    return operation_capabilities + service_capabilities
 
 
 def validate_observability_gate_catalog(
@@ -202,18 +220,20 @@ def validate_observability_gate_catalog(
         raise ValueError("catálogo de gates de observabilidade não pode ser vazio")
 
     seen_names: set[str] = set()
-    operation_types: set[TelemetryOperationType] = set()
+    services: set[str] = set()
     signals_by_service: dict[str, set[ObservabilitySignal]] = {}
-    operation_services: set[str] = set()
+    operations_by_service: dict[str, set[TelemetryOperationType]] = {}
 
     for capability in capabilities:
         _validate_capability_metadata(capability, seen_names)
+        services.add(capability.service_name)
         signals = frozenset(capability.required_signals)
         service_signals = signals_by_service.setdefault(capability.service_name, set())
         service_signals.update(signals)
         if capability.operation_type is not None:
-            operation_types.add(capability.operation_type)
-            operation_services.add(capability.service_name)
+            operations_by_service.setdefault(capability.service_name, set()).add(
+                capability.operation_type
+            )
             missing = _OPERATION_REQUIRED_SIGNALS - signals
             if missing:
                 raise ValueError(
@@ -221,15 +241,22 @@ def validate_observability_gate_catalog(
                     f"{', '.join(sorted(signal.value for signal in missing))}"
                 )
 
-    missing_operations = set(TelemetryOperationType) - operation_types
-    if missing_operations:
-        raise ValueError(
-            "catálogo sem coverage para operações: "
-            f"{', '.join(sorted(operation.value for operation in missing_operations))}"
-        )
+    missing_services = _CRITICAL_SERVICE_NAMES - services
+    if missing_services:
+        raise ValueError(f"catálogo sem serviços críticos: {', '.join(sorted(missing_services))}")
 
-    for service_name in sorted(operation_services):
-        missing_service_signals = _REQUIRED_SERVICE_SIGNALS - signals_by_service[service_name]
+    for service_name in sorted(_CRITICAL_SERVICE_NAMES):
+        missing_operations = set(TelemetryOperationType) - operations_by_service.get(
+            service_name, set()
+        )
+        if missing_operations:
+            raise ValueError(
+                f"serviço {service_name} sem coverage para operações: "
+                f"{', '.join(sorted(operation.value for operation in missing_operations))}"
+            )
+        missing_service_signals = _REQUIRED_SERVICE_SIGNALS - signals_by_service.get(
+            service_name, set()
+        )
         if missing_service_signals:
             raise ValueError(
                 f"serviço {service_name} sem sinais de serviço: "
@@ -348,6 +375,10 @@ def _scan_payload(
         yield from _scan_text(payload, exposure=exposure, path=path)
         return
 
+    if isinstance(payload, int) and not isinstance(payload, bool):
+        yield from _scan_numeric_identifier(payload, path=path)
+        return
+
     if isinstance(payload, bytes | bytearray | memoryview):
         if payload:
             yield f"{path}:bytes"
@@ -408,6 +439,7 @@ def _scan_text(text: str, *, exposure: ExposureKind, path: str) -> Iterable[str]
         (_RAW_CPF_PATTERN, "cpf"),
         (_RAW_CNPJ_PATTERN, "cnpj"),
         (_RAW_EMAIL_PATTERN, "email"),
+        (_RAW_PHONE_PATTERN, "telefone"),
         (_SECRET_ASSIGNMENT_PATTERN, "secret_assignment"),
     ):
         if pattern.search(text):
@@ -438,6 +470,14 @@ def _scan_text(text: str, *, exposure: ExposureKind, path: str) -> Iterable[str]
     for term in sorted(forbidden_terms):
         if _matches_forbidden_text(lowered, term):
             yield f"{path}:{term}"
+
+
+def _scan_numeric_identifier(value: int, *, path: str) -> Iterable[str]:
+    digits = str(abs(value))
+    if len(digits) == 11 and _RAW_CPF_PATTERN.fullmatch(digits):
+        yield f"{path}:cpf"
+    if len(digits) == 14 and _RAW_CNPJ_PATTERN.fullmatch(digits):
+        yield f"{path}:cnpj"
 
 
 def _matches_forbidden_identifier(value: str, term: str) -> bool:

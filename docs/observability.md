@@ -242,10 +242,13 @@ dados e os gates locais que garantem isolamento, autorização e minimização.
 A Story 7.6 define gates locais para impedir regressões antes de produção. Esses
 gates verificam que capabilities críticas de HTTP, gRPC, evento, job e
 integração possuem matriz mínima de log estruturado, métrica, trace/span e
-correlation ID, além de health/readiness por serviço.
+correlation ID, além de health/readiness por serviço real do MVP:
+`identity-tenant`, `proposal-intake`, `integration`, `decision`,
+`automated-review`, `audit-evidence` e `reporting-insights`.
 
 Os gates de exposição validam artefatos técnicos internos e visões
-customer-facing serializadas. Para clientes, o gate exige tenant esperado,
+customer-facing serializadas, incluindo CPF/CNPJ textuais ou numéricos, e-mail,
+telefone, segredos e termos proibidos. Para clientes, o gate exige tenant esperado,
 escopo autorizado (`dashboard:read` ou `reporting:read`) e fonte curada do
 `Reporting & Insights`; Prometheus, Grafana, Loki, Tempo, PromQL, logs crus,
 traces crus, payloads, infraestrutura, identificadores livres, billing,

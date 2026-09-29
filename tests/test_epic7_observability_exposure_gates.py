@@ -25,41 +25,69 @@ def test_observability_gate_catalog_covers_required_capabilities_and_signals() -
 
     validate_observability_gate_catalog(catalog)
 
-    operation_capabilities = {
-        capability.operation_type for capability in catalog if capability.operation_type is not None
+    expected_services = {
+        "audit-evidence",
+        "automated-review",
+        "decision",
+        "identity-tenant",
+        "integration",
+        "proposal-intake",
+        "reporting-insights",
     }
-    assert operation_capabilities == set(TelemetryOperationType)
+    assert {capability.service_name for capability in catalog} >= expected_services
 
-    for operation_type in TelemetryOperationType:
-        capability = next(item for item in catalog if item.operation_type is operation_type)
-        assert set(capability.required_signals) >= {
-            ObservabilitySignal.STRUCTURED_LOG,
-            ObservabilitySignal.METRIC,
-            ObservabilitySignal.TRACE_SPAN,
-            ObservabilitySignal.CORRELATION_ID,
+    for service_name in expected_services:
+        service_capabilities = [
+            capability for capability in catalog if capability.service_name == service_name
+        ]
+        service_operations = {
+            capability.operation_type
+            for capability in service_capabilities
+            if capability.operation_type is not None
         }
+        assert service_operations == set(TelemetryOperationType)
 
-    all_signals = {signal for capability in catalog for signal in capability.required_signals}
-    assert {
-        ObservabilitySignal.HEALTH,
-        ObservabilitySignal.READINESS,
-    }.issubset(all_signals)
+        service_signals = {
+            signal for capability in service_capabilities for signal in capability.required_signals
+        }
+        assert {ObservabilitySignal.HEALTH, ObservabilitySignal.READINESS}.issubset(service_signals)
 
-    missing_trace_catalog = (
+        for operation_type in TelemetryOperationType:
+            capability = next(
+                item for item in service_capabilities if item.operation_type is operation_type
+            )
+            assert set(capability.required_signals) >= {
+                ObservabilitySignal.STRUCTURED_LOG,
+                ObservabilitySignal.METRIC,
+                ObservabilitySignal.TRACE_SPAN,
+                ObservabilitySignal.CORRELATION_ID,
+            }
+
+    missing_trace_catalog = tuple(
         ObservabilityCapability(
-            name="http_without_trace",
-            service_name="proposal-intake",
-            operation_type=TelemetryOperationType.HTTP,
+            name=capability.name,
+            service_name=capability.service_name,
+            operation_type=capability.operation_type,
             required_signals=(
                 ObservabilitySignal.STRUCTURED_LOG,
                 ObservabilitySignal.METRIC,
                 ObservabilitySignal.CORRELATION_ID,
             ),
-        ),
+            description=capability.description,
+        )
+        if capability.name == "proposal-intake_http_operation"
+        else capability
+        for capability in catalog
     )
 
-    with pytest.raises(ValueError, match="trace_span|gRPC|job|integration|readiness"):
+    with pytest.raises(ValueError, match="proposal-intake_http_operation|trace_span"):
         validate_observability_gate_catalog(missing_trace_catalog)
+
+    missing_service_catalog = tuple(
+        capability for capability in catalog if capability.service_name != "reporting-insights"
+    )
+    with pytest.raises(ValueError, match="reporting-insights"):
+        validate_observability_gate_catalog(missing_service_catalog)
 
 
 def test_technical_operation_artifacts_pass_exposure_gate_without_sensitive_values() -> None:
@@ -171,6 +199,9 @@ def test_customer_facing_payload_gate_blocks_telemetry_and_infrastructure_leaks(
         ({"message": "secret=valor-local"}, "secret"),
         ({"message": "cpf 12345678909"}, "cpf"),
         ({"message": "cnpj 11222333000181"}, "cnpj"),
+        ({"document": 12345678909}, "cpf"),
+        ({"document": 11222333000181}, "cnpj"),
+        ({"message": "+55 11 99999-4321"}, "telefone"),
         ({"prompt": "texto minimizado"}, "prompt"),
         ({"output": "texto minimizado"}, "output"),
     ],
@@ -263,25 +294,10 @@ def test_exposure_gate_rejects_invalid_exposure_and_problematic_iterables() -> N
 
 def test_observability_gate_catalog_requires_health_and_readiness_per_operation_service() -> None:
     catalog = tuple(
-        ObservabilityCapability(
-            name=f"{operation_type.value}_operation",
-            service_name="service-without-readiness",
-            operation_type=operation_type,
-            required_signals=(
-                ObservabilitySignal.STRUCTURED_LOG,
-                ObservabilitySignal.METRIC,
-                ObservabilitySignal.TRACE_SPAN,
-                ObservabilitySignal.CORRELATION_ID,
-            ),
-        )
-        for operation_type in TelemetryOperationType
-    ) + (
-        ObservabilityCapability(
-            name="other_service_health",
-            service_name="other-service",
-            required_signals=(ObservabilitySignal.HEALTH, ObservabilitySignal.READINESS),
-        ),
+        capability
+        for capability in observability_gate_catalog()
+        if capability.name != "proposal-intake_service_readiness"
     )
 
-    with pytest.raises(ValueError, match="service-without-readiness"):
+    with pytest.raises(ValueError, match="proposal-intake.*readiness"):
         validate_observability_gate_catalog(catalog)

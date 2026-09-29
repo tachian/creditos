@@ -76,17 +76,17 @@ tenant.
 Use `observability_gate_catalog()` e `validate_observability_gate_catalog()`
 para verificar, de forma local e determinística, a cobertura mínima de logs
 estruturados, métricas, traces/spans, health/readiness e correlation ID para
-operações HTTP, gRPC, evento, job e integração. Esse gate valida contrato e
-cobertura; ele não prova disponibilidade real de Collector, Prometheus, Grafana
-ou qualquer backend externo.
+operações HTTP, gRPC, evento, job e integração por serviço real do MVP. Esse
+gate valida contrato e cobertura; ele não prova disponibilidade real de
+Collector, Prometheus, Grafana ou qualquer backend externo.
 
 Use `validate_observability_exposure_payload()` para artefatos técnicos internos
 e `validate_customer_facing_observability_payload()` para respostas
 customer-facing. O gate customer-facing exige tenant esperado, escopo autorizado
 (`dashboard:read` ou `reporting:read`) e fonte curada do `Reporting & Insights`,
 além de bloquear Prometheus, Grafana, Loki, Tempo, PromQL, logs/traces crus,
-infraestrutura, payloads, dados pessoais, identificadores livres, billing,
-preço/moeda e segredos.
+infraestrutura, payloads, CPF/CNPJ/e-mail/telefone, documentos pessoais
+numéricos, identificadores livres, billing, preço/moeda e segredos.
 
 ## Dashboards técnicos internos
 

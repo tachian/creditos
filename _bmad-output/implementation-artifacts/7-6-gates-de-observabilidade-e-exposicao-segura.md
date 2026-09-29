@@ -144,6 +144,8 @@ GPT-5 Codex
 - `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/pyright`
 - `PATH="/tmp/creditos-bin:$PATH" .venv/bin/pytest -q`
 - `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/pyright && PATH="/tmp/creditos-bin:$PATH" .venv/bin/pytest -q`
+- `.venv/bin/ruff check packages/observability/src/creditos_observability/gates.py tests/test_epic7_observability_exposure_gates.py && .venv/bin/pyright packages/observability/src/creditos_observability/gates.py tests/test_epic7_observability_exposure_gates.py && .venv/bin/pytest tests/test_epic7_observability_exposure_gates.py -q`
+- `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/pyright && PATH="/tmp/creditos-bin:$PATH" .venv/bin/pytest -q`
 
 ### Completion Notes
 
@@ -155,6 +157,8 @@ GPT-5 Codex
 - Observação: o comando incorreto `.venv/bin/pyright .` analisou `.uv-python` e falhou fora do escopo do projeto; a execução correta `.venv/bin/pyright` passou com `0 errors`.
 - Code review BMAD concluído com `0 decision-needed`, `8 patch`, `0 defer` e `0 dismissed`; todos os patches foram aplicados, incluindo endurecimento de payload JSON-like, bloqueio de aliases sensíveis, validação explícita de `exposure`, RBAC/tenant/fonte curada customer-facing e redução de falsos positivos.
 - Validações após os patches de review: Ruff format/check global passou; Pyright global passou com `0 errors`; suíte completa passou com `770 passed` usando shim temporário de `uv` em `/tmp`.
+- Code review externo do PR #67 tratado: catálogo passou a enumerar os 7 serviços reais do MVP, o gate passou a detectar CPF/CNPJ numéricos e telefones brutos, e a documentação foi alinhada.
+- Validações após correções do PR #67: Ruff format/check global passou; Ruff check focado passou; Pyright focado/global passou com `0 errors`; suíte completa passou com `773 passed` usando shim temporário de `uv` em `/tmp`.
 
 ### File List
 
@@ -173,3 +177,4 @@ GPT-5 Codex
 - 2026-09-29 — Story detalhada, subtarefas Jira criadas e status marcado como `ready-for-dev`.
 - 2026-09-29 — Implementados gates de observabilidade/exposição segura, testes e documentação; status movido para `review`.
 - 2026-09-29 — Aplicados 8 patches do `bmad-code-review`; validações globais passaram e status movido para `done`.
+- 2026-09-29 — Corrigidos 3 pontos do code review externo no PR #67; validações globais passaram com `773 passed`.
