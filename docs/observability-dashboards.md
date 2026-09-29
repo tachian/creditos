@@ -67,6 +67,16 @@ lógico de baixa cardinalidade, sem host, schema, conexão ou credencial. O
 dashboard de deploy também pode usar `release_ref` como metadado técnico
 controlado de release para commit/digest publicado pela pipeline.
 
+## Gates Locais
+
+Os dashboards internos e a visão customer-facing devem passar por gates locais
+de exposição segura antes de produção. Para dashboards internos, o gate valida
+escopo interno, baixa cardinalidade, ausência de logs/traces crus, ausência de
+identificadores livres e inexistência de datasources ou credenciais reais. Para
+customer-facing, o gate valida RBAC/scopes, isolamento por tenant, minimização,
+fonte curada do `Reporting & Insights` e ausência de billing, preço, moeda ou
+bancos transacionais.
+
 ## Limites
 
 - Dashboards técnicos internos não são auditoria oficial.

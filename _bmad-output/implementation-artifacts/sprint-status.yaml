@@ -112,7 +112,7 @@ development_status:
   7-3-alertas-tecnicos-e-slo-watch: done
   7-4-projecoes-de-metricas-de-negocio: done
   7-5-dashboards-customer-facing-curados-por-tenant: done
-  7-6-gates-de-observabilidade-e-exposicao-segura: backlog
+  7-6-gates-de-observabilidade-e-exposicao-segura: done
   epic-7-retrospective: optional
   epic-8: backlog
   8-1-consulta-de-decisao-por-proposta: backlog

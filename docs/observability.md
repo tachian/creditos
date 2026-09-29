@@ -237,6 +237,27 @@ A UI final, layout, linguagem visual, navegação e jornadas de cliente ainda
 dependem de uma etapa posterior com `bmad-ux`. A entrega atual é o contrato de
 dados e os gates locais que garantem isolamento, autorização e minimização.
 
+## Gates de Observabilidade e Exposição Segura
+
+A Story 7.6 define gates locais para impedir regressões antes de produção. Esses
+gates verificam que capabilities críticas de HTTP, gRPC, evento, job e
+integração possuem matriz mínima de log estruturado, métrica, trace/span e
+correlation ID, além de health/readiness por serviço real do MVP:
+`identity-tenant`, `proposal-intake`, `integration`, `decision`,
+`automated-review`, `audit-evidence` e `reporting-insights`.
+
+Os gates de exposição validam artefatos técnicos internos e visões
+customer-facing serializadas, incluindo CPF/CNPJ textuais ou numéricos, e-mail,
+telefone, segredos e termos proibidos. Para clientes, o gate exige tenant esperado,
+escopo autorizado (`dashboard:read` ou `reporting:read`) e fonte curada do
+`Reporting & Insights`; Prometheus, Grafana, Loki, Tempo, PromQL, logs crus,
+traces crus, payloads, infraestrutura, identificadores livres, billing,
+preço/moeda e segredos são bloqueados.
+
+Essa validação é determinística e local: não exige Collector, Prometheus,
+Alertmanager, Loki, Tempo, Grafana, NATS, Docker, rede ou credenciais reais. Ela
+não substitui testes operacionais de disponibilidade da stack futura.
+
 ## Health e Readiness
 
 Health indica se o processo está vivo. Readiness indica se o componente está
