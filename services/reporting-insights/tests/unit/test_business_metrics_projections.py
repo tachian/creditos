@@ -75,6 +75,19 @@ def test_projects_business_funnel_decisions_integrations_costs_and_freshness() -
             latency_ms=120,
         )
     )
+    enriched_result = service.record_event(
+        BusinessEvent.proposal(
+            event_id="evt-proposal-enriched-001",
+            source="creditos://proposal-intake",
+            tenant_id="tenant-alpha",
+            product_type=ProductType.PERSONAL_CREDIT,
+            occurred_at=occurred_at + timedelta(seconds=9),
+            processed_at=processed_at + timedelta(seconds=9),
+            channel=Channel.API,
+            funnel_status=ProposalFunnelStatus.ENRICHED,
+            idempotency_key="idem-proposal-enriched-001",
+        )
+    )
     review_result = service.record_event(
         BusinessEvent.ai_review(
             event_id="evt-review-001",
@@ -108,6 +121,7 @@ def test_projects_business_funnel_decisions_integrations_costs_and_freshness() -
     assert proposal_result.applied is True
     assert decision_result.applied is True
     assert integration_result.applied is True
+    assert enriched_result.applied is True
     assert review_result.applied is True
     assert callback_result.applied is True
     assert snapshot.funnel_counts["received"] == 1
@@ -149,6 +163,42 @@ def test_duplicate_events_are_idempotent_by_source_id_and_idempotency_key() -> N
     assert duplicate_by_idempotency_key.duplicate is True
     assert duplicate_by_idempotency_key.snapshot.funnel_counts["received"] == 1
     assert len(service.list_tenant_snapshots(tenant_id="tenant-alpha")) == 1
+
+
+def test_shared_idempotency_key_is_scoped_by_event_type_and_schema() -> None:
+    service = _service(processed_at=_utc_now())
+
+    proposal_result = service.record_event(
+        _proposal_event(event_id="evt-shared-proposal", idempotency_key="idem-shared")
+    )
+    integration_result = service.record_event(
+        BusinessEvent.integration(
+            event_id="evt-shared-integration",
+            source="creditos://integration",
+            tenant_id="tenant-alpha",
+            product_type=ProductType.BNPL,
+            occurred_at=_utc_now() - timedelta(seconds=10),
+            processed_at=_utc_now(),
+            channel=Channel.CHECKOUT,
+            integration_class="credit_bureau",
+            adapter_id="mock-bureau-v1",
+            provider_id="iprv_mock_provider_v1",
+            status=IntegrationStatus.SUCCEEDED,
+            idempotency_key="idem-shared",
+            actual_cost_units=10,
+        )
+    )
+
+    assert proposal_result.applied is True
+    assert integration_result.applied is True
+    assert integration_result.snapshot.funnel_counts["received"] == 1
+    assert (
+        integration_result.snapshot.integration_counts[
+            "credit_bureau|mock-bureau-v1|iprv_mock_provider_v1|succeeded"
+        ]
+        == 1
+    )
+    assert integration_result.snapshot.actual_cost_units == 10
 
 
 def test_duplicate_with_different_projection_key_returns_original_projection() -> None:
@@ -215,12 +265,13 @@ def test_out_of_order_event_counts_without_reducing_freshness() -> None:
     assert older_processed_at >= latest_processed_at
 
 
-def test_failed_integration_does_not_count_as_enriched() -> None:
+@pytest.mark.parametrize("status", [IntegrationStatus.FAILED, IntegrationStatus.SUCCEEDED])
+def test_integration_events_do_not_count_as_enriched(status: IntegrationStatus) -> None:
     service = _service(processed_at=_utc_now())
 
     result = service.record_event(
         BusinessEvent.integration(
-            event_id="evt-integration-failed",
+            event_id=f"evt-integration-{status.value}",
             source="integration",
             tenant_id="tenant-alpha",
             product_type=ProductType.BNPL,
@@ -229,14 +280,14 @@ def test_failed_integration_does_not_count_as_enriched() -> None:
             integration_class="credit_bureau",
             adapter_id="mock-bureau-v1",
             provider_id="iprv_mock_provider_v1",
-            status=IntegrationStatus.FAILED,
-            error_count=1,
+            status=status,
+            error_count=1 if status is IntegrationStatus.FAILED else 0,
         )
     )
 
     assert (
         result.snapshot.integration_counts[
-            "credit_bureau|mock-bureau-v1|iprv_mock_provider_v1|failed"
+            f"credit_bureau|mock-bureau-v1|iprv_mock_provider_v1|{status.value}"
         ]
         == 1
     )
@@ -318,6 +369,32 @@ def test_invalid_status_schema_timestamp_and_sensitive_reason_codes_are_rejected
             channel=Channel.CHECKOUT,
             outcome=DecisionOutcome.DECLINED,
             reason_codes=("person@example.com",),
+        )
+
+    with pytest.raises(BusinessEventValidationError):
+        BusinessEvent.decision(
+            event_id="evt-decision-sensitive-reason",
+            source="decision",
+            tenant_id="tenant-alpha",
+            product_type=ProductType.BNPL,
+            occurred_at=_utc_now(),
+            processed_at=_utc_now(),
+            channel=Channel.CHECKOUT,
+            outcome=DecisionOutcome.DECLINED,
+            reason_codes=("cpf_12345678901",),
+        )
+
+    with pytest.raises(BusinessEventValidationError):
+        BusinessEvent.decision(
+            event_id="evt-decision-ungoverned-reason",
+            source="decision",
+            tenant_id="tenant-alpha",
+            product_type=ProductType.BNPL,
+            occurred_at=_utc_now(),
+            processed_at=_utc_now(),
+            channel=Channel.CHECKOUT,
+            outcome=DecisionOutcome.DECLINED,
+            reason_codes=("custom_reason",),
         )
 
 

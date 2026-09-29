@@ -200,9 +200,9 @@ payload, prompt/output ou erro bruto como label técnica, dimensão livre de
 dashboard ou campo de agregação customer-facing.
 
 Duplicatas devem ser ignoradas antes de alterar contadores, usando `source +
-event_id` e `idempotency_key` quando disponível. Eventos fora de ordem podem
-atualizar contadores históricos, mas não devem reduzir `last_event_time` nem
-`last_processed_at` da projeção.
+event_id` e `tenant + event_type + schema_version + idempotency_key` quando
+disponível. Eventos fora de ordem podem atualizar contadores históricos, mas
+não devem reduzir `last_event_time` nem `last_processed_at` da projeção.
 
 ## Health e Readiness
 

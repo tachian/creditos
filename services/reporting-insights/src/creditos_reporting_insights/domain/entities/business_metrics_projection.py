@@ -11,7 +11,6 @@ from creditos_reporting_insights.domain.value_objects.business_events import (
     CallbackStatus,
     Channel,
     DecisionOutcome,
-    IntegrationStatus,
     ProductType,
     ProposalFunnelStatus,
     ReviewStatus,
@@ -205,8 +204,6 @@ class BusinessMetricsProjection:
         if event.latency_ms is not None:
             self._add(self.integration_total_latency_ms, dimension_key, event.latency_ms)
             self._increment(self.integration_latency_event_counts, dimension_key)
-        if event.integration_status is IntegrationStatus.SUCCEEDED:
-            self._increment_funnel(ProposalFunnelStatus.ENRICHED)
 
     def _freshness(self) -> FreshnessSnapshot:
         if self.last_event_time is None or self.last_processed_at is None:

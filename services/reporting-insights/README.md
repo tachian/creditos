@@ -30,7 +30,7 @@ Contratos públicos de decisão, IA e callback ainda não estão governados em `
 
 - Não persistir CPF, CNPJ, e-mail, nome, endereço, payloads, prompts, outputs, documentos, tokens, secrets ou identificadores brutos de proposta/decisão.
 - Não usar `proposal_id`, `decision_id`, `correlation_id`, `request_id` ou `trace_id` como dimensão de dashboard.
-- Duplicatas são tratadas antes dos contadores por `source + event_id` e por `idempotency_key`.
+- Duplicatas são tratadas antes dos contadores por `source + event_id` e por `tenant + event_type + schema_version + idempotency_key`.
 - Eventos fora de ordem são aceitos sem reduzir `last_event_time` ou `last_processed_at`.
 
 ## Antiobjetivos desta story

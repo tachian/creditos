@@ -14,7 +14,7 @@ from creditos_reporting_insights.domain.value_objects.contract_versions import (
     PROPOSAL_EVENT_SCHEMA_VERSION,
 )
 
-DeduplicationKey = tuple[str, str, str]
+DeduplicationKey = tuple[str, ...]
 
 _MAX_FUTURE_SKEW = timedelta(minutes=5)
 _MAX_COST_UNITS = 1_000_000_000
@@ -22,9 +22,28 @@ _MAX_LATENCY_MS = 120_000
 _MAX_ERROR_COUNT = 100
 _MAX_REASON_CODES = 20
 _TECHNICAL_REF_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{1,119}$")
+_CLOUDEVENT_SOURCE_PATTERN = re.compile(r"^creditos://[a-z0-9][a-z0-9_.-]{1,80}$")
 _ADAPTER_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,80}$")
 _PROVIDER_ID_PATTERN = re.compile(r"^iprv_[a-z0-9_.:-]{3,160}$")
 _REASON_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
+_ALLOWED_REASON_CODE_PREFIXES = (
+    "policy_",
+    "risk_",
+    "synthetic_",
+    "integration_",
+    "review_",
+    "callback_",
+    "data_",
+)
+_ALLOWED_CLOUDEVENT_SOURCES = frozenset(
+    {
+        "creditos://proposal-intake",
+        "creditos://integration",
+        "creditos://decision",
+        "creditos://automated-review",
+        "creditos://callback-dispatcher",
+    }
+)
 _ALLOWED_INTEGRATION_CLASSES = frozenset(
     {
         "kyc_kyb",
@@ -168,7 +187,7 @@ class BusinessEvent:
             _validate_enum(self.channel, Channel, field_path="channel")
         _validate_schema_version(self.event_type, self.schema_version)
         _validate_technical_ref(self.event_id, field_path="event_id")
-        _validate_technical_ref(self.source, field_path="source")
+        _validate_event_source(self.source)
         _validate_technical_ref(self.tenant_id, field_path="tenant_id")
         _validate_timestamp(self.occurred_at, field_path="occurred_at")
         _validate_timestamp(self.processed_at, field_path="processed_at")
@@ -221,7 +240,15 @@ class BusinessEvent:
     def deduplication_keys(self) -> tuple[DeduplicationKey, ...]:
         keys = [self.canonical_event_key]
         if self.idempotency_key is not None:
-            keys.append(("idempotency_key", self.tenant_id, self.idempotency_key))
+            keys.append(
+                (
+                    "idempotency_key",
+                    self.tenant_id,
+                    self.event_type.value,
+                    self.schema_version,
+                    self.idempotency_key,
+                )
+            )
         return tuple(keys)
 
     @property
@@ -489,6 +516,8 @@ def _validate_reason_codes(reason_codes: tuple[str, ...]) -> None:
         if (
             not isinstance(reason_code, str)
             or not _REASON_CODE_PATTERN.fullmatch(reason_code)
+            or not reason_code.startswith(_ALLOWED_REASON_CODE_PREFIXES)
+            or _has_forbidden_dimension_key("reason_code", reason_code)
             or mask_text(reason_code) != reason_code
         ):
             raise BusinessEventValidationError(
@@ -545,6 +574,18 @@ def _validate_integration_dimension(
             code=f"business_event_invalid_{field_path}",
             field_path=field_path,
         )
+
+
+def _validate_event_source(value: str) -> None:
+    if (
+        isinstance(value, str)
+        and value in _ALLOWED_CLOUDEVENT_SOURCES
+        and _CLOUDEVENT_SOURCE_PATTERN.fullmatch(value)
+        and not _has_forbidden_dimension_key("source", value)
+        and mask_text(value) == value
+    ):
+        return
+    _validate_technical_ref(value, field_path="source")
 
 
 def _validate_technical_ref(value: str, *, field_path: str) -> None:
