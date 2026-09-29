@@ -106,14 +106,14 @@ development_status:
   6-6-logs-estruturados-e-mascaramento-obrigatorio: done
   6-7-gates-de-auditoria-logs-e-dados-sensiveis: done
   epic-6-retrospective: done
-  epic-7: in-progress
+  epic-7: done
   7-1-instrumentacao-tecnica-base-com-opentelemetry: done
   7-2-dashboards-tecnicos-internos: done
   7-3-alertas-tecnicos-e-slo-watch: done
   7-4-projecoes-de-metricas-de-negocio: done
   7-5-dashboards-customer-facing-curados-por-tenant: done
   7-6-gates-de-observabilidade-e-exposicao-segura: done
-  epic-7-retrospective: optional
+  epic-7-retrospective: done
   epic-8: backlog
   8-1-consulta-de-decisao-por-proposta: backlog
   8-2-contrato-publico-de-status-e-decisao: backlog
@@ -144,16 +144,28 @@ action_items:
   - epic: 6
     action: "Definir catálogo de sinais observáveis permitidos para Epic 7."
     owner: "Winston (Architect) + Amelia (Developer)"
-    status: open
+    status: done
   - epic: 6
     action: "Criar checklist de privacidade e tenancy para dashboards e alertas."
     owner: "Dana (QA Engineer) + Paige (Technical Writer)"
-    status: open
+    status: done
   - epic: 6
     action: "Registrar deferred work operacional para persistência real de auditoria e WORM real."
     owner: "Amelia (Developer) + Winston (Architect)"
     status: open
   - epic: 6
     action: "Estabilizar ou documentar o caminho operacional único de validação local completa."
+    owner: "Amelia (Developer) + Paige (Technical Writer)"
+    status: in-progress
+  - epic: 7
+    action: "Definir contrato público mínimo de consulta/status/decisão antes das Stories 8.1 e 8.2."
+    owner: "Alice (Product Owner) + Amelia (Developer)"
+    status: open
+  - epic: 7
+    action: "Criar checklist de segurança para webhooks antes das Stories 8.3 e 8.4."
+    owner: "Winston (Architect) + Dana (QA Engineer)"
+    status: open
+  - epic: 7
+    action: "Estabilizar ou documentar o caminho operacional único de validação local completa antes da Story 8.7."
     owner: "Amelia (Developer) + Paige (Technical Writer)"
     status: open
