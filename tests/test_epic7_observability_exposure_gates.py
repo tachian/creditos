@@ -141,6 +141,12 @@ def test_technical_operation_artifacts_pass_exposure_gate_without_sensitive_valu
     assert "corr-epic7" not in str(telemetry.metrics_data())
 
 
+def test_technical_exposure_gate_ignores_memory_addresses_in_metrics_repr() -> None:
+    payload = {"metrics": "Resource object at 0x7d1034754950"}
+
+    validate_observability_exposure_payload(payload, exposure="technical_internal")
+
+
 def test_internal_dashboard_and_alert_artifacts_pass_secure_exposure_gate() -> None:
     payload = {
         "dashboards": [dashboard.to_dict() for dashboard in internal_dashboard_catalog()],

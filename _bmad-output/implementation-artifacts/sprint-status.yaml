@@ -115,7 +115,7 @@ development_status:
   7-6-gates-de-observabilidade-e-exposicao-segura: done
   epic-7-retrospective: done
   epic-8: in-progress
-  8-1-consulta-de-decisao-por-proposta: ready-for-dev
+  8-1-consulta-de-decisao-por-proposta: done
   8-2-contrato-publico-de-status-e-decisao: backlog
   8-3-configuracao-de-webhooks-por-tenant: backlog
   8-4-entrega-assincrona-de-webhooks-com-retry-e-dlq: backlog

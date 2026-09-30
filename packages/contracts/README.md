@@ -38,6 +38,21 @@ governado por tenant via `callback.callback_profile_ref`.
 Blocos governados devem ser fechados por schema para evitar extensão acidental
 fora de versão aprovada.
 
+## Decisão pública v1
+
+O OpenAPI `openapi/public/decision/v1/openapi.json` define a consulta pública
+`GET /v1/proposals/{proposal_id}/decision`. Por ser leitura idempotente, o
+contrato não exige `Idempotency-Key`; os headers obrigatórios são
+`X-Correlation-Id` e `X-Request-Id`.
+
+A resposta pública deve permanecer fechada e minimizada. Campos internos como
+`tenant_id`, `triggered_rule_ids`, `decision_fingerprint`, `input_fingerprint`,
+payloads, dados pessoais, headers, tokens e stack traces não pertencem ao
+contrato público. `required_data_refs`, `validation_issue_codes` e
+`fallback_action` também ficam fora da v1 até serem governados por contrato
+próprio. Referências alternativas a proposta ficam fora da v1 até serem
+governadas por contrato próprio.
+
 ## Integração canônica v1
 
 O contrato `asyncapi/events/integration/v1/asyncapi.json` governa eventos e
