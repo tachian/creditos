@@ -61,7 +61,9 @@ _MAX_SCAN_DEPTH = 12
 _RAW_CPF_PATTERN = re.compile(r"(?<!\d)(?:\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?!\d)")
 _RAW_CNPJ_PATTERN = re.compile(r"(?<!\d)(?:\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})(?!\d)")
 _RAW_EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-_RAW_PHONE_PATTERN = re.compile(r"(?<!\d)(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}-?\d{4}(?!\d)")
+_RAW_PHONE_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}-?\d{4}(?![A-Za-z0-9])"
+)
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"(?i)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
     r"password|senha|secret|token)\s*[:=]\s*[^\s,;]}]+"
