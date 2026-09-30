@@ -158,6 +158,32 @@ A auditoria de alterações sensíveis conecta governança de política à trilh
 
 Ficam fora desta etapa: gRPC real, NATS JetStream, outbox, banco real, endpoints públicos, IAM/cloud real, hash encadeado, checkpoints e WORM/S3 Object Lock.
 
+## Consulta pública por proposta
+
+A Story 8.1 adiciona uma projeção pública minimizada para consulta de decisão
+por `proposal_id`, usando o contrato `decision-public-api` v1. O caso de uso
+`get_public_credit_decision_by_proposal` consulta a decisão por tenant/proposta,
+usa explicabilidade com audiência `customer` e emite somente log/auditoria
+da operação pública antes de expor qualquer dado ao cliente.
+
+Campos permitidos incluem `contract_version`, `proposal_id`, `decision_id`,
+`status`, `outcome`, `decided_at`, `product_type`, `channel`, `correlation_id`,
+metadados de política/versão, reason codes/fatores visíveis para cliente
+e termos aprovados seguros.
+
+A resposta pública não serializa diretamente `CreditDecisionExplanationResponse`,
+pois esse objeto interno contém campos como `tenant_id`, `triggered_rule_ids` e
+`decision_fingerprint`. Também são proibidos `required_data_refs`,
+`validation_issue_codes`, `fallback_action`, payload bruto, dados pessoais,
+headers, tokens, stack trace, `input_fingerprint`, field values e payloads
+proprietários de integração enquanto não houver governança pública específica.
+
+Decisão inexistente, proposta de outro tenant e permissão insuficiente são
+mapeadas para erro público indistinguível `decision_not_available`, preservando
+o isolamento multi-tenant. Status pendente para proposta aceita sem decisão
+persistida depende de read model/contrato de status futuro do Epic 8.2; esta
+story não consulta banco ou repositório do `Proposal Intake`.
+
 ## Arquitetura
 
 O serviço segue DDD + arquitetura hexagonal:

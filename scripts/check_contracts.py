@@ -240,10 +240,12 @@ PROPOSAL_CRITICAL_PARTICIPANT_ROLES = {
 }
 PROPOSAL_MONEY_MAX = 1_000_000_000_000
 PROPOSAL_SENSITIVE_DIGITS = re.compile(r"^\d{10,15}$")
-OPENAPI_REQUIRED_HEADER_PARAMETERS = {"X-Correlation-Id", "X-Request-Id", "Idempotency-Key"}
-OPENAPI_MANDATORY_HEADER_PARAMETERS = OPENAPI_REQUIRED_HEADER_PARAMETERS
+OPENAPI_TRACEABILITY_HEADER_PARAMETERS = {"X-Correlation-Id", "X-Request-Id"}
+OPENAPI_IDEMPOTENCY_HEADER = "Idempotency-Key"
+OPENAPI_MUTATING_METHODS = {"post", "put", "patch", "delete"}
 PROPOSAL_OPENAPI_REQUEST_REF = "../../../../schemas/proposal/v1/proposal.schema.json"
-OPENAPI_REQUIRED_RESPONSES = {"202", "400", "401", "409", "500"}
+OPENAPI_REQUIRED_MUTATING_RESPONSES = {"202", "400", "401", "409", "500"}
+OPENAPI_REQUIRED_READ_RESPONSES = {"200", "400", "401", "404", "500"}
 KIND_PATH_RULES = {
     "openapi": (("openapi", "public"), ".json"),
     "protobuf": (("protobuf", "internal"), ".proto"),
@@ -367,15 +369,15 @@ def validate_openapi_contract(path: Path, version: str) -> None:
     require("ErrorResponse" in schemas, f"OpenAPI deve definir ErrorResponse: {path}")
 
     operations = [
-        operation
+        (method.lower(), operation)
         for item in paths.values()
         if isinstance(item, dict)
-        for operation in item.values()
+        for method, operation in item.items()
         if isinstance(operation, dict)
     ]
     require(bool(operations), f"OpenAPI deve declarar ao menos uma operação: {path}")
 
-    for operation in operations:
+    for method, operation in operations:
         responses = require_dict(
             operation.get("responses"), f"OpenAPI operação sem responses: {path}"
         )
@@ -392,36 +394,47 @@ def validate_openapi_contract(path: Path, version: str) -> None:
             if isinstance(parameter, dict) and parameter.get("in") == "header"
         }
         require(
-            header_parameters >= OPENAPI_REQUIRED_HEADER_PARAMETERS,
-            f"OpenAPI operação deve declarar headers de rastreabilidade/idempotência: {path}",
+            header_parameters >= OPENAPI_TRACEABILITY_HEADER_PARAMETERS,
+            f"OpenAPI operação deve declarar headers de rastreabilidade: {path}",
         )
-        optional_mandatory_headers = {
+        optional_traceability_headers = {
             header_name
-            for header_name in OPENAPI_MANDATORY_HEADER_PARAMETERS
+            for header_name in OPENAPI_TRACEABILITY_HEADER_PARAMETERS
             if headers_by_name.get(header_name, {}).get("required") is not True
         }
         require(
-            not optional_mandatory_headers,
+            not optional_traceability_headers,
             "OpenAPI headers obrigatórios devem ser required=true: "
-            f"{sorted(optional_mandatory_headers)} em {path}",
+            f"{sorted(optional_traceability_headers)} em {path}",
         )
-        idempotency_header = require_dict(
-            headers_by_name.get("Idempotency-Key"),
-            f"OpenAPI operação deve declarar Idempotency-Key como header: {path}",
-        )
-        idempotency_schema = require_dict(
-            idempotency_header.get("schema"),
-            f"OpenAPI Idempotency-Key deve declarar schema: {path}",
-        )
-        min_length = idempotency_schema.get("minLength")
+        if method in OPENAPI_MUTATING_METHODS:
+            idempotency_header = require_dict(
+                headers_by_name.get(OPENAPI_IDEMPOTENCY_HEADER),
+                f"OpenAPI operação mutante deve declarar Idempotency-Key como header: {path}",
+            )
+            require(
+                idempotency_header.get("required") is True,
+                f"OpenAPI Idempotency-Key deve ser required=true em operações mutantes: {path}",
+            )
+            idempotency_schema = require_dict(
+                idempotency_header.get("schema"),
+                f"OpenAPI Idempotency-Key deve declarar schema: {path}",
+            )
+            min_length = idempotency_schema.get("minLength")
+            require(
+                isinstance(min_length, int) and min_length >= 8,
+                f"OpenAPI Idempotency-Key deve exigir minLength >= 8: {path}",
+            )
+            required_responses = OPENAPI_REQUIRED_MUTATING_RESPONSES
+        else:
+            require(
+                OPENAPI_IDEMPOTENCY_HEADER not in header_parameters,
+                f"OpenAPI operação de leitura não deve exigir Idempotency-Key: {path}",
+            )
+            required_responses = OPENAPI_REQUIRED_READ_RESPONSES
         require(
-            isinstance(min_length, int) and min_length >= 8,
-            f"OpenAPI Idempotency-Key deve exigir minLength >= 8: {path}",
-        )
-        require(
-            set(responses) >= OPENAPI_REQUIRED_RESPONSES,
-            "OpenAPI operação deve declarar respostas padrão "
-            f"{sorted(OPENAPI_REQUIRED_RESPONSES)}: {path}",
+            set(responses) >= required_responses,
+            f"OpenAPI operação deve declarar respostas padrão {sorted(required_responses)}: {path}",
         )
     validate_proposal_openapi_contract(paths, path)
 
