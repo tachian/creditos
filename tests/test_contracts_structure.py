@@ -13,6 +13,7 @@ CONTRACTS = ROOT / "packages" / "contracts"
 CONTRACT_CHECK = ROOT / "scripts" / "check_contracts.py"
 PROPOSAL_SCHEMA = CONTRACTS / "schemas" / "proposal" / "v1" / "proposal.schema.json"
 PROPOSAL_OPENAPI = CONTRACTS / "openapi" / "public" / "proposal-intake" / "v1" / "openapi.json"
+DECISION_OPENAPI = CONTRACTS / "openapi" / "public" / "decision" / "v1" / "openapi.json"
 INTEGRATION_ASYNCAPI = CONTRACTS / "asyncapi" / "events" / "integration" / "v1" / "asyncapi.json"
 INTEGRATION_RESULT_SCHEMA = (
     CONTRACTS / "schemas" / "integration" / "v1" / "integration-result.schema.json"
@@ -392,6 +393,70 @@ def test_contract_governance_check_rejects_extra_openapi_request_body_media_type
 
     assert result.returncode == 1
     assert "deve aceitar somente application/json" in result.stderr
+
+
+def test_decision_public_openapi_defines_minimized_query_by_proposal() -> None:
+    openapi = load_json(DECISION_OPENAPI)
+    operation = openapi["paths"]["/v1/proposals/{proposal_id}/decision"]["get"]
+    header_names = {
+        parameter["name"]
+        for parameter in operation["parameters"]
+        if parameter.get("in") == "header"
+    }
+    response_schema = openapi["components"]["schemas"]["DecisionQueryResponse"]
+    response_properties = response_schema["properties"]
+    proposal_parameter = next(
+        parameter for parameter in operation["parameters"] if parameter["name"] == "proposal_id"
+    )
+
+    assert openapi["openapi"] == "3.1.0"
+    assert openapi["info"]["version"] == "v1"
+    assert openapi["x-creditos"]["owner"] == "Decision"
+    assert operation["operationId"] == "getDecisionByProposal"
+    assert proposal_parameter["schema"]["maxLength"] == 160
+    assert proposal_parameter["schema"]["pattern"] == "^[a-z0-9][a-z0-9_.-]{2,159}$"
+    assert header_names == {"X-Correlation-Id", "X-Request-Id"}
+    assert "Idempotency-Key" not in dumped(operation)
+    assert set(operation["responses"]) >= {"200", "400", "401", "404", "500"}
+    assert response_properties["contract_version"]["const"] == "v1"
+    assert response_schema["additionalProperties"] is False
+    assert "tenant_id" not in set(iter_property_names(response_schema))
+    assert "triggered_rule_ids" not in set(iter_property_names(response_schema))
+    assert "decision_fingerprint" not in set(iter_property_names(response_schema))
+    assert "input_fingerprint" not in set(iter_property_names(response_schema))
+    assert "payload" not in set(iter_property_names(response_schema))
+    assert "required_data_refs" not in set(iter_property_names(response_schema))
+    assert "validation_issue_codes" not in set(iter_property_names(response_schema))
+    assert "fallback_action" not in set(iter_property_names(response_schema))
+
+
+def test_contract_governance_check_allows_get_without_idempotency_header() -> None:
+    result = run_contract_check(CONTRACTS)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_contract_governance_check_rejects_read_operation_requiring_idempotency(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "decision" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    operation = openapi["paths"]["/v1/proposals/{proposal_id}/decision"]["get"]
+    operation["parameters"].append(
+        {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": True,
+            "schema": {"type": "string", "minLength": 8},
+        }
+    )
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "operação de leitura não deve exigir Idempotency-Key" in result.stderr
 
 
 def test_proposal_schema_examples_cover_mvp_products_pf_pj_and_rejections() -> None:

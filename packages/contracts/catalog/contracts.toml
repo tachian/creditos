@@ -96,3 +96,14 @@ compatibility = "backward-compatible"
 breaking_change_policy = "new-major-version-required"
 compatibility_window = "to-be-defined-before-production"
 contract_tests_required = true
+
+[[contracts]]
+id = "decision-public-api"
+kind = "openapi"
+version = "v1"
+owner = "Decision"
+path = "openapi/public/decision/v1/openapi.json"
+compatibility = "backward-compatible"
+breaking_change_policy = "new-major-version-required"
+compatibility_window = "to-be-defined-before-production"
+contract_tests_required = true

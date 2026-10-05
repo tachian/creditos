@@ -32,6 +32,7 @@ from creditos_decision.domain.entities import (
 from creditos_decision.domain.errors import (
     CreditDecisionAuditWriteError,
     CreditDecisionNotFoundError,
+    DecisionDomainError,
     PolicyNotFoundError,
     PolicySimulationNotFoundError,
     PolicyTenantContextError,
@@ -40,6 +41,9 @@ from creditos_decision.domain.errors import (
 )
 from creditos_decision.domain.services.policy_evaluator import evaluate_policy_case
 from creditos_decision.domain.value_objects import (
+    CreditDecisionApprovedTerms,
+    CreditDecisionExplanationFactor,
+    CreditDecisionExplanationReasonCode,
     CreditDecisionExplanationResponse,
     CreditDecisionInput,
     CreditDecisionInputFieldValue,
@@ -71,6 +75,7 @@ SERVICE_NAME = "decision"
 SERVICE_VERSION = "0.1.0"
 CONTRACT = "decision-credit-policy-application"
 CONTRACT_VERSION = "v1"
+PUBLIC_DECISION_CONTRACT_VERSION = "v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +219,56 @@ class GetCreditDecisionCommand:
 class GetCreditDecisionByProposalCommand:
     proposal_id: str
     audience: str = "customer"
+
+
+@dataclass(frozen=True, slots=True)
+class GetPublicCreditDecisionByProposalCommand:
+    proposal_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class PublicCreditDecisionPolicyMetadata:
+    policy_id: str
+    policy_version_id: str
+    policy_revision: int
+    reason_code_catalog_version_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class PublicCreditDecisionResponse:
+    contract_version: str
+    proposal_id: str
+    decision_id: str
+    status: str
+    outcome: str
+    decided_at: datetime
+    product_type: str
+    channel: str
+    correlation_id: str
+    policy: PublicCreditDecisionPolicyMetadata
+    reason_codes: tuple[CreditDecisionExplanationReasonCode, ...]
+    factors: tuple[CreditDecisionExplanationFactor, ...]
+    approved_terms: CreditDecisionApprovedTerms | None
+
+
+@dataclass(frozen=True, slots=True)
+class PublicCreditDecisionErrorResponse:
+    error_code: str
+    message: str
+    correlation_id: str
+    status_code: int
+
+
+@dataclass(frozen=True, slots=True)
+class PublicCreditDecisionQueryApplicationResult:
+    decision: PublicCreditDecisionResponse | None
+    error: PublicCreditDecisionErrorResponse | None
+    logs: tuple[dict[str, Any], ...]
+
+
+class _PublicCreditDecisionInvalidRequestError(DecisionDomainError):
+    code = "public_decision_invalid_request"
+    safe_message = "requisição pública de decisão inválida"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1007,7 +1062,13 @@ class DecisionApplicationService:
                 command.audience,
                 trusted_context=trusted_context,
             )
-            proposal_id = validate_proposal_id(command.proposal_id)
+            try:
+                proposal_id = validate_proposal_id(command.proposal_id)
+            except PolicyValidationError as error:
+                raise _PublicCreditDecisionInvalidRequestError(
+                    code=error.code,
+                    field_path=error.field_path,
+                ) from error
             decision = self._require_credit_decision_repository().get_by_proposal(
                 tenant_id=operation_context.tenant_id,
                 proposal_id=proposal_id,
@@ -1046,6 +1107,139 @@ class DecisionApplicationService:
                 ),
             )
             raise
+
+    def get_public_credit_decision_by_proposal(
+        self,
+        command: GetPublicCreditDecisionByProposalCommand,
+        *,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+    ) -> PublicCreditDecisionQueryApplicationResult:
+        started_at = perf_counter()
+        decision: CreditDecision | None = None
+        try:
+            operation_context = _require_policy_context(
+                context=context,
+                trusted_context=trusted_context,
+                required_scope="decision:read",
+            )
+            try:
+                proposal_id = validate_proposal_id(command.proposal_id)
+            except PolicyValidationError as error:
+                raise _PublicCreditDecisionInvalidRequestError(
+                    code=error.code,
+                    field_path=error.field_path,
+                ) from error
+            decision = self._require_credit_decision_repository().get_by_proposal(
+                tenant_id=operation_context.tenant_id,
+                proposal_id=proposal_id,
+            )
+            if decision is None:
+                raise CreditDecisionNotFoundError()
+
+            catalog = self._require_reason_code_catalog_repository().get(
+                tenant_id=operation_context.tenant_id,
+                catalog_id=decision.reason_code_catalog_id,
+                catalog_version_id=decision.reason_code_catalog_version_id,
+            )
+            if catalog is None or catalog.product_type != decision.product_type:
+                raise ReasonCodeCatalogNotFoundError()
+
+            explanation = decision.to_explainable_response(catalog=catalog, audience="customer")
+            public_decision = public_credit_decision_response(
+                explanation,
+                correlation_id=context.correlation_id,
+            )
+            duration_ms = _duration_ms(started_at)
+            self._publish_credit_decision_audit_intent(
+                decision=decision,
+                event_type="credit_decision.public_query_retrieved",
+                operation_context=operation_context,
+                context=context,
+                trusted_context=trusted_context,
+                duration_ms=duration_ms,
+                operation="credit_decision.public_query.get",
+                safe_details=_public_credit_decision_audit_safe_details(
+                    public_decision,
+                    duration_ms=duration_ms,
+                ),
+            )
+            public_log = self._log_operation(
+                context=context,
+                operation="credit_decision.public_query.get",
+                status="accepted",
+                duration_ms=duration_ms,
+                payload=command,
+                extra=_public_credit_decision_log_extra(public_decision),
+            )
+            return PublicCreditDecisionQueryApplicationResult(
+                decision=public_decision,
+                error=None,
+                logs=(public_log,),
+            )
+        except DecisionDomainError as error:
+            public_error = public_credit_decision_error_response(
+                error,
+                correlation_id=context.correlation_id,
+            )
+            duration_ms = _duration_ms(started_at)
+            self._publish_public_credit_decision_query_rejection_intent(
+                command=command,
+                context=context,
+                trusted_context=trusted_context,
+                error=public_error,
+                duration_ms=duration_ms,
+                decision=decision,
+            )
+            public_log = self._log_operation(
+                context=context,
+                operation="credit_decision.public_query.get",
+                status="rejected",
+                duration_ms=duration_ms,
+                payload=command,
+                error_type=type(error).__name__,
+                extra={
+                    "contract_version": PUBLIC_DECISION_CONTRACT_VERSION,
+                    "error_code": public_error.error_code,
+                    "status_code": public_error.status_code,
+                },
+            )
+            return PublicCreditDecisionQueryApplicationResult(
+                decision=None,
+                error=public_error,
+                logs=(public_log,),
+            )
+        except Exception as error:
+            public_error = public_credit_decision_internal_error_response(
+                correlation_id=context.correlation_id,
+            )
+            duration_ms = _duration_ms(started_at)
+            self._publish_public_credit_decision_query_rejection_intent(
+                command=command,
+                context=context,
+                trusted_context=trusted_context,
+                error=public_error,
+                duration_ms=duration_ms,
+                decision=decision,
+            )
+            public_log = self._log_operation(
+                context=context,
+                operation="credit_decision.public_query.get",
+                status="rejected",
+                duration_ms=duration_ms,
+                payload=command,
+                error_type=type(error).__name__,
+                extra={
+                    "contract_version": PUBLIC_DECISION_CONTRACT_VERSION,
+                    "error_code": public_error.error_code,
+                    "status_code": public_error.status_code,
+                },
+            )
+            return PublicCreditDecisionQueryApplicationResult(
+                decision=None,
+                error=public_error,
+                logs=(public_log,),
+            )
 
     def run_policy_simulation(
         self,
@@ -1894,6 +2088,72 @@ class DecisionApplicationService:
         except Exception:
             return
 
+    def _publish_public_credit_decision_query_rejection_intent(
+        self,
+        *,
+        command: GetPublicCreditDecisionByProposalCommand,
+        context: ObservabilityContext,
+        trusted_context: PropagatedContext,
+        error: PublicCreditDecisionErrorResponse,
+        duration_ms: float,
+        decision: CreditDecision | None = None,
+    ) -> None:
+        tenant_id = _trusted_tenant_id_or_unknown(trusted_context)
+        tenant_isolation_tier = _trusted_tenant_isolation_tier_or_bridge(trusted_context)
+        actor_subject_id = _trusted_actor_subject_id_or_unknown(trusted_context)
+        correlation_id = _safe_correlation_id(
+            context.correlation_id,
+            fallback="corr_unknown0000",
+        )
+        try:
+            self._audit_publisher.publish(
+                CreditDecisionAuditIntent(
+                    event_type="credit_decision.public_query_rejected",
+                    tenant_id=tenant_id,
+                    tenant_isolation_tier=tenant_isolation_tier,
+                    actor_subject_id=actor_subject_id,
+                    decision_id=(
+                        decision.decision_id if decision is not None else "unknown_credit_decision"
+                    ),
+                    proposal_id=(
+                        decision.proposal_id
+                        if decision is not None
+                        else _safe_proposal_identifier(
+                            getattr(command, "proposal_id", None),
+                            fallback="unknown_proposal",
+                        )
+                    ),
+                    policy_id=decision.policy_id if decision is not None else "unknown_policy",
+                    policy_version_id=(
+                        decision.policy_version_id
+                        if decision is not None
+                        else "unknown_policy_version"
+                    ),
+                    reason_code_catalog_id=(
+                        decision.reason_code_catalog_id
+                        if decision is not None
+                        else "unknown_reason_code_catalog"
+                    ),
+                    reason_code_catalog_version_id=(
+                        decision.reason_code_catalog_version_id
+                        if decision is not None
+                        else "unknown_reason_code_catalog_version"
+                    ),
+                    correlation_id=correlation_id,
+                    request_id=_trusted_request_id_or_unknown(trusted_context),
+                    traceparent=_trusted_traceparent_or_default(trusted_context),
+                    safe_details={
+                        "duration_ms": str(duration_ms),
+                        "operation": "credit_decision.public_query.get",
+                        "rejection_reason": error.error_code,
+                        "schema_version": PUBLIC_DECISION_CONTRACT_VERSION,
+                        "status": "rejected",
+                    },
+                )
+            )
+        except Exception:
+            return
+
     def _publish_credit_decision_rejection_intent(
         self,
         *,
@@ -2068,6 +2328,101 @@ class _ReasonCodeCatalogLookupCommand:
 class _VersionedPolicyReasonCodeValidationCommand:
     reason_code_catalog_id: str
     reason_code_catalog_version_id: str
+
+
+def public_credit_decision_response(
+    explanation: CreditDecisionExplanationResponse,
+    *,
+    correlation_id: str,
+) -> PublicCreditDecisionResponse:
+    return PublicCreditDecisionResponse(
+        contract_version=PUBLIC_DECISION_CONTRACT_VERSION,
+        proposal_id=explanation.proposal_id,
+        decision_id=explanation.decision_id,
+        status=explanation.status,
+        outcome=explanation.outcome,
+        decided_at=explanation.decided_at,
+        product_type=explanation.product_type,
+        channel=explanation.channel,
+        correlation_id=correlation_id,
+        policy=PublicCreditDecisionPolicyMetadata(
+            policy_id=explanation.policy_id,
+            policy_version_id=explanation.policy_version_id,
+            policy_revision=explanation.policy_revision,
+            reason_code_catalog_version_id=explanation.reason_code_catalog_version_id,
+        ),
+        reason_codes=explanation.reason_codes,
+        factors=explanation.factors,
+        approved_terms=explanation.approved_terms,
+    )
+
+
+def public_credit_decision_error_response(
+    error: DecisionDomainError,
+    *,
+    correlation_id: str,
+) -> PublicCreditDecisionErrorResponse:
+    if isinstance(error, _PublicCreditDecisionInvalidRequestError):
+        return PublicCreditDecisionErrorResponse(
+            error_code="invalid_request",
+            message="requisição inválida",
+            correlation_id=correlation_id,
+            status_code=400,
+        )
+    if isinstance(error, CreditDecisionNotFoundError | PolicyTenantContextError):
+        return PublicCreditDecisionErrorResponse(
+            error_code="decision_not_available",
+            message="decisão não disponível",
+            correlation_id=correlation_id,
+            status_code=404,
+        )
+    return public_credit_decision_internal_error_response(correlation_id=correlation_id)
+
+
+def public_credit_decision_internal_error_response(
+    *,
+    correlation_id: str,
+) -> PublicCreditDecisionErrorResponse:
+    return PublicCreditDecisionErrorResponse(
+        error_code="decision_query_failed",
+        message="consulta de decisão indisponível",
+        correlation_id=correlation_id,
+        status_code=500,
+    )
+
+
+def _public_credit_decision_log_extra(
+    public_decision: PublicCreditDecisionResponse,
+) -> dict[str, str | int]:
+    return {
+        "channel": public_decision.channel,
+        "contract_version": public_decision.contract_version,
+        "factor_count": len(public_decision.factors),
+        "outcome": public_decision.outcome,
+        "policy_revision": public_decision.policy.policy_revision,
+        "product_type": public_decision.product_type,
+        "reason_code_count": len(public_decision.reason_codes),
+        "status": public_decision.status,
+    }
+
+
+def _public_credit_decision_audit_safe_details(
+    public_decision: PublicCreditDecisionResponse,
+    *,
+    duration_ms: float,
+) -> dict[str, str]:
+    return {
+        "channel": public_decision.channel,
+        "duration_ms": str(duration_ms),
+        "factor_count": str(len(public_decision.factors)),
+        "operation": "credit_decision.public_query.get",
+        "outcome": public_decision.outcome,
+        "policy_revision": str(public_decision.policy.policy_revision),
+        "product_type": public_decision.product_type,
+        "reason_code_count": str(len(public_decision.reason_codes)),
+        "schema_version": public_decision.contract_version,
+        "status": public_decision.status,
+    }
 
 
 def _require_explanation_audience(

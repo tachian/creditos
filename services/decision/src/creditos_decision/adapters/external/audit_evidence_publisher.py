@@ -266,7 +266,7 @@ def _sensitive_change_safe_details_for(
 
 def _action_for(event: CreditDecisionAuditIntent) -> str:
     operation = event.safe_details.get("operation", "")
-    if operation == "credit_decision.explanation.get":
+    if operation in {"credit_decision.explanation.get", "credit_decision.public_query.get"}:
         return "read"
     return "execute"
 
@@ -291,8 +291,16 @@ def _sensitive_change_action_for(
 
 
 def _result_for(event: CreditDecisionAuditIntent) -> str:
-    if event.event_type in {"credit_decision.completed", "credit_decision.explanation_retrieved"}:
+    if event.event_type in {
+        "credit_decision.completed",
+        "credit_decision.explanation_retrieved",
+        "credit_decision.public_query_retrieved",
+    }:
         return "accepted"
+    if event.event_type == "credit_decision.public_query_rejected":
+        if _is_technical_rejection(event.safe_details.get("rejection_reason", "")):
+            return "technical_failure"
+        return "rejected"
     if event.event_type == "credit_decision.rejected":
         if _is_technical_rejection(event.safe_details.get("rejection_reason", "")):
             return "technical_failure"
@@ -400,6 +408,7 @@ def _trusted_context_for(
 def _is_technical_rejection(reason: str) -> bool:
     if reason in {
         "credit_decision_audit_write_failed",
+        "decision_query_failed",
         "reason_code_catalog_not_found",
         "RuntimeError",
         "Exception",

@@ -6,7 +6,7 @@ baseline_commit: c50301b
 
 # Story 8.1: Consulta de Decisão por Proposta
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -29,38 +29,46 @@ so that meu sistema possa acompanhar o resultado da análise de crédito/risco.
 
 ## Tasks / Subtasks
 
-- [ ] CTOS-410 — Definir contrato público OpenAPI v1 de consulta de decisão (AC: 1, 3, 6)
-  - [ ] Criar `packages/contracts/openapi/public/decision/v1/openapi.json`.
-  - [ ] Registrar o contrato em `packages/contracts/catalog/contracts.toml` com `id = "decision-public-api"`, `kind = "openapi"`, `version = "v1"`, `owner = "Decision"`, compatibilidade `backward-compatible` e política `new-major-version-required`.
-  - [ ] Modelar `GET /v1/proposals/{proposal_id}/decision` como consulta idempotente, sem `Idempotency-Key` obrigatório, com headers `X-Correlation-Id` e `X-Request-Id`.
-  - [ ] Usar `ErrorResponse` compatível com `proposal-intake-public-api`: `error_code`, `message`, `correlation_id` e `additionalProperties: false`.
-- [ ] CTOS-411 — Criar DTO/projeção pública minimizada no `Decision` (AC: 1, 2, 5)
-  - [ ] Reusar `DecisionApplicationService.get_credit_decision_by_proposal` e `CreditDecision.to_explainable_response(audience="customer")` como fonte de decisão encontrada.
-  - [ ] Criar camada de mapeamento pública que não serialize diretamente `CreditDecisionExplanationResponse`, pois ela contém campos internos como `tenant_id`, `triggered_rule_ids` e `decision_fingerprint`.
-  - [ ] Incluir somente campos públicos necessários: `contract_version`, `proposal_id`, `decision_id` quando existir, `status`, `outcome`, `decided_at`, `product_type`, `channel`, `correlation_id`, metadados de política/versão, reason codes/fatores customer-visible, `approved_terms` seguros e referências de dados adicionais quando governadas.
-  - [ ] Não aceitar `external_proposal_id`, `customer_reference` ou referência livre nesta story sem contrato governado; documentar essa limitação no contrato/README se necessário.
-- [ ] CTOS-412 — Padronizar resposta ausente e isolamento por tenant (AC: 3, 4)
-  - [ ] Garantir que decisão inexistente, proposta de outro tenant e ausência de permissão não exponham existência de dados cross-tenant.
-  - [ ] Manter validação por `PropagatedContext`/`ObservabilityContext`; rejeitar divergência de tenant, tier, `correlation_id`, `request_id` e `trace_id` conforme padrões existentes.
-  - [ ] Mapear exceções de domínio para códigos públicos seguros no contrato; evitar mensagens diferentes para inexistente vs. cross-tenant.
-- [ ] CTOS-413 — Reforçar logs/auditoria seguros para consulta pública (AC: 7)
-  - [ ] Reusar `build_structured_log` e o publisher de auditoria de decisão já usado por `credit_decision.explanation.get`.
-  - [ ] Registrar operação pública com payload `"[OMITIDO]"`, contagens/metadados seguros e sem CPF/CNPJ/e-mail/nome/endereço/telefone.
-  - [ ] Assegurar que falhas pós-lookup preservem apenas metadados seguros já conhecidos e não vazem catálogo/política interna além do permitido.
-- [ ] CTOS-414 — Atualizar documentação de contrato/serviço (AC: 1-7)
-  - [ ] Atualizar `docs/contracts.md` e `packages/contracts/README.md` com a API pública de decisão v1 e limites de referência permitida.
-  - [ ] Atualizar `services/decision/README.md` com o caso de uso público de consulta por proposta, campos permitidos e campos explicitamente proibidos.
-  - [ ] Registrar que status pendente por proposta ainda depende de read model/contrato de status do Epic 8.2 se a proposta ainda não possui decisão persistida.
-- [ ] CTOS-415 — Criar testes focados de aplicação e contrato (AC: 1-8)
-  - [ ] Ampliar `services/decision/tests/unit/test_credit_decision_service.py` para validar consulta pública por proposta, mapeamento minimizado e ausência de campos internos.
-  - [ ] Ampliar `tests/test_contracts_structure.py` para validar presença do contrato público `decision-public-api`, versão, caminho, `ErrorResponse`, headers e ausência de campos proibidos.
-  - [ ] Cobrir erro indistinguível para decisão inexistente/cross-tenant e falta de `decision:read`.
-  - [ ] Preservar os testes existentes de `get_credit_decision`, `get_credit_decision_by_proposal` e explicabilidade interna com `decision:explain:internal`.
-- [ ] CTOS-416 — Rodar validações locais focadas (AC: 6, 8)
-  - [ ] Rodar Ruff format/check nos arquivos alterados.
-  - [ ] Rodar Pyright nos pacotes/serviços alterados quando aplicável.
-  - [ ] Rodar `pytest services/decision/tests/unit/test_credit_decision_service.py tests/test_contracts_structure.py -q`.
-  - [ ] Rodar `python scripts/check_contracts.py --contracts-root packages/contracts` ou `./scripts/dev contracts`.
+- [x] CTOS-410 — Definir contrato público OpenAPI v1 de consulta de decisão (AC: 1, 3, 6)
+  - [x] Criar `packages/contracts/openapi/public/decision/v1/openapi.json`.
+  - [x] Registrar o contrato em `packages/contracts/catalog/contracts.toml` com `id = "decision-public-api"`, `kind = "openapi"`, `version = "v1"`, `owner = "Decision"`, compatibilidade `backward-compatible` e política `new-major-version-required`.
+  - [x] Modelar `GET /v1/proposals/{proposal_id}/decision` como consulta idempotente, sem `Idempotency-Key` obrigatório, com headers `X-Correlation-Id` e `X-Request-Id`.
+  - [x] Usar `ErrorResponse` compatível com `proposal-intake-public-api`: `error_code`, `message`, `correlation_id` e `additionalProperties: false`.
+- [x] CTOS-411 — Criar DTO/projeção pública minimizada no `Decision` (AC: 1, 2, 5)
+  - [x] Reusar `DecisionApplicationService.get_credit_decision_by_proposal` e `CreditDecision.to_explainable_response(audience="customer")` como fonte de decisão encontrada.
+  - [x] Criar camada de mapeamento pública que não serialize diretamente `CreditDecisionExplanationResponse`, pois ela contém campos internos como `tenant_id`, `triggered_rule_ids` e `decision_fingerprint`.
+  - [x] Incluir somente campos públicos necessários: `contract_version`, `proposal_id`, `decision_id` quando existir, `status`, `outcome`, `decided_at`, `product_type`, `channel`, `correlation_id`, metadados de política/versão, reason codes/fatores customer-visible, `approved_terms` seguros e referências de dados adicionais quando governadas.
+  - [x] Não aceitar `external_proposal_id`, `customer_reference` ou referência livre nesta story sem contrato governado; documentar essa limitação no contrato/README se necessário.
+- [x] CTOS-412 — Padronizar resposta ausente e isolamento por tenant (AC: 3, 4)
+  - [x] Garantir que decisão inexistente, proposta de outro tenant e ausência de permissão não exponham existência de dados cross-tenant.
+  - [x] Manter validação por `PropagatedContext`/`ObservabilityContext`; rejeitar divergência de tenant, tier, `correlation_id`, `request_id` e `trace_id` conforme padrões existentes.
+  - [x] Mapear exceções de domínio para códigos públicos seguros no contrato; evitar mensagens diferentes para inexistente vs. cross-tenant.
+- [x] CTOS-413 — Reforçar logs/auditoria seguros para consulta pública (AC: 7)
+  - [x] Reusar `build_structured_log` e o publisher de auditoria de decisão já usado por `credit_decision.explanation.get`.
+  - [x] Registrar operação pública com payload `"[OMITIDO]"`, contagens/metadados seguros e sem CPF/CNPJ/e-mail/nome/endereço/telefone.
+  - [x] Assegurar que falhas pós-lookup preservem apenas metadados seguros já conhecidos e não vazem catálogo/política interna além do permitido.
+- [x] CTOS-414 — Atualizar documentação de contrato/serviço (AC: 1-7)
+  - [x] Atualizar `docs/contracts.md` e `packages/contracts/README.md` com a API pública de decisão v1 e limites de referência permitida.
+  - [x] Atualizar `services/decision/README.md` com o caso de uso público de consulta por proposta, campos permitidos e campos explicitamente proibidos.
+  - [x] Registrar que status pendente por proposta ainda depende de read model/contrato de status do Epic 8.2 se a proposta ainda não possui decisão persistida.
+- [x] CTOS-415 — Criar testes focados de aplicação e contrato (AC: 1-8)
+  - [x] Ampliar `services/decision/tests/unit/test_credit_decision_service.py` para validar consulta pública por proposta, mapeamento minimizado e ausência de campos internos.
+  - [x] Ampliar `tests/test_contracts_structure.py` para validar presença do contrato público `decision-public-api`, versão, caminho, `ErrorResponse`, headers e ausência de campos proibidos.
+  - [x] Cobrir erro indistinguível para decisão inexistente/cross-tenant e falta de `decision:read`.
+  - [x] Preservar os testes existentes de `get_credit_decision`, `get_credit_decision_by_proposal` e explicabilidade interna com `decision:explain:internal`.
+- [x] CTOS-416 — Rodar validações locais focadas (AC: 6, 8)
+  - [x] Rodar Ruff format/check nos arquivos alterados.
+  - [x] Rodar Pyright nos pacotes/serviços alterados quando aplicável.
+  - [x] Rodar `pytest services/decision/tests/unit/test_credit_decision_service.py tests/test_contracts_structure.py -q`.
+  - [x] Rodar `python scripts/check_contracts.py --contracts-root packages/contracts` ou `./scripts/dev contracts`.
+
+### Review Findings
+
+- [x] [Review][Patch] Separar consulta pública de logs/auditoria internos e remover metadados proibidos de observabilidade [services/decision/src/creditos_decision/application/service.py:1102]
+- [x] [Review][Patch] Publicar/registrar auditoria da operação pública em vez de somente `credit_decision.explanation.get` [services/decision/src/creditos_decision/application/service.py:1111]
+- [x] [Review][Patch] Remover campos públicos não governados da resposta v1 (`required_data_refs`, `validation_issue_codes`, `fallback_action`) [services/decision/src/creditos_decision/application/service.py:2180]
+- [x] [Review][Patch] Alinhar contrato OpenAPI de `proposal_id` à validação real do domínio [packages/contracts/openapi/public/decision/v1/openapi.json:28]
+- [x] [Review][Patch] Diferenciar erros públicos de validação, indisponibilidade e falha interna para suportar 400/404/500 [services/decision/src/creditos_decision/application/service.py:2208]
 
 ## Dev Notes
 
@@ -139,7 +147,26 @@ GPT-5 Codex
 
 ### Debug Log References
 
+- `.venv/bin/pytest services/decision/tests/unit/test_credit_decision_service.py tests/test_contracts_structure.py -q` → `64 passed`
+- `.venv/bin/ruff format services/decision/src/creditos_decision/application/service.py services/decision/tests/unit/test_credit_decision_service.py tests/test_contracts_structure.py scripts/check_contracts.py`
+- `.venv/bin/ruff check services/decision/src/creditos_decision/application/service.py services/decision/tests/unit/test_credit_decision_service.py tests/test_contracts_structure.py scripts/check_contracts.py` → `All checks passed`
+- `.venv/bin/pyright services/decision/src/creditos_decision/application/service.py services/decision/tests/unit/test_credit_decision_service.py tests/test_contracts_structure.py scripts/check_contracts.py` → `0 errors`
+- `python3 scripts/check_contracts.py --contracts-root packages/contracts` → `contracts check passed: 10 contracts`
+- `.venv/bin/pytest -q` → falhou inicialmente por `uv: command not found` no ambiente local
+- `PATH="/home/tachian/work/CreditOS/.venv/bin:/tmp/creditos-uv-shim:$PATH" .venv/bin/pytest -q` → `778 passed`
+- `.venv/bin/pytest services/decision/tests/unit/test_credit_decision_service.py services/decision/tests/unit/test_credit_decision_audit_evidence_adapter.py tests/test_contracts_structure.py -q` → `79 passed`
+- `.venv/bin/pyright services/decision/src/creditos_decision/application/service.py services/decision/src/creditos_decision/adapters/external/audit_evidence_publisher.py services/decision/tests/unit/test_credit_decision_service.py services/decision/tests/unit/test_credit_decision_audit_evidence_adapter.py tests/test_contracts_structure.py` → `0 errors`
+- `python3 scripts/check_contracts.py --contracts-root packages/contracts` → `contracts check passed: 10 contracts`
+- `PATH="/home/tachian/work/CreditOS/.venv/bin:/tmp/creditos-uv-shim:$PATH" .venv/bin/pytest -q` → `779 passed`
+
 ### Completion Notes List
+
+- Implementado contrato público `decision-public-api` v1 para `GET /v1/proposals/{proposal_id}/decision`, sem `Idempotency-Key` para leitura idempotente e com headers de rastreabilidade obrigatórios.
+- Ajustado checker de contratos para diferenciar operações mutantes de leitura: mutantes exigem `Idempotency-Key`; GET público exige apenas headers de rastreabilidade e respostas de leitura.
+- Adicionado caso de uso `get_public_credit_decision_by_proposal` no `DecisionApplicationService`, reutilizando a explicabilidade `customer` e mapeando para DTO público minimizado.
+- Padronizado erro público `decision_not_available` para decisão inexistente, cross-tenant e permissão insuficiente, preservando logs/auditoria seguros.
+- Documentados contrato, limites de referência permitida e campos proibidos em `docs/contracts.md`, `packages/contracts/README.md` e `services/decision/README.md`.
+- Testes focados cobrem contrato público, ausência de `Idempotency-Key` em GET, minimização de resposta, erro indistinguível e regressões existentes.
 
 - Story criada pelo workflow `bmad-create-story` com contexto de PRD, arquitetura, contratos, Decision Service, retrospectiva do Epic 7 e sprint status.
 - Jira sincronizado: `CTOS-16` movido para `Em andamento`, `CTOS-66` atualizado como `ready-for-dev` e subtarefas `CTOS-410` a `CTOS-416` criadas em `Tarefas pendentes`.
@@ -147,7 +174,21 @@ GPT-5 Codex
 ### File List
 
 - `_bmad-output/implementation-artifacts/8-1-consulta-de-decisao-por-proposta.md`
+- `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `docs/contracts.md`
+- `packages/contracts/README.md`
+- `packages/contracts/catalog/contracts.toml`
+- `packages/contracts/openapi/public/decision/v1/openapi.json`
+- `scripts/check_contracts.py`
+- `services/decision/README.md`
+- `services/decision/src/creditos_decision/application/service.py`
+- `services/decision/tests/unit/test_credit_decision_service.py`
+- `tests/test_contracts_structure.py`
 
 ## Change Log
 
 - 2026-09-30 — Story detalhada, marcada como `ready-for-dev` e sincronizada com subtarefas Jira `CTOS-410` a `CTOS-416`.
+- 2026-09-30 — `bmad-dev-story` iniciado; branch `agent/story-8-1-decision-query-by-proposal` criada e Jira `CTOS-66`/`CTOS-410` movidos para `Em andamento`.
+
+- 2026-09-30 — Implementação concluída, validações locais aprovadas e story movida para `review`.
+- 2026-09-30 — `bmad-code-review` aplicado; patches de segurança/contrato/auditoria corrigidos e story movida para `done`.

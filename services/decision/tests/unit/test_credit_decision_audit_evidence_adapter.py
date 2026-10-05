@@ -160,6 +160,47 @@ def test_credit_decision_explanation_retrieved_maps_to_read_accepted_event() -> 
     assert events[0].result == "accepted"
 
 
+def test_credit_decision_public_query_events_map_to_read_results() -> None:
+    repository = InMemoryAuditEventRepository()
+    audit_service = AuditEvidenceApplicationService(repository=repository, environment="test")
+    publisher = AuditEvidenceDecisionAuditPublisher(
+        audit_service=audit_service,
+        clock=lambda: NOW,
+    )
+
+    publisher.publish(
+        _decision_intent(
+            event_type="credit_decision.public_query_retrieved",
+            safe_details={
+                "operation": "credit_decision.public_query.get",
+                "schema_version": "v1",
+                "status": "completed",
+            },
+        )
+    )
+    publisher.publish(
+        _decision_intent(
+            event_type="credit_decision.public_query_rejected",
+            safe_details={
+                "operation": "credit_decision.public_query.get",
+                "rejection_reason": "decision_not_available",
+                "schema_version": "v1",
+                "status": "rejected",
+            },
+        )
+    )
+
+    events = repository.list_by_aggregate(
+        tenant_id="tenant_alpha",
+        aggregate_type="credit_decision",
+        aggregate_id="decision_personal_credit_001",
+    )
+    assert events[0].action == "read"
+    assert events[0].result == "accepted"
+    assert events[1].action == "read"
+    assert events[1].result == "rejected"
+
+
 def test_credit_decision_audit_adapter_generates_compact_distinct_event_ids() -> None:
     repository = InMemoryAuditEventRepository()
     audit_service = AuditEvidenceApplicationService(repository=repository, environment="test")

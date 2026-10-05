@@ -439,11 +439,16 @@ def _scan_text(text: str, *, exposure: ExposureKind, path: str) -> Iterable[str]
         (_RAW_CPF_PATTERN, "cpf"),
         (_RAW_CNPJ_PATTERN, "cnpj"),
         (_RAW_EMAIL_PATTERN, "email"),
-        (_RAW_PHONE_PATTERN, "telefone"),
         (_SECRET_ASSIGNMENT_PATTERN, "secret_assignment"),
     ):
         if pattern.search(text):
             yield f"{path}:{term}"
+
+    for match in _RAW_PHONE_PATTERN.finditer(text):
+        if _is_hex_memory_address_match(text, match):
+            continue
+        yield f"{path}:telefone"
+        break
 
     forbidden_terms: frozenset[str]
     if exposure == "technical_internal":
@@ -470,6 +475,21 @@ def _scan_text(text: str, *, exposure: ExposureKind, path: str) -> Iterable[str]
     for term in sorted(forbidden_terms):
         if _matches_forbidden_text(lowered, term):
             yield f"{path}:{term}"
+
+
+def _is_hex_memory_address_match(text: str, match: re.Match[str]) -> bool:
+    start = match.start()
+    end = match.end()
+    token_start = start
+    while token_start > 0 and text[token_start - 1].isalnum():
+        token_start -= 1
+    token_end = end
+    while token_end < len(text) and text[token_end].isalnum():
+        token_end += 1
+    token = text[token_start:token_end]
+    return token.lower().startswith("0x") and all(
+        character in "0123456789abcdefABCDEF" for character in token[2:]
+    )
 
 
 def _scan_numeric_identifier(value: int, *, path: str) -> Iterable[str]:

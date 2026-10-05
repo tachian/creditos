@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -23,6 +24,7 @@ from creditos_decision.application.service import (
     ExecuteCreditDecisionCommand,
     GetCreditDecisionByProposalCommand,
     GetCreditDecisionCommand,
+    GetPublicCreditDecisionByProposalCommand,
     PublishCreditPolicyCommand,
     RunPolicySimulationCommand,
     _bounded_csv,
@@ -314,6 +316,212 @@ def test_get_credit_decision_requires_read_scope_and_hides_cross_tenant_decision
                 tenant_isolation_tier="silo",
             ),
         )
+
+
+def test_get_public_credit_decision_by_proposal_returns_minimized_response() -> None:
+    audit = RecordingAuditPublisher()
+    decision_repository = InMemoryCreditDecisionRepository()
+    service = _service(audit=audit, decision_repository=decision_repository)
+    _create_and_publish_policy(service)
+    service.execute_credit_decision(
+        _execute_command(),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+    )
+
+    audit_count_after_execution = len(audit.events)
+
+    query_context = _context(
+        "tenant_alpha",
+        correlation_id="corr_public_query_123456",
+        request_id="req_public_query_123456",
+        trace_id="2234567890abcdef1234567890abcdef",
+    )
+    query_trusted_context = _trusted_context(
+        scopes=("decision:read",),
+        correlation_id="corr_public_query_123456",
+        request_id="req_public_query_123456",
+        trace_id="2234567890abcdef1234567890abcdef",
+    )
+
+    result = service.get_public_credit_decision_by_proposal(
+        GetPublicCreditDecisionByProposalCommand(proposal_id="proposal_personal_credit_001"),
+        context=query_context,
+        trusted_context=query_trusted_context,
+    )
+
+    assert result.error is None
+    assert result.decision is not None
+    assert result.decision.contract_version == "v1"
+    assert result.decision.proposal_id == "proposal_personal_credit_001"
+    assert result.decision.decision_id == "decision_personal_credit_001"
+    assert result.decision.status == "completed"
+    assert result.decision.outcome == "approve"
+    assert result.decision.correlation_id == "corr_public_query_123456"
+    assert result.decision.policy.policy_id == "pol_personal_credit_default"
+    assert result.decision.policy.policy_version_id == "polver_personal_credit_default_v1"
+    assert result.decision.policy.reason_code_catalog_version_id == (
+        "rccver_personal_credit_default_v1"
+    )
+    assert result.decision.reason_codes[0].code == "rc_min_income"
+    assert result.decision.factors[0].factor_id == "factor_monthly_income"
+    assert len(result.logs) == 1
+    assert result.logs[-1]["operation"] == "credit_decision.public_query.get"
+    assert result.logs[-1]["payload"] == "[OMITIDO]"
+    assert result.logs[-1]["extra"]["contract_version"] == "v1"
+    assert "proposal_id" not in result.logs[-1]["extra"]
+    assert "decision_id" not in result.logs[-1]["extra"]
+    assert "fingerprint" not in result.logs[-1]["extra"]
+    assert len(audit.events) == audit_count_after_execution + 1
+    assert audit.events[-1].event_type == "credit_decision.public_query_retrieved"
+    assert audit.events[-1].safe_details["operation"] == "credit_decision.public_query.get"
+    assert "fingerprint" not in audit.events[-1].safe_details
+    assert "triggered_rule_ids" not in audit.events[-1].safe_details
+
+    public_payload = asdict(result.decision)
+    public_keys = set(_iter_nested_keys(public_payload))
+    assert "tenant_id" not in public_keys
+    assert "triggered_rule_ids" not in public_keys
+    assert "decision_fingerprint" not in public_keys
+    assert "input_fingerprint" not in public_keys
+    assert "payload" not in public_keys
+    assert "field_values" not in public_keys
+    assert "required_data_refs" not in public_keys
+    assert "validation_issue_codes" not in public_keys
+    assert "fallback_action" not in public_keys
+    assert "300000" not in str(public_payload)
+
+
+def test_get_public_credit_decision_by_proposal_standardizes_not_available_errors() -> None:
+    audit = RecordingAuditPublisher()
+    decision_repository = InMemoryCreditDecisionRepository()
+    service = _service(audit=audit, decision_repository=decision_repository)
+    _create_and_publish_policy(service)
+    service.execute_credit_decision(
+        _execute_command(),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+    )
+
+    cross_tenant = service.get_public_credit_decision_by_proposal(
+        GetPublicCreditDecisionByProposalCommand(proposal_id="proposal_personal_credit_001"),
+        context=_context("tenant_beta"),
+        trusted_context=_trusted_context(tenant_id="tenant_beta", scopes=("decision:read",)),
+    )
+    missing_scope = service.get_public_credit_decision_by_proposal(
+        GetPublicCreditDecisionByProposalCommand(proposal_id="proposal_personal_credit_001"),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("policy:read",)),
+    )
+    missing_decision = service.get_public_credit_decision_by_proposal(
+        GetPublicCreditDecisionByProposalCommand(proposal_id="proposal_unknown_001"),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:read",)),
+    )
+    invalid_request = service.get_public_credit_decision_by_proposal(
+        GetPublicCreditDecisionByProposalCommand(proposal_id="INVALID:proposal"),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:read",)),
+    )
+
+    for result in (cross_tenant, missing_scope, missing_decision):
+        assert result.decision is None
+        assert result.error is not None
+        assert result.error.error_code == "decision_not_available"
+        assert result.error.message == "decisão não disponível"
+        assert result.error.correlation_id == "corr_1234567890abcdef"
+        assert result.error.status_code == 404
+        assert result.logs[-1]["operation"] == "credit_decision.public_query.get"
+        assert result.logs[-1]["status"] == "rejected"
+        assert result.logs[-1]["payload"] == "[OMITIDO]"
+
+    assert cross_tenant.error == missing_scope.error == missing_decision.error
+    assert invalid_request.decision is None
+    assert invalid_request.error is not None
+    assert invalid_request.error.error_code == "invalid_request"
+    assert invalid_request.error.status_code == 400
+    assert invalid_request.logs[-1]["extra"] == {
+        "contract_version": "v1",
+        "error_code": "invalid_request",
+        "status_code": 400,
+    }
+
+
+def test_get_public_credit_decision_by_proposal_maps_internal_failures_to_500() -> None:
+    audit = RecordingAuditPublisher()
+    service = DecisionApplicationService(
+        repository=InMemoryCreditPolicyRepository(),
+        reason_code_catalog_repository=_published_catalog_repository(),
+        policy_simulation_repository=InMemoryPolicySimulationRepository(),
+        credit_decision_repository=None,
+        audit_publisher=audit,
+        environment="test",
+        clock=lambda: NOW,
+    )
+
+    result = service.get_public_credit_decision_by_proposal(
+        GetPublicCreditDecisionByProposalCommand(proposal_id="proposal_personal_credit_001"),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:read",)),
+    )
+
+    assert result.decision is None
+    assert result.error is not None
+    assert result.error.error_code == "decision_query_failed"
+    assert result.error.status_code == 500
+    assert result.logs[-1]["status"] == "rejected"
+    assert result.logs[-1]["extra"] == {
+        "contract_version": "v1",
+        "error_code": "decision_query_failed",
+        "status_code": 500,
+    }
+    assert audit.events[-1].event_type == "credit_decision.public_query_rejected"
+    assert audit.events[-1].safe_details["rejection_reason"] == "decision_query_failed"
+
+
+def test_get_public_credit_decision_by_proposal_controls_audit_publisher_failures() -> None:
+    class FailingPublicQueryAuditPublisher:
+        def publish(self, event: DecisionAuditIntent) -> None:
+            if isinstance(event, CreditDecisionAuditIntent):
+                raise RuntimeError("audit unavailable")
+
+    policy_repository = InMemoryCreditPolicyRepository()
+    catalog_repository = _published_catalog_repository()
+    simulation_repository = InMemoryPolicySimulationRepository()
+    decision_repository = InMemoryCreditDecisionRepository()
+    bootstrap_service = _service(
+        audit=RecordingAuditPublisher(),
+        repository=policy_repository,
+        catalog_repository=catalog_repository,
+        simulation_repository=simulation_repository,
+        decision_repository=decision_repository,
+    )
+    _create_and_publish_policy(bootstrap_service)
+    bootstrap_service.execute_credit_decision(
+        _execute_command(),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+    )
+    failing_service = _service(
+        audit=FailingPublicQueryAuditPublisher(),
+        repository=policy_repository,
+        catalog_repository=catalog_repository,
+        simulation_repository=simulation_repository,
+        decision_repository=decision_repository,
+    )
+
+    result = failing_service.get_public_credit_decision_by_proposal(
+        GetPublicCreditDecisionByProposalCommand(proposal_id="proposal_personal_credit_001"),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:read",)),
+    )
+
+    assert result.decision is None
+    assert result.error is not None
+    assert result.error.error_code == "decision_query_failed"
+    assert result.error.status_code == 500
+    assert result.logs[-1]["operation"] == "credit_decision.public_query.get"
+    assert result.logs[-1]["status"] == "rejected"
 
 
 def test_execute_credit_decision_rejects_divergent_traceability_contexts() -> None:
@@ -944,6 +1152,9 @@ def _trusted_context(
     tenant_isolation_tier: str = "bridge",
     subject_id: str = "user_credit_manager",
     scopes: tuple[str, ...] = ("decision:execute", "policy:read"),
+    correlation_id: str = "corr_1234567890abcdef",
+    request_id: str = "req_1234567890abcdef",
+    trace_id: str = "1234567890abcdef1234567890abcdef",
 ) -> PropagatedContext:
     return PropagatedContext(
         trusted=TrustedContext(
@@ -955,7 +1166,17 @@ def _trusted_context(
             client_id="client_admin_console",
             principal_type="human",
         ),
-        correlation_id="corr_1234567890abcdef",
-        request_id="req_1234567890abcdef",
-        traceparent="00-1234567890abcdef1234567890abcdef-1234567890abcdef-01",
+        correlation_id=correlation_id,
+        request_id=request_id,
+        traceparent=f"00-{trace_id}-1234567890abcdef-01",
     )
+
+
+def _iter_nested_keys(value: object):
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            yield str(key)
+            yield from _iter_nested_keys(nested_value)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _iter_nested_keys(item)
