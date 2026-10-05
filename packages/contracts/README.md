@@ -45,13 +45,37 @@ O OpenAPI `openapi/public/decision/v1/openapi.json` define a consulta pública
 contrato não exige `Idempotency-Key`; os headers obrigatórios são
 `X-Correlation-Id` e `X-Request-Id`.
 
+A resposta pública v1 cobre tanto status pré-decisão quanto decisão final ou
+controlada. O campo `status` usa enum versionado com `submitted`, `processing`,
+`completed`, `requires_input` e `unable_to_decide`. O campo `outcome` só aparece
+com valor quando há decisão e usa `approve`, `reject`, `approve_with_changes`,
+`request_more_data` ou `unable_to_decide`; para status pré-decisão ele é nulo.
+Toda resposta aceita inclui `message` pública segura e `correlation_id`.
+
+Status pré-decisão deve vir de porta/projeção governada por tenant, preparada
+para integração interna via gRPC, e não de acesso direto a repositórios ou
+tabelas internas do `Proposal Intake Service`. Para estados `submitted` ou
+`processing`, a resposta não inventa `decision_id`, política, reason codes ou
+fatores.
+
 A resposta pública deve permanecer fechada e minimizada. Campos internos como
 `tenant_id`, `triggered_rule_ids`, `decision_fingerprint`, `input_fingerprint`,
-payloads, dados pessoais, headers, tokens e stack traces não pertencem ao
-contrato público. `required_data_refs`, `validation_issue_codes` e
+payloads, dados pessoais, headers, tokens e detalhes técnicos internos não
+pertencem ao contrato público. `required_data_refs`, `validation_issue_codes` e
 `fallback_action` também ficam fora da v1 até serem governados por contrato
 próprio. Referências alternativas a proposta ficam fora da v1 até serem
 governadas por contrato próprio.
+
+Erros públicos usam `ErrorResponse` fechado com `error_code` versionado:
+`invalid_request`, `decision_not_available` ou `decision_query_failed`. O código
+`decision_not_available` continua indistinguível para proposta inexistente,
+cross-tenant, decisão ausente sem status governado e permissão insuficiente.
+Enquanto não houver cliente externo ativo integrado, este contrato v1 permanece
+experimental em estágio MVP pré-produção: ajustes incompatíveis podem ocorrer na
+própria v1 quando registrados no catálogo e cobertos por testes de contrato. A
+partir do primeiro cliente externo integrado, a v1 deve ser congelada; mudanças
+incompatíveis em campos, enums, mensagens públicas ou semântica exigem nova
+versão, janela de compatibilidade, plano de migração e testes de contrato.
 
 ## Integração canônica v1
 

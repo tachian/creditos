@@ -246,6 +246,65 @@ OPENAPI_MUTATING_METHODS = {"post", "put", "patch", "delete"}
 PROPOSAL_OPENAPI_REQUEST_REF = "../../../../schemas/proposal/v1/proposal.schema.json"
 OPENAPI_REQUIRED_MUTATING_RESPONSES = {"202", "400", "401", "409", "500"}
 OPENAPI_REQUIRED_READ_RESPONSES = {"200", "400", "401", "404", "500"}
+DECISION_PUBLIC_STATUS_ENUM = {
+    "submitted",
+    "processing",
+    "completed",
+    "requires_input",
+    "unable_to_decide",
+}
+DECISION_PUBLIC_OUTCOME_ENUM = {
+    "approve",
+    "reject",
+    "approve_with_changes",
+    "request_more_data",
+    "unable_to_decide",
+}
+DECISION_PUBLIC_ERROR_CODES = {
+    "invalid_request",
+    "decision_not_available",
+    "decision_query_failed",
+}
+DECISION_PUBLIC_MESSAGES = {
+    "análise recebida",
+    "análise em processamento",
+    "decisão aprovada",
+    "decisão recusada",
+    "decisão aprovada com alterações",
+    "dados adicionais necessários",
+    "decisão inconclusiva",
+}
+DECISION_PUBLIC_CONDITIONAL_BRANCHES = {
+    "Status pré-decisão": (
+        {"submitted", "processing"},
+        None,
+        {"análise recebida", "análise em processamento"},
+    ),
+    "Decisão aprovada": ({"completed"}, "approve", {"decisão aprovada"}),
+    "Decisão recusada": ({"completed"}, "reject", {"decisão recusada"}),
+    "Decisão aprovada com alterações": (
+        {"completed"},
+        "approve_with_changes",
+        {"decisão aprovada com alterações"},
+    ),
+    "Dados adicionais necessários": (
+        {"requires_input"},
+        "request_more_data",
+        {"dados adicionais necessários"},
+    ),
+    "Decisão inconclusiva": (
+        {"unable_to_decide"},
+        "unable_to_decide",
+        {"decisão inconclusiva"},
+    ),
+}
+DECISION_PUBLIC_RESPONSE_REQUIRED = {
+    "contract_version",
+    "proposal_id",
+    "status",
+    "message",
+    "correlation_id",
+}
 KIND_PATH_RULES = {
     "openapi": (("openapi", "public"), ".json"),
     "protobuf": (("protobuf", "internal"), ".proto"),
@@ -437,6 +496,166 @@ def validate_openapi_contract(path: Path, version: str) -> None:
             f"OpenAPI operação deve declarar respostas padrão {sorted(required_responses)}: {path}",
         )
     validate_proposal_openapi_contract(paths, path)
+    validate_decision_public_openapi_contract(schemas, path)
+
+
+def validate_decision_public_openapi_contract(schemas: dict[str, Any], path: Path) -> None:
+    if path.parts[-5:] != ("openapi", "public", "decision", "v1", "openapi.json"):
+        return
+    response_schema = require_dict(
+        schemas.get("DecisionQueryResponse"),
+        f"OpenAPI Decision deve definir DecisionQueryResponse: {path}",
+    )
+    response_properties = require_dict(
+        response_schema.get("properties"),
+        f"OpenAPI DecisionQueryResponse deve declarar properties: {path}",
+    )
+    required = response_schema.get("required", [])
+    require(
+        isinstance(required, list) and set(required) == DECISION_PUBLIC_RESPONSE_REQUIRED,
+        f"Decision public response required divergente: {path}",
+    )
+    require(
+        response_schema.get("additionalProperties") is False,
+        f"Decision public response deve ser fechado: {path}",
+    )
+    status_schema = require_dict(
+        response_properties.get("status"),
+        f"Decision public response deve declarar status: {path}",
+    )
+    require(
+        set(status_schema.get("enum", [])) == DECISION_PUBLIC_STATUS_ENUM,
+        f"Decision public status enum divergente: {path}",
+    )
+    outcome_schema = require_dict(
+        response_properties.get("outcome"),
+        f"Decision public response deve declarar outcome: {path}",
+    )
+    require(
+        outcome_schema.get("type") == "string"
+        and set(outcome_schema.get("enum", [])) == DECISION_PUBLIC_OUTCOME_ENUM,
+        f"Decision public outcome enum divergente: {path}",
+    )
+    message_schema = require_dict(
+        response_properties.get("message"),
+        f"Decision public response deve declarar message: {path}",
+    )
+    require(
+        message_schema.get("type") == "string"
+        and set(message_schema.get("enum", [])) == DECISION_PUBLIC_MESSAGES
+        and bool(message_schema.get("description")),
+        f"Decision public message enum divergente: {path}",
+    )
+    validate_decision_public_conditional_branches(response_schema, path)
+    error_schema = require_dict(
+        schemas.get("ErrorResponse"),
+        f"OpenAPI Decision deve definir ErrorResponse: {path}",
+    )
+    error_properties = require_dict(
+        error_schema.get("properties"),
+        f"Decision ErrorResponse deve declarar properties: {path}",
+    )
+    error_code_schema = require_dict(
+        error_properties.get("error_code"),
+        f"Decision ErrorResponse deve declarar error_code: {path}",
+    )
+    require(
+        set(error_code_schema.get("enum", [])) == DECISION_PUBLIC_ERROR_CODES,
+        f"Decision public error_code enum divergente: {path}",
+    )
+    forbidden_fields = set(iter_property_names(response_schema)) & {
+        "tenant_id",
+        "triggered_rule_ids",
+        "decision_fingerprint",
+        "input_fingerprint",
+        "payload",
+        "required_data_refs",
+        "validation_issue_codes",
+        "fallback_action",
+        "headers",
+        "token",
+        "stack_trace",
+    }
+    require(
+        not forbidden_fields,
+        "Decision public response não pode expor campos internos: "
+        f"{sorted(forbidden_fields)} em {path}",
+    )
+
+
+def validate_decision_public_conditional_branches(
+    response_schema: dict[str, Any],
+    path: Path,
+) -> None:
+    branches = response_schema.get("oneOf")
+    require(
+        isinstance(branches, list),
+        f"Decision public response deve declarar oneOf fechado por estado: {path}",
+    )
+    if not isinstance(branches, list):
+        return
+    require(
+        len(branches) == len(DECISION_PUBLIC_CONDITIONAL_BRANCHES),
+        f"Decision public response deve declarar oneOf fechado por estado: {path}",
+    )
+    branches_by_title = {
+        str(branch.get("title")): branch for branch in branches if isinstance(branch, dict)
+    }
+    require(
+        set(branches_by_title) == set(DECISION_PUBLIC_CONDITIONAL_BRANCHES),
+        f"Decision public oneOf deve declarar branches versionados: {path}",
+    )
+    for title, (
+        expected_statuses,
+        expected_outcome,
+        expected_messages,
+    ) in DECISION_PUBLIC_CONDITIONAL_BRANCHES.items():
+        branch = require_dict(branches_by_title.get(title), f"Branch ausente: {title} em {path}")
+        branch_properties = require_dict(
+            branch.get("properties"),
+            f"Branch Decision public sem properties: {title} em {path}",
+        )
+        status_constraint = require_dict(
+            branch_properties.get("status"),
+            f"Branch Decision public sem status: {title} em {path}",
+        )
+        actual_statuses = (
+            {status_constraint["const"]}
+            if "const" in status_constraint
+            else set(status_constraint.get("enum", []))
+        )
+        require(
+            actual_statuses == expected_statuses,
+            f"Branch Decision public status divergente: {title} em {path}",
+        )
+        message_constraint = require_dict(
+            branch_properties.get("message"),
+            f"Branch Decision public sem message: {title} em {path}",
+        )
+        actual_messages = (
+            {message_constraint["const"]}
+            if "const" in message_constraint
+            else set(message_constraint.get("enum", []))
+        )
+        require(
+            actual_messages == expected_messages,
+            f"Branch Decision public message divergente: {title} em {path}",
+        )
+        outcome_constraint = branch_properties.get("outcome")
+        if expected_outcome is None:
+            require(
+                outcome_constraint is None and "not" in branch,
+                f"Branch pré-decisão não pode permitir outcome/decisão: {path}",
+            )
+        else:
+            outcome_constraint = require_dict(
+                outcome_constraint,
+                f"Branch Decision public sem outcome: {title} em {path}",
+            )
+            require(
+                outcome_constraint.get("const") == expected_outcome,
+                f"Branch Decision public outcome divergente: {title} em {path}",
+            )
 
 
 def validate_proposal_openapi_contract(paths: dict[str, Any], path: Path) -> None:

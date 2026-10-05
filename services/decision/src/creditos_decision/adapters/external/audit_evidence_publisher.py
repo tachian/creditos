@@ -225,6 +225,26 @@ def _audit_resource_id(value: str) -> str:
 
 
 def _safe_details_for(event: CreditDecisionAuditIntent) -> dict[str, str]:
+    if event.event_type in {
+        "credit_decision.public_query_retrieved",
+        "credit_decision.public_query_rejected",
+    }:
+        forbidden_public_details = {
+            "tenant_id",
+            "decision_id",
+            "proposal_id",
+            "policy_id",
+            "policy_version_id",
+            "reason_code_catalog_id",
+            "reason_code_catalog_version_id",
+        } & set(event.safe_details)
+        if forbidden_public_details:
+            raise ValueError(
+                "safe_details de consulta pública contém identificadores autoritativos: "
+                f"{sorted(forbidden_public_details)}"
+            )
+        return dict(event.safe_details)
+
     authoritative_details = {
         "decision_id": event.decision_id,
         "proposal_id": event.proposal_id,

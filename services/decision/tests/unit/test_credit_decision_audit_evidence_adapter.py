@@ -199,6 +199,34 @@ def test_credit_decision_public_query_events_map_to_read_results() -> None:
     assert events[0].result == "accepted"
     assert events[1].action == "read"
     assert events[1].result == "rejected"
+    for event in events:
+        assert "tenant_id" not in event.safe_details
+        assert "decision_id" not in event.safe_details
+        assert "proposal_id" not in event.safe_details
+        assert "policy_id" not in event.safe_details
+        assert "policy_version_id" not in event.safe_details
+
+
+def test_credit_decision_public_query_rejects_authoritative_ids_in_safe_details() -> None:
+    repository = InMemoryAuditEventRepository()
+    audit_service = AuditEvidenceApplicationService(repository=repository, environment="test")
+    publisher = AuditEvidenceDecisionAuditPublisher(
+        audit_service=audit_service,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(ValueError, match="consulta pública contém identificadores"):
+        publisher.publish(
+            _decision_intent(
+                event_type="credit_decision.public_query_retrieved",
+                safe_details={
+                    "decision_id": "decision_personal_credit_001",
+                    "operation": "credit_decision.public_query.get",
+                    "schema_version": "v1",
+                    "status": "completed",
+                },
+            )
+        )
 
 
 def test_credit_decision_audit_adapter_generates_compact_distinct_event_ids() -> None:

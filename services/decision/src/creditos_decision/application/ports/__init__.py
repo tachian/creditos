@@ -13,6 +13,10 @@ from creditos_decision.application.ports.credit_policy_repository import CreditP
 from creditos_decision.application.ports.policy_simulation_repository import (
     PolicySimulationRepository,
 )
+from creditos_decision.application.ports.public_proposal_status_repository import (
+    PublicProposalStatusRepository,
+    PublicProposalStatusSnapshot,
+)
 from creditos_decision.application.ports.reason_code_catalog_repository import (
     ReasonCodeCatalogRepository,
 )
@@ -26,6 +30,8 @@ __all__ = [
     "DecisionAuditIntent",
     "PolicySimulationAuditIntent",
     "PolicySimulationRepository",
+    "PublicProposalStatusRepository",
+    "PublicProposalStatusSnapshot",
     "ReasonCodeCatalogAuditIntent",
     "ReasonCodeCatalogRepository",
 ]

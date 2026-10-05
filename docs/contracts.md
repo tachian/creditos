@@ -45,24 +45,47 @@ OpenAPI Generator ou AsyncAPI CLI dependem de ADR ou aprovação futura.
 
 ## API Pública de Decisão v1
 
-O contrato `decision-public-api` governa a consulta pública de decisão por
-proposta em `packages/contracts/openapi/public/decision/v1/openapi.json`. A
-versão inicial expõe somente `GET /v1/proposals/{proposal_id}/decision` como
-consulta idempotente, sem `Idempotency-Key`, exigindo `X-Correlation-Id` e
+O contrato `decision-public-api` governa a consulta pública de status/decisão
+por proposta em `packages/contracts/openapi/public/decision/v1/openapi.json`. A
+versão v1 expõe somente `GET /v1/proposals/{proposal_id}/decision` como consulta
+idempotente, sem `Idempotency-Key`, exigindo `X-Correlation-Id` e
 `X-Request-Id` para rastreabilidade.
 
-A resposta é minimizada e contém apenas status, resultado disponível,
-identificadores técnicos permitidos, política/versão, reason codes/fatores
-visíveis para cliente, termos aprovados seguros e `correlation_id`. Ela não
-expõe `tenant_id`, payload bruto, dados pessoais, fingerprints internos,
-`triggered_rule_ids`, `required_data_refs`, `validation_issue_codes`,
-`fallback_action`, headers, tokens ou stack trace.
+A resposta é minimizada e contém `contract_version`, `proposal_id`, `status`,
+`message` pública segura e `correlation_id`. Quando há decisão, também pode
+conter `decision_id`, `outcome`, `decided_at`, produto, canal, política/versão,
+reason codes/fatores visíveis para cliente e termos aprovados seguros. Quando a
+proposta ainda está em análise, `status` pode ser `submitted` ou `processing` e
+a resposta não inventa decisão, política, reason codes ou fatores.
+
+Os enums públicos versionados são:
+
+- `status`: `submitted`, `processing`, `completed`, `requires_input`,
+  `unable_to_decide`.
+- `outcome`: `approve`, `reject`, `approve_with_changes`, `request_more_data`,
+  `unable_to_decide`, ou nulo para status pré-decisão.
+- `error_code`: `invalid_request`, `decision_not_available`,
+  `decision_query_failed`.
+
+Status pré-decisão deve ser obtido por porta/projeção governada por tenant,
+preparada para gRPC interno, sem acesso direto a tabelas ou repositórios de
+outro microsserviço. A API pública não expõe `tenant_id`, payload bruto, dados
+pessoais, fingerprints internos, `triggered_rule_ids`, `required_data_refs`,
+`validation_issue_codes`, `fallback_action`, headers, tokens ou detalhes técnicos
+internos.
 
 Nesta versão, a única referência pública permitida é `proposal_id`. Consultas
 por `external_proposal_id`, `customer_reference` ou referências livres exigem
-contrato e índice governado futuros. Proposta inexistente, decisão ausente,
-cross-tenant e permissão insuficiente usam erro público indistinguível para não
-revelar existência de dados de outro tenant.
+contrato e índice governado futuros. Proposta inexistente, decisão ausente sem
+status governado, cross-tenant e permissão insuficiente usam erro público
+indistinguível para não revelar existência de dados de outro tenant.
+
+Enquanto não houver cliente externo ativo integrado, o `decision-public-api` v1
+é tratado como experimental em estágio MVP pré-produção: ajustes incompatíveis
+podem ocorrer na própria v1 desde que sejam registrados no catálogo e cobertos
+por testes de contrato. A partir do primeiro cliente externo integrado, a v1 deve
+ser congelada; mudanças incompatíveis passam a exigir nova versão, janela de
+compatibilidade, plano de migração e testes de contrato.
 
 ## Eventos de Integração v1
 

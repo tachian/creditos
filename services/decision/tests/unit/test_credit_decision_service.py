@@ -11,12 +11,17 @@ from creditos_decision.adapters.persistence import (
     InMemoryCreditDecisionRepository,
     InMemoryCreditPolicyRepository,
     InMemoryPolicySimulationRepository,
+    InMemoryPublicProposalStatusRepository,
     InMemoryReasonCodeCatalogRepository,
 )
 from creditos_decision.application.ports import (
     CreditDecisionAuditIntent,
+    CreditDecisionRepository,
     CreditPolicyAuditPublisher,
     DecisionAuditIntent,
+)
+from creditos_decision.application.ports.public_proposal_status_repository import (
+    PublicProposalStatusSnapshot,
 )
 from creditos_decision.application.service import (
     CreateCreditPolicyDraftCommand,
@@ -358,6 +363,7 @@ def test_get_public_credit_decision_by_proposal_returns_minimized_response() -> 
     assert result.decision.status == "completed"
     assert result.decision.outcome == "approve"
     assert result.decision.correlation_id == "corr_public_query_123456"
+    assert result.decision.policy is not None
     assert result.decision.policy.policy_id == "pol_personal_credit_default"
     assert result.decision.policy.policy_version_id == "polver_personal_credit_default_v1"
     assert result.decision.policy.reason_code_catalog_version_id == (
@@ -390,6 +396,257 @@ def test_get_public_credit_decision_by_proposal_returns_minimized_response() -> 
     assert "validation_issue_codes" not in public_keys
     assert "fallback_action" not in public_keys
     assert "300000" not in str(public_payload)
+
+
+def test_get_public_credit_decision_by_proposal_returns_governed_submitted_status() -> None:
+    audit = RecordingAuditPublisher()
+    status_repository = InMemoryPublicProposalStatusRepository()
+    status_repository.save(
+        PublicProposalStatusSnapshot(
+            tenant_id="tenant_alpha",
+            proposal_id="proposal_submitted_001",
+            status="submitted",
+            schema_version="1.0",
+            product_type="personal_credit",
+            channel="api",
+            occurred_at=NOW,
+        )
+    )
+    service = _service(
+        audit=audit,
+        decision_repository=InMemoryCreditDecisionRepository(),
+        public_proposal_status_repository=status_repository,
+    )
+
+    result = service.get_public_credit_decision_by_proposal(
+        GetPublicCreditDecisionByProposalCommand(proposal_id="proposal_submitted_001"),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:read",)),
+    )
+
+    assert result.error is None
+    assert result.decision is not None
+    assert result.decision.contract_version == "v1"
+    assert result.decision.proposal_id == "proposal_submitted_001"
+    assert result.decision.status == "submitted"
+    assert result.decision.outcome is None
+    assert result.decision.decision_id is None
+    assert result.decision.decided_at is None
+    assert result.decision.policy is None
+    assert result.decision.reason_codes == ()
+    assert result.decision.factors == ()
+    assert result.decision.message == "análise recebida"
+    assert result.logs[-1]["extra"] == {
+        "channel": "api",
+        "contract_version": "v1",
+        "factor_count": 0,
+        "product_type": "personal_credit",
+        "reason_code_count": 0,
+        "status": "submitted",
+    }
+    assert audit.events[-1].event_type == "credit_decision.public_query_retrieved"
+    assert audit.events[-1].safe_details["status"] == "submitted"
+    assert "proposal_submitted_001" not in str(audit.events[-1].safe_details)
+
+
+def test_get_public_credit_decision_by_proposal_exposes_versioned_public_messages() -> None:
+    scenarios = (
+        (
+            _service_with_public_policy(outcome="approve"),
+            ExecuteCreditDecisionCommand(
+                decision_id="decision_public_approve",
+                proposal_id="proposal_public_approve",
+                product_type="personal_credit",
+                channel="api",
+                effective_at=NOW + timedelta(days=2),
+                field_values=_decision_field_values(),
+            ),
+            "completed",
+            "approve",
+            "decisão aprovada",
+        ),
+        (
+            _service_with_public_policy(outcome="reject"),
+            ExecuteCreditDecisionCommand(
+                decision_id="decision_public_reject",
+                proposal_id="proposal_public_reject",
+                product_type="personal_credit",
+                channel="api",
+                effective_at=NOW + timedelta(days=2),
+                field_values=_decision_field_values(),
+            ),
+            "completed",
+            "reject",
+            "decisão recusada",
+        ),
+        (
+            _service_with_public_policy(outcome="approve_with_changes"),
+            ExecuteCreditDecisionCommand(
+                decision_id="decision_public_changes",
+                proposal_id="proposal_public_changes",
+                product_type="personal_credit",
+                channel="api",
+                effective_at=NOW + timedelta(days=2),
+                field_values=_decision_field_values(
+                    requested_installments=36,
+                    requested_term_days=900,
+                ),
+            ),
+            "completed",
+            "approve_with_changes",
+            "decisão aprovada com alterações",
+        ),
+        (
+            _service_with_public_policy(outcome="approve"),
+            ExecuteCreditDecisionCommand(
+                decision_id="decision_public_missing",
+                proposal_id="proposal_public_missing",
+                product_type="personal_credit",
+                channel="api",
+                effective_at=NOW + timedelta(days=2),
+                field_values=(
+                    CreditDecisionInputFieldValue.create(
+                        field="requested_amount_units",
+                        value=700_000,
+                    ),
+                ),
+            ),
+            "requires_input",
+            "request_more_data",
+            "dados adicionais necessários",
+        ),
+        (
+            _service_with_conflicting_public_policy(),
+            ExecuteCreditDecisionCommand(
+                decision_id="decision_public_conflict",
+                proposal_id="proposal_public_conflict",
+                product_type="personal_credit",
+                channel="api",
+                effective_at=NOW + timedelta(days=2),
+                field_values=_decision_field_values(),
+            ),
+            "unable_to_decide",
+            "unable_to_decide",
+            "decisão inconclusiva",
+        ),
+    )
+
+    for service, command, status, outcome, message in scenarios:
+        service.execute_credit_decision(
+            command,
+            context=_context("tenant_alpha"),
+            trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+        )
+
+        public = service.get_public_credit_decision_by_proposal(
+            GetPublicCreditDecisionByProposalCommand(proposal_id=command.proposal_id),
+            context=_context("tenant_alpha"),
+            trusted_context=_trusted_context(scopes=("decision:read",)),
+        )
+
+        assert public.decision is not None
+        assert public.decision.status == status
+        assert public.decision.outcome == outcome
+        assert public.decision.message == message
+        assert "stack" not in str(public.decision).lower()
+        assert "trace" not in str(public.decision).lower()
+
+
+def test_get_public_credit_decision_by_proposal_returns_governed_processing_status() -> None:
+    audit = RecordingAuditPublisher()
+    status_repository = InMemoryPublicProposalStatusRepository()
+    status_repository.save(
+        PublicProposalStatusSnapshot(
+            tenant_id="tenant_alpha",
+            proposal_id="proposal_processing_001",
+            status="processing",
+            schema_version="1.0",
+            product_type="personal_credit",
+            channel="api",
+            occurred_at=NOW,
+        )
+    )
+    service = _service(
+        audit=audit,
+        decision_repository=InMemoryCreditDecisionRepository(),
+        public_proposal_status_repository=status_repository,
+    )
+
+    result = service.get_public_credit_decision_by_proposal(
+        GetPublicCreditDecisionByProposalCommand(proposal_id="proposal_processing_001"),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:read",)),
+    )
+
+    assert result.error is None
+    assert result.decision is not None
+    assert result.decision.status == "processing"
+    assert result.decision.outcome is None
+    assert result.decision.message == "análise em processamento"
+
+
+def test_get_public_credit_decision_by_proposal_prefers_decision_over_stale_status() -> None:
+    class RaceDecisionRepository:
+        def __init__(self, inner: InMemoryCreditDecisionRepository) -> None:
+            self._inner = inner
+            self._proposal_lookup_count = 0
+
+        def save(self, decision, *, before_commit=None):
+            self._inner.save(decision, before_commit=before_commit)
+
+        def get(self, *, tenant_id: str, decision_id: str):
+            return self._inner.get(tenant_id=tenant_id, decision_id=decision_id)
+
+        def get_by_proposal(self, *, tenant_id: str, proposal_id: str):
+            self._proposal_lookup_count += 1
+            if self._proposal_lookup_count == 1:
+                return None
+            return self._inner.get_by_proposal(tenant_id=tenant_id, proposal_id=proposal_id)
+
+    audit = RecordingAuditPublisher()
+    policy_repository = InMemoryCreditPolicyRepository()
+    decision_repository = InMemoryCreditDecisionRepository()
+    status_repository = InMemoryPublicProposalStatusRepository()
+    bootstrap_service = _service(
+        audit=audit,
+        repository=policy_repository,
+        decision_repository=decision_repository,
+    )
+    _create_and_publish_policy(bootstrap_service)
+    bootstrap_service.execute_credit_decision(
+        _execute_command(),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:execute", "policy:read")),
+    )
+    status_repository.save(
+        PublicProposalStatusSnapshot(
+            tenant_id="tenant_alpha",
+            proposal_id="proposal_personal_credit_001",
+            status="processing",
+            schema_version="1.0",
+            product_type="personal_credit",
+            channel="api",
+            occurred_at=NOW,
+        )
+    )
+    query_service = _service(
+        audit=audit,
+        repository=policy_repository,
+        decision_repository=RaceDecisionRepository(decision_repository),
+        public_proposal_status_repository=status_repository,
+    )
+
+    result = query_service.get_public_credit_decision_by_proposal(
+        GetPublicCreditDecisionByProposalCommand(proposal_id="proposal_personal_credit_001"),
+        context=_context("tenant_alpha"),
+        trusted_context=_trusted_context(scopes=("decision:read",)),
+    )
+
+    assert result.error is None
+    assert result.decision is not None
+    assert result.decision.status == "completed"
+    assert result.decision.outcome == "approve"
+    assert result.decision.decision_id == "decision_personal_credit_001"
 
 
 def test_get_public_credit_decision_by_proposal_standardizes_not_available_errors() -> None:
@@ -868,19 +1125,56 @@ def test_execute_credit_decision_is_not_visible_when_audit_fails() -> None:
     )
 
 
+def _service_with_public_policy(*, outcome: str) -> DecisionApplicationService:
+    policy_repository = InMemoryCreditPolicyRepository()
+    policy_repository.save(
+        _published_policy_direct(
+            rules=(_rule(rule_id=f"rule_public_{outcome}", outcome=outcome),),
+        )
+    )
+    return _service(
+        audit=RecordingAuditPublisher(),
+        repository=policy_repository,
+        catalog_repository=_published_catalog_repository(
+            include_reject=outcome == "reject",
+            include_approve_with_changes=outcome == "approve_with_changes",
+        ),
+    )
+
+
+def _service_with_conflicting_public_policy() -> DecisionApplicationService:
+    policy_repository = InMemoryCreditPolicyRepository()
+    service = _service(
+        audit=RecordingAuditPublisher(),
+        repository=policy_repository,
+        catalog_repository=_published_catalog_repository(include_reject=True),
+    )
+    policy_repository.save(
+        _published_policy_direct(
+            rules=(
+                _rule(rule_id="rule_public_reject_income", outcome="reject"),
+                _rule(rule_id="rule_public_approve_income", outcome="approve"),
+            ),
+        )
+    )
+    return service
+
+
 def _service(
     *,
     audit: CreditPolicyAuditPublisher,
     repository: InMemoryCreditPolicyRepository | None = None,
     catalog_repository: InMemoryReasonCodeCatalogRepository | None = None,
     simulation_repository: InMemoryPolicySimulationRepository | None = None,
-    decision_repository: InMemoryCreditDecisionRepository | None = None,
+    decision_repository: CreditDecisionRepository | None = None,
+    public_proposal_status_repository: InMemoryPublicProposalStatusRepository | None = None,
 ) -> DecisionApplicationService:
     return DecisionApplicationService(
         repository=repository or InMemoryCreditPolicyRepository(),
         reason_code_catalog_repository=catalog_repository or _published_catalog_repository(),
         policy_simulation_repository=simulation_repository or InMemoryPolicySimulationRepository(),
         credit_decision_repository=decision_repository or InMemoryCreditDecisionRepository(),
+        public_proposal_status_repository=public_proposal_status_repository,
         audit_publisher=audit,
         environment="test",
         clock=lambda: NOW,
@@ -945,12 +1239,30 @@ def _execute_command(
     )
 
 
-def _decision_field_values() -> tuple[CreditDecisionInputFieldValue, ...]:
+def _decision_field_values(
+    *,
+    monthly_income_units: int = 300_000,
+    requested_amount_units: int = 700_000,
+    requested_installments: int = 12,
+    requested_term_days: int = 360,
+) -> tuple[CreditDecisionInputFieldValue, ...]:
     return (
-        CreditDecisionInputFieldValue.create(field="monthly_income_units", value=300_000),
-        CreditDecisionInputFieldValue.create(field="requested_amount_units", value=700_000),
-        CreditDecisionInputFieldValue.create(field="requested_installments", value=12),
-        CreditDecisionInputFieldValue.create(field="requested_term_days", value=360),
+        CreditDecisionInputFieldValue.create(
+            field="monthly_income_units",
+            value=monthly_income_units,
+        ),
+        CreditDecisionInputFieldValue.create(
+            field="requested_amount_units",
+            value=requested_amount_units,
+        ),
+        CreditDecisionInputFieldValue.create(
+            field="requested_installments",
+            value=requested_installments,
+        ),
+        CreditDecisionInputFieldValue.create(
+            field="requested_term_days",
+            value=requested_term_days,
+        ),
     )
 
 
@@ -1044,6 +1356,11 @@ def _published_policy_direct(*, rules: tuple[PolicyRule, ...]) -> CreditPolicy:
 
 
 def _rule(*, rule_id: str, outcome: str) -> PolicyRule:
+    reason_code_by_outcome = {
+        "approve": "rc_min_income",
+        "reject": "rc_reject_income",
+        "approve_with_changes": "rc_approve_with_changes",
+    }
     return PolicyRule.create(
         rule_id=rule_id,
         name="Renda mínima declarada",
@@ -1051,13 +1368,14 @@ def _rule(*, rule_id: str, outcome: str) -> PolicyRule:
         operator="gte",
         threshold_value=250_000,
         outcome=outcome,
-        reason_code_refs=("rc_reject_income" if outcome == "reject" else "rc_min_income",),
+        reason_code_refs=(reason_code_by_outcome.get(outcome, "rc_min_income"),),
     )
 
 
 def _published_catalog_repository(
     *,
     include_reject: bool = False,
+    include_approve_with_changes: bool = False,
     reason_code_audience: str = "both",
 ) -> InMemoryReasonCodeCatalogRepository:
     repository = InMemoryReasonCodeCatalogRepository()
@@ -1069,6 +1387,7 @@ def _published_catalog_repository(
         product_type="personal_credit",
         reason_codes=_reason_codes(
             include_reject=include_reject,
+            include_approve_with_changes=include_approve_with_changes,
             reason_code_audience=reason_code_audience,
         ),
         explainable_factors=(
@@ -1100,6 +1419,7 @@ def _published_catalog_repository(
 def _reason_codes(
     *,
     include_reject: bool,
+    include_approve_with_changes: bool = False,
     reason_code_audience: str = "both",
 ) -> tuple[ReasonCode, ...]:
     reason_codes = [
@@ -1123,6 +1443,18 @@ def _reason_codes(
                 title="Renda insuficiente",
                 internal_description="Renda declarada fora da política",
                 external_description="Renda declarada insuficiente para aprovação",
+                factor_refs=("factor_monthly_income",),
+            )
+        )
+    if include_approve_with_changes:
+        reason_codes.append(
+            ReasonCode.create(
+                reason_code_id="reason_approve_with_changes",
+                code="rc_approve_with_changes",
+                outcome="approve_with_changes",
+                title="Aprovação com ajustes",
+                internal_description="A política permite aprovação com termos ajustados",
+                external_description="A análise permite aprovação com alterações nas condições",
                 factor_refs=("factor_monthly_income",),
             )
         )

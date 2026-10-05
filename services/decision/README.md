@@ -160,29 +160,40 @@ Ficam fora desta etapa: gRPC real, NATS JetStream, outbox, banco real, endpoints
 
 ## Consulta pública por proposta
 
-A Story 8.1 adiciona uma projeção pública minimizada para consulta de decisão
-por `proposal_id`, usando o contrato `decision-public-api` v1. O caso de uso
-`get_public_credit_decision_by_proposal` consulta a decisão por tenant/proposta,
-usa explicabilidade com audiência `customer` e emite somente log/auditoria
-da operação pública antes de expor qualquer dado ao cliente.
+As Stories 8.1 e 8.2 adicionam uma projeção pública minimizada para consulta de
+status/decisão por `proposal_id`, usando o contrato `decision-public-api` v1. O
+caso de uso `get_public_credit_decision_by_proposal` consulta a decisão por
+tenant/proposta, usa explicabilidade com audiência `customer` quando há decisão
+e emite log/auditoria da operação pública antes de expor qualquer dado ao
+cliente.
 
-Campos permitidos incluem `contract_version`, `proposal_id`, `decision_id`,
-`status`, `outcome`, `decided_at`, `product_type`, `channel`, `correlation_id`,
-metadados de política/versão, reason codes/fatores visíveis para cliente
-e termos aprovados seguros.
+Campos sempre permitidos incluem `contract_version`, `proposal_id`, `status`,
+`message` e `correlation_id`. Quando uma decisão existe, a resposta pode incluir
+`decision_id`, `outcome`, `decided_at`, `product_type`, `channel`, metadados de
+política/versão, reason codes/fatores visíveis para cliente e termos aprovados
+seguros. Para status pré-decisão (`submitted` ou `processing`), a resposta não
+inventa `decision_id`, política, reason codes ou fatores.
+
+Status pré-decisão é obtido via `PublicProposalStatusRepository`, uma porta
+governada/anti-corruption preparada para integração interna via gRPC. O
+`Decision Service` não importa entidades, serviços de aplicação ou repositórios
+do `Proposal Intake Service`, nem consulta suas tabelas diretamente.
 
 A resposta pública não serializa diretamente `CreditDecisionExplanationResponse`,
 pois esse objeto interno contém campos como `tenant_id`, `triggered_rule_ids` e
 `decision_fingerprint`. Também são proibidos `required_data_refs`,
 `validation_issue_codes`, `fallback_action`, payload bruto, dados pessoais,
-headers, tokens, stack trace, `input_fingerprint`, field values e payloads
-proprietários de integração enquanto não houver governança pública específica.
+headers, tokens, detalhes técnicos internos, `input_fingerprint`, field values e
+payloads proprietários de integração enquanto não houver governança pública
+específica.
 
-Decisão inexistente, proposta de outro tenant e permissão insuficiente são
-mapeadas para erro público indistinguível `decision_not_available`, preservando
-o isolamento multi-tenant. Status pendente para proposta aceita sem decisão
-persistida depende de read model/contrato de status futuro do Epic 8.2; esta
-story não consulta banco ou repositório do `Proposal Intake`.
+Decisão inexistente, proposta de outro tenant, decisão ausente sem status
+governado e permissão insuficiente são mapeadas para erro público indistinguível
+`decision_not_available`, preservando o isolamento multi-tenant. Enquanto não
+houver cliente externo ativo integrado, a v1 permanece experimental em estágio
+MVP pré-produção e pode receber ajustes incompatíveis registrados no catálogo. A
+partir do primeiro cliente externo integrado, a v1 deve ser congelada e mudanças
+incompatíveis passam a exigir nova versão e plano de migração.
 
 ## Arquitetura
 
