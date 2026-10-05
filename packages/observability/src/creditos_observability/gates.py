@@ -61,9 +61,7 @@ _MAX_SCAN_DEPTH = 12
 _RAW_CPF_PATTERN = re.compile(r"(?<!\d)(?:\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?!\d)")
 _RAW_CNPJ_PATTERN = re.compile(r"(?<!\d)(?:\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})(?!\d)")
 _RAW_EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-_RAW_PHONE_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9])(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}-?\d{4}(?![A-Za-z0-9])"
-)
+_RAW_PHONE_PATTERN = re.compile(r"(?<!\d)(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}-?\d{4}(?!\d)")
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"(?i)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
     r"password|senha|secret|token)\s*[:=]\s*[^\s,;]}]+"
@@ -441,11 +439,16 @@ def _scan_text(text: str, *, exposure: ExposureKind, path: str) -> Iterable[str]
         (_RAW_CPF_PATTERN, "cpf"),
         (_RAW_CNPJ_PATTERN, "cnpj"),
         (_RAW_EMAIL_PATTERN, "email"),
-        (_RAW_PHONE_PATTERN, "telefone"),
         (_SECRET_ASSIGNMENT_PATTERN, "secret_assignment"),
     ):
         if pattern.search(text):
             yield f"{path}:{term}"
+
+    for match in _RAW_PHONE_PATTERN.finditer(text):
+        if _is_hex_memory_address_match(text, match):
+            continue
+        yield f"{path}:telefone"
+        break
 
     forbidden_terms: frozenset[str]
     if exposure == "technical_internal":
@@ -472,6 +475,21 @@ def _scan_text(text: str, *, exposure: ExposureKind, path: str) -> Iterable[str]
     for term in sorted(forbidden_terms):
         if _matches_forbidden_text(lowered, term):
             yield f"{path}:{term}"
+
+
+def _is_hex_memory_address_match(text: str, match: re.Match[str]) -> bool:
+    start = match.start()
+    end = match.end()
+    token_start = start
+    while token_start > 0 and text[token_start - 1].isalnum():
+        token_start -= 1
+    token_end = end
+    while token_end < len(text) and text[token_end].isalnum():
+        token_end += 1
+    token = text[token_start:token_end]
+    return token.lower().startswith("0x") and all(
+        character in "0123456789abcdefABCDEF" for character in token[2:]
+    )
 
 
 def _scan_numeric_identifier(value: int, *, path: str) -> Iterable[str]:

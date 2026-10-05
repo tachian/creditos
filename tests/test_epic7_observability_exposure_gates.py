@@ -208,6 +208,8 @@ def test_customer_facing_payload_gate_blocks_telemetry_and_infrastructure_leaks(
         ({"document": 12345678909}, "cpf"),
         ({"document": 11222333000181}, "cnpj"),
         ({"message": "+55 11 99999-4321"}, "telefone"),
+        ({"message": "phone5511999994321"}, "telefone"),
+        ({"message": "telefone11999999999"}, "telefone"),
         ({"prompt": "texto minimizado"}, "prompt"),
         ({"output": "texto minimizado"}, "output"),
     ],

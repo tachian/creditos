@@ -414,7 +414,7 @@ def test_decision_public_openapi_defines_minimized_query_by_proposal() -> None:
     assert openapi["x-creditos"]["owner"] == "Decision"
     assert operation["operationId"] == "getDecisionByProposal"
     assert proposal_parameter["schema"]["maxLength"] == 160
-    assert proposal_parameter["schema"]["pattern"] == "^[a-z0-9][a-z0-9_.-]{2,160}$"
+    assert proposal_parameter["schema"]["pattern"] == "^[a-z0-9][a-z0-9_.-]{2,159}$"
     assert header_names == {"X-Correlation-Id", "X-Request-Id"}
     assert "Idempotency-Key" not in dumped(operation)
     assert set(operation["responses"]) >= {"200", "400", "401", "404", "500"}
