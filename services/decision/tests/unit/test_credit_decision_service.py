@@ -993,6 +993,7 @@ def test_execute_credit_decision_has_stable_fingerprint_and_controls_duplicate_p
     rejected_event = audit.events[-1]
     assert isinstance(rejected_event, CreditDecisionAuditIntent)
     assert rejected_event.event_type == "credit_decision.rejected"
+    assert rejected_event.decision_id is not None
     assert rejected_event.decision_id.startswith("decision_")
     assert rejected_event.decision_id != "unknown_credit_decision"
     assert rejected_event.proposal_id == "proposal_personal_credit_001"
