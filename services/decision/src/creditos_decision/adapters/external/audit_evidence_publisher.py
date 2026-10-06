@@ -74,6 +74,18 @@ class AuditEvidenceDecisionAuditPublisher:
     def publish(self, event: DecisionAuditIntent) -> None:
         if not isinstance(event, CreditDecisionAuditIntent):
             raise TypeError("adapter suporta apenas auditoria de decisão de crédito")
+        public_query_without_decision = event.event_type in {
+            "credit_decision.public_query_retrieved",
+            "credit_decision.public_query_rejected",
+        } and event.decision_id is None
+        if event.decision_id is None:
+            if not public_query_without_decision:
+                raise ValueError("decision_id obrigatório fora de consulta pública sem decisão")
+            resource_type = "credit_proposal"
+            resource_id = _audit_resource_id(event.proposal_id)
+        else:
+            resource_type = "credit_decision"
+            resource_id = _audit_resource_id(event.decision_id)
         occurrence_token = self._occurrence_token_factory()
         trace_id = _trace_id_from_traceparent(event.traceparent)
         context = ObservabilityContext.new(
@@ -100,12 +112,12 @@ class AuditEvidenceDecisionAuditPublisher:
         self._audit_service.register_event(
             RegisterAuditEventCommand(
                 event_id=_event_id(event, occurrence_token=occurrence_token),
-                aggregate_type="credit_decision",
-                aggregate_id=_audit_resource_id(event.decision_id),
+                aggregate_type=resource_type,
+                aggregate_id=resource_id,
                 event_type=event.event_type,
                 action=_action_for(event),
-                resource_type="credit_decision",
-                resource_id=_audit_resource_id(event.decision_id),
+                resource_type=resource_type,
+                resource_id=resource_id,
                 source_service=_SERVICE_NAME,
                 source_kind=self._source_kind,
                 result=_result_for(event),
@@ -245,6 +257,8 @@ def _safe_details_for(event: CreditDecisionAuditIntent) -> dict[str, str]:
             )
         return dict(event.safe_details)
 
+    if event.decision_id is None:
+        raise ValueError("decision_id obrigatório fora de consulta pública sem decisão")
     authoritative_details = {
         "decision_id": event.decision_id,
         "proposal_id": event.proposal_id,

@@ -449,6 +449,55 @@ def test_get_public_credit_decision_by_proposal_returns_governed_submitted_statu
     assert "proposal_submitted_001" not in str(audit.events[-1].safe_details)
 
 
+def test_get_public_credit_decision_audits_distinct_pending_proposals() -> None:
+    audit_repository = InMemoryAuditEventRepository()
+    audit_service = AuditEvidenceApplicationService(
+        repository=audit_repository,
+        environment="test",
+    )
+    publisher = AuditEvidenceDecisionAuditPublisher(
+        audit_service=audit_service,
+        clock=lambda: NOW,
+    )
+    status_repository = InMemoryPublicProposalStatusRepository()
+    proposal_ids = ("proposal_pending_001", "proposal_pending_002")
+    for proposal_id in proposal_ids:
+        status_repository.save(
+            PublicProposalStatusSnapshot(
+                tenant_id="tenant_alpha",
+                proposal_id=proposal_id,
+                status="submitted",
+                schema_version="1.0",
+                product_type="personal_credit",
+                channel="api",
+                occurred_at=NOW,
+            )
+        )
+    service = _service(
+        audit=publisher,
+        decision_repository=InMemoryCreditDecisionRepository(),
+        public_proposal_status_repository=status_repository,
+    )
+
+    for proposal_id in proposal_ids:
+        service.get_public_credit_decision_by_proposal(
+            GetPublicCreditDecisionByProposalCommand(proposal_id=proposal_id),
+            context=_context("tenant_alpha"),
+            trusted_context=_trusted_context(scopes=("decision:read",)),
+        )
+
+    for proposal_id in proposal_ids:
+        events = audit_repository.list_by_aggregate(
+            tenant_id="tenant_alpha",
+            aggregate_type="credit_proposal",
+            aggregate_id=proposal_id,
+        )
+        assert len(events) == 1
+        assert events[0].resource_type == "credit_proposal"
+        assert events[0].resource_id == proposal_id
+        assert proposal_id not in str(events[0].safe_details)
+
+
 def test_get_public_credit_decision_by_proposal_exposes_versioned_public_messages() -> None:
     scenarios = (
         (

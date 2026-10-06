@@ -1859,9 +1859,7 @@ class DecisionApplicationService:
                 tenant_id=operation_context.tenant_id,
                 tenant_isolation_tier=operation_context.tenant_isolation_tier,
                 actor_subject_id=operation_context.actor_subject_id,
-                decision_id=(
-                    decision.decision_id if decision is not None else "unknown_credit_decision"
-                ),
+                decision_id=decision.decision_id if decision is not None else None,
                 proposal_id=public_decision.proposal_id,
                 policy_id=decision.policy_id if decision is not None else "unknown_policy",
                 policy_version_id=(
@@ -2185,9 +2183,7 @@ class DecisionApplicationService:
                     tenant_id=tenant_id,
                     tenant_isolation_tier=tenant_isolation_tier,
                     actor_subject_id=actor_subject_id,
-                    decision_id=(
-                        decision.decision_id if decision is not None else "unknown_credit_decision"
-                    ),
+                    decision_id=decision.decision_id if decision is not None else None,
                     proposal_id=(
                         decision.proposal_id
                         if decision is not None

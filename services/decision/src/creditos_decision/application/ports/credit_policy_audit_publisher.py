@@ -53,7 +53,7 @@ class CreditDecisionAuditIntent:
     tenant_id: str
     tenant_isolation_tier: str
     actor_subject_id: str
-    decision_id: str
+    decision_id: str | None
     proposal_id: str
     policy_id: str
     policy_version_id: str
