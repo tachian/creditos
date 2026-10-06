@@ -248,8 +248,36 @@
                   "análise recebida",
                   "análise em processamento"
                 ]
+              },
+              "reason_codes": {
+                "maxItems": 0
+              },
+              "factors": {
+                "maxItems": 0
               }
             },
+            "oneOf": [
+              {
+                "properties": {
+                  "status": {
+                    "const": "submitted"
+                  },
+                  "message": {
+                    "const": "análise recebida"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "status": {
+                    "const": "processing"
+                  },
+                  "message": {
+                    "const": "análise em processamento"
+                  }
+                }
+              }
+            ],
             "not": {
               "anyOf": [
                 {
