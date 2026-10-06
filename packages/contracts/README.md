@@ -95,3 +95,24 @@ e código.
 As expectativas de consumidores ficam em
 `consumer-expectations/integration-events/v1/README.md` e cobrem `Decision`,
 `Audit & Evidence` e `Reporting & Insights`.
+
+## Configuração Pública de Webhooks v1
+
+O contrato `webhook-configuration-public-api` governa a configuração de
+webhooks por tenant em `packages/contracts/openapi/public/webhooks/v1/openapi.json`.
+A v1 cobre somente cadastro, listagem e desativação da configuração; a
+entrega assíncrona, assinatura do payload entregue, retry de entrega e DLQ ficam
+fora deste contrato inicial e pertencem à Story 8.4.
+
+A configuração aceita somente endpoints `https://` validados pelo `Integration
+Service`, eventos versionados (`decision.status_changed` e `decision.completed`),
+status público controlado, referência de chave de assinatura e política de retry. A allowlist de domínios é política confiável do tenant no `Integration Service`, não campo controlado pelo payload público.
+O contrato não expõe `tenant_id` como autoridade, segredo em claro, headers
+privados, payload bruto ou campos livres. A assinatura inicial usa
+`hmac_sha256` com `signing_key_ref`; armazenamento real em KMS/Secret Manager
+fica fora do escopo desta story.
+
+Enquanto não houver cliente externo ativo integrado, a v1 permanece
+experimental em estágio MVP pré-produção. A partir do primeiro cliente externo,
+a v1 deve ser congelada e mudanças incompatíveis passam a exigir nova versão,
+plano de migração, janela de compatibilidade e testes de contrato.

@@ -1,0 +1,568 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "CreditOS Webhooks Public API Contract",
+    "version": "v1",
+    "description": "Contrato público versionado para configuração governada de webhooks por tenant e evento."
+  },
+  "x-creditos": {
+    "owner": "Integration",
+    "compatibility": "experimental",
+    "breakingChangePolicy": "new-major-version-required",
+    "lifecycle": "mvp-pre-production",
+    "freezeTrigger": "first-external-client-integration",
+    "deliveryScope": "Configuração apenas; entrega assíncrona, retry de entrega e DLQ pertencem à Story 8.4."
+  },
+  "paths": {
+    "/v1/webhooks/configurations": {
+      "post": {
+        "summary": "Configura webhook por tenant e eventos permitidos",
+        "operationId": "configureWebhook",
+        "parameters": [
+          {
+            "name": "X-Correlation-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookConfigurationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Configuração aceita",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookConfigurationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Configuração inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Autenticação ausente ou inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflito idempotente ou de configuração",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Erro controlado sem detalhe interno sensível",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Lista configurações de webhook do tenant autenticado",
+        "operationId": "listWebhooks",
+        "parameters": [
+          {
+            "name": "X-Correlation-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Configurações do tenant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookConfigurationListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Requisição inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Autenticação ausente ou inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Configuração não disponível",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Erro controlado sem detalhe interno sensível",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks/configurations/{webhook_configuration_id}": {
+      "patch": {
+        "summary": "Desativa configuração de webhook",
+        "operationId": "disableWebhookConfiguration",
+        "parameters": [
+          {
+            "name": "webhook_configuration_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^wcfg_[a-z0-9_.:-]{3,160}$"
+            }
+          },
+          {
+            "name": "X-Correlation-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookStatusUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Configuração desativada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookConfigurationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Requisição inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Autenticação ausente ou inválida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflito idempotente ou de estado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Erro controlado sem detalhe interno sensível",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "XCorrelationId": {
+        "name": "X-Correlation-Id",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "XRequestId": {
+        "name": "X-Request-Id",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 8
+        }
+      }
+    },
+    "schemas": {
+      "WebhookConfigurationRequest": {
+        "type": "object",
+        "required": [
+          "endpoint_url",
+          "events",
+          "status",
+          "signing",
+          "retry_policy"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "endpoint_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://",
+            "maxLength": 2048
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "decision.status_changed",
+                "decision.completed"
+              ]
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled",
+              "pending_verification"
+            ]
+          },
+          "signing": {
+            "$ref": "#/components/schemas/WebhookSigningConfiguration"
+          },
+          "retry_policy": {
+            "$ref": "#/components/schemas/WebhookRetryPolicy"
+          }
+        }
+      },
+      "WebhookStatusUpdateRequest": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "disabled"
+            ]
+          }
+        }
+      },
+      "WebhookConfigurationListResponse": {
+        "type": "object",
+        "required": [
+          "contract_version",
+          "items",
+          "correlation_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": "v1"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookConfigurationResponse"
+            }
+          },
+          "correlation_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "WebhookConfigurationResponse": {
+        "type": "object",
+        "required": [
+          "contract_version",
+          "webhook_configuration_id",
+          "endpoint_url",
+          "events",
+          "status",
+          "signing",
+          "retry_policy",
+          "created_at",
+          "updated_at",
+          "correlation_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": "v1"
+          },
+          "webhook_configuration_id": {
+            "type": "string",
+            "pattern": "^wcfg_[a-z0-9_.:-]{3,160}$"
+          },
+          "endpoint_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "decision.status_changed",
+                "decision.completed"
+              ]
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disabled",
+              "pending_verification",
+              "rejected"
+            ]
+          },
+          "signing": {
+            "$ref": "#/components/schemas/WebhookSigningConfiguration"
+          },
+          "retry_policy": {
+            "$ref": "#/components/schemas/WebhookRetryPolicy"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "correlation_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "WebhookSigningConfiguration": {
+        "type": "object",
+        "required": [
+          "algorithm",
+          "signing_key_ref"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "algorithm": {
+            "type": "string",
+            "enum": [
+              "hmac_sha256"
+            ]
+          },
+          "signing_key_ref": {
+            "type": "string",
+            "pattern": "^wkey_[a-z0-9_.:-]{3,160}$"
+          }
+        }
+      },
+      "WebhookRetryPolicy": {
+        "type": "object",
+        "required": [
+          "strategy",
+          "max_attempts",
+          "initial_backoff_ms",
+          "max_backoff_ms",
+          "timeout_ms"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "standard_exponential_backoff",
+              "no_retry"
+            ]
+          },
+          "max_attempts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "initial_backoff_ms": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 60000
+          },
+          "max_backoff_ms": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 300000
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 500,
+            "maximum": 30000
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error_code",
+          "message",
+          "correlation_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "enum": [
+              "invalid_request",
+              "webhook_configuration_not_available",
+              "webhook_configuration_failed"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Mensagem pública segura, sem detalhes internos, endpoint inseguro bruto ou segredo."
+          },
+          "correlation_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

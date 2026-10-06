@@ -7,9 +7,13 @@ from creditos_integration.adapters.persistence.in_memory_integration_dlq_store i
 from creditos_integration.adapters.persistence.in_memory_integration_execution_store import (
     InMemoryIntegrationExecutionStore,
 )
+from creditos_integration.adapters.persistence.in_memory_webhook_configuration_repository import (
+    InMemoryWebhookConfigurationRepository,
+)
 
 __all__ = [
     "InMemoryIntegrationCatalogRepository",
     "InMemoryIntegrationDlqStore",
     "InMemoryIntegrationExecutionStore",
+    "InMemoryWebhookConfigurationRepository",
 ]

@@ -14,6 +14,7 @@ CONTRACT_CHECK = ROOT / "scripts" / "check_contracts.py"
 PROPOSAL_SCHEMA = CONTRACTS / "schemas" / "proposal" / "v1" / "proposal.schema.json"
 PROPOSAL_OPENAPI = CONTRACTS / "openapi" / "public" / "proposal-intake" / "v1" / "openapi.json"
 DECISION_OPENAPI = CONTRACTS / "openapi" / "public" / "decision" / "v1" / "openapi.json"
+WEBHOOK_OPENAPI = CONTRACTS / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
 INTEGRATION_ASYNCAPI = CONTRACTS / "asyncapi" / "events" / "integration" / "v1" / "asyncapi.json"
 INTEGRATION_RESULT_SCHEMA = (
     CONTRACTS / "schemas" / "integration" / "v1" / "integration-result.schema.json"
@@ -590,6 +591,135 @@ def test_contract_governance_check_rejects_read_operation_requiring_idempotency(
     assert "operação de leitura não deve exigir Idempotency-Key" in result.stderr
 
 
+def test_webhook_public_openapi_defines_governed_configuration_contract() -> None:
+    openapi = load_json(WEBHOOK_OPENAPI)
+    post_operation = openapi["paths"]["/v1/webhooks/configurations"]["post"]
+    get_operation = openapi["paths"]["/v1/webhooks/configurations"]["get"]
+    patch_operation = openapi["paths"]["/v1/webhooks/configurations/{webhook_configuration_id}"][
+        "patch"
+    ]
+    schemas = openapi["components"]["schemas"]
+    request_schema = schemas["WebhookConfigurationRequest"]
+    response_schema = schemas["WebhookConfigurationResponse"]
+    status_update_schema = schemas["WebhookStatusUpdateRequest"]
+    list_response_schema = schemas["WebhookConfigurationListResponse"]
+    signing_schema = schemas["WebhookSigningConfiguration"]
+    retry_schema = schemas["WebhookRetryPolicy"]
+
+    assert openapi["openapi"] == "3.1.0"
+    assert openapi["info"]["version"] == "v1"
+    assert openapi["x-creditos"]["owner"] == "Integration"
+    assert post_operation["operationId"] == "configureWebhook"
+    assert get_operation["operationId"] == "listWebhooks"
+    assert patch_operation["operationId"] == "disableWebhookConfiguration"
+    assert _headers(post_operation) == {"X-Correlation-Id", "X-Request-Id", "Idempotency-Key"}
+    assert _headers(get_operation) == {"X-Correlation-Id", "X-Request-Id"}
+    assert _headers(patch_operation) == {"X-Correlation-Id", "X-Request-Id", "Idempotency-Key"}
+    assert set(post_operation["responses"]) >= {"202", "400", "401", "409", "500"}
+    assert set(get_operation["responses"]) >= {"200", "400", "401", "404", "500"}
+    assert set(patch_operation["responses"]) >= {"202", "400", "401", "409", "500"}
+    assert request_schema["additionalProperties"] is False
+    assert response_schema["additionalProperties"] is False
+    assert status_update_schema["additionalProperties"] is False
+    assert list_response_schema["additionalProperties"] is False
+    assert signing_schema["additionalProperties"] is False
+    assert retry_schema["additionalProperties"] is False
+    assert set(request_schema["required"]) == {
+        "endpoint_url",
+        "events",
+        "status",
+        "signing",
+        "retry_policy",
+    }
+    assert set(response_schema["required"]) == {
+        "contract_version",
+        "webhook_configuration_id",
+        "endpoint_url",
+        "events",
+        "status",
+        "signing",
+        "retry_policy",
+        "created_at",
+        "updated_at",
+        "correlation_id",
+    }
+    assert request_schema["properties"]["endpoint_url"]["format"] == "uri"
+    assert set(request_schema["properties"]["events"]["items"]["enum"]) == {
+        "decision.status_changed",
+        "decision.completed",
+    }
+    assert set(request_schema["properties"]["status"]["enum"]) == {
+        "active",
+        "disabled",
+        "pending_verification",
+    }
+    assert "allowed_domains" not in request_schema["properties"]
+    assert status_update_schema["properties"]["status"]["enum"] == ["disabled"]
+    assert set(list_response_schema["required"]) == {
+        "contract_version",
+        "items",
+        "correlation_id",
+    }
+    assert signing_schema["properties"]["algorithm"]["enum"] == ["hmac_sha256"]
+    assert set(retry_schema["properties"]["strategy"]["enum"]) == {
+        "standard_exponential_backoff",
+        "no_retry",
+    }
+    serialized_contract = dumped(openapi).lower()
+    assert "tenant_id" not in serialized_contract
+    assert "signing_secret" not in serialized_contract
+    assert "payload" not in serialized_contract
+    assert "headers" not in serialized_contract
+
+
+def test_webhook_public_api_catalog_marks_v1_as_pre_production_experimental() -> None:
+    catalog = tomllib.loads((CONTRACTS / "catalog" / "contracts.toml").read_text(encoding="utf-8"))
+    webhook_contract = next(
+        contract
+        for contract in catalog["contracts"]
+        if contract["id"] == "webhook-configuration-public-api"
+    )
+
+    assert webhook_contract["version"] == "v1"
+    assert webhook_contract["owner"] == "Integration"
+    assert webhook_contract["compatibility"] == "experimental"
+    assert webhook_contract["lifecycle"] == "mvp-pre-production"
+    assert webhook_contract["pre_production_breaking_changes_allowed"] is True
+    assert webhook_contract["freeze_trigger"] == "first-external-client-integration"
+
+
+def test_contract_governance_check_rejects_webhook_event_enum_drift(tmp_path: Path) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    events = openapi["components"]["schemas"]["WebhookConfigurationRequest"]["properties"][
+        "events"
+    ]["items"]["enum"]
+    events.remove("decision.completed")
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Webhook public events enum divergente" in result.stderr
+
+
+def test_contract_governance_check_rejects_webhook_sensitive_public_fields(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    response_schema = openapi["components"]["schemas"]["WebhookConfigurationResponse"]
+    response_schema["properties"]["tenant_id"] = {"type": "string"}
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Webhook public contract não pode expor campos sensíveis" in result.stderr
+
+
 def test_proposal_schema_examples_cover_mvp_products_pf_pj_and_rejections() -> None:
     schema = load_json(PROPOSAL_SCHEMA)
     examples = schema["examples"]
@@ -1102,6 +1232,14 @@ def test_contract_governance_check_rejects_integration_cost_cardinality_drift(
 
     assert result.returncode == 1
     assert "cost_records deve exigir minItems 1" in result.stderr
+
+
+def _headers(operation: Mapping[str, Any]) -> set[str]:
+    return {
+        parameter["name"]
+        for parameter in operation.get("parameters", [])
+        if parameter.get("in") == "header"
+    }
 
 
 def load_json(path: Path) -> dict[str, Any]:

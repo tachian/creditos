@@ -305,6 +305,47 @@ DECISION_PUBLIC_RESPONSE_REQUIRED = {
     "message",
     "correlation_id",
 }
+WEBHOOK_PUBLIC_EVENTS = {"decision.status_changed", "decision.completed"}
+WEBHOOK_PUBLIC_REQUEST_STATUSES = {"active", "disabled", "pending_verification"}
+WEBHOOK_PUBLIC_STATUS_UPDATE_STATUSES = {"disabled"}
+WEBHOOK_PUBLIC_RESPONSE_STATUSES = WEBHOOK_PUBLIC_REQUEST_STATUSES | {"rejected"}
+WEBHOOK_PUBLIC_RETRY_STRATEGIES = {"standard_exponential_backoff", "no_retry"}
+WEBHOOK_PUBLIC_ERROR_CODES = {
+    "invalid_request",
+    "webhook_configuration_not_available",
+    "webhook_configuration_failed",
+}
+WEBHOOK_PUBLIC_FORBIDDEN_FIELDS = {
+    "tenant_id",
+    "signing_secret",
+    "secret",
+    "token",
+    "headers",
+    "payload",
+    "raw_payload",
+    "request_body",
+    "response_body",
+    "authorization",
+}
+WEBHOOK_PUBLIC_REQUEST_REQUIRED = {
+    "endpoint_url",
+    "events",
+    "status",
+    "signing",
+    "retry_policy",
+}
+WEBHOOK_PUBLIC_RESPONSE_REQUIRED = {
+    "contract_version",
+    "webhook_configuration_id",
+    "endpoint_url",
+    "events",
+    "status",
+    "signing",
+    "retry_policy",
+    "created_at",
+    "updated_at",
+    "correlation_id",
+}
 KIND_PATH_RULES = {
     "openapi": (("openapi", "public"), ".json"),
     "protobuf": (("protobuf", "internal"), ".proto"),
@@ -497,6 +538,7 @@ def validate_openapi_contract(path: Path, version: str) -> None:
         )
     validate_proposal_openapi_contract(paths, path)
     validate_decision_public_openapi_contract(schemas, path)
+    validate_webhook_public_openapi_contract(schemas, paths, path)
 
 
 def validate_decision_public_openapi_contract(schemas: dict[str, Any], path: Path) -> None:
@@ -656,6 +698,220 @@ def validate_decision_public_conditional_branches(
                 outcome_constraint.get("const") == expected_outcome,
                 f"Branch Decision public outcome divergente: {title} em {path}",
             )
+
+
+def validate_webhook_public_openapi_contract(
+    schemas: dict[str, Any],
+    paths: dict[str, Any],
+    path: Path,
+) -> None:
+    if path.parts[-5:] != ("openapi", "public", "webhooks", "v1", "openapi.json"):
+        return
+
+    collection_path = require_dict(
+        paths.get("/v1/webhooks/configurations"),
+        f"OpenAPI Webhooks deve declarar /v1/webhooks/configurations: {path}",
+    )
+    detail_path = require_dict(
+        paths.get("/v1/webhooks/configurations/{webhook_configuration_id}"),
+        f"OpenAPI Webhooks deve declarar path por webhook_configuration_id: {path}",
+    )
+    require_dict(
+        collection_path.get("post"),
+        f"OpenAPI Webhooks deve declarar POST de configuração: {path}",
+    )
+    require_dict(
+        collection_path.get("get"),
+        f"OpenAPI Webhooks deve declarar GET de listagem: {path}",
+    )
+    require_dict(
+        detail_path.get("patch"),
+        f"OpenAPI Webhooks deve declarar PATCH de status: {path}",
+    )
+
+    request_schema = require_dict(
+        schemas.get("WebhookConfigurationRequest"),
+        f"OpenAPI Webhooks deve definir WebhookConfigurationRequest: {path}",
+    )
+    response_schema = require_dict(
+        schemas.get("WebhookConfigurationResponse"),
+        f"OpenAPI Webhooks deve definir WebhookConfigurationResponse: {path}",
+    )
+    signing_schema = require_dict(
+        schemas.get("WebhookSigningConfiguration"),
+        f"OpenAPI Webhooks deve definir WebhookSigningConfiguration: {path}",
+    )
+    retry_schema = require_dict(
+        schemas.get("WebhookRetryPolicy"),
+        f"OpenAPI Webhooks deve definir WebhookRetryPolicy: {path}",
+    )
+    status_update_schema = require_dict(
+        schemas.get("WebhookStatusUpdateRequest"),
+        f"OpenAPI Webhooks deve definir WebhookStatusUpdateRequest: {path}",
+    )
+    list_response_schema = require_dict(
+        schemas.get("WebhookConfigurationListResponse"),
+        f"OpenAPI Webhooks deve definir WebhookConfigurationListResponse: {path}",
+    )
+    error_schema = require_dict(
+        schemas.get("ErrorResponse"),
+        f"OpenAPI Webhooks deve definir ErrorResponse: {path}",
+    )
+
+    for schema_name, schema in {
+        "WebhookConfigurationRequest": request_schema,
+        "WebhookConfigurationResponse": response_schema,
+        "WebhookStatusUpdateRequest": status_update_schema,
+        "WebhookConfigurationListResponse": list_response_schema,
+        "WebhookSigningConfiguration": signing_schema,
+        "WebhookRetryPolicy": retry_schema,
+        "ErrorResponse": error_schema,
+    }.items():
+        require(
+            schema.get("additionalProperties") is False,
+            f"{schema_name} deve ser fechado em {path}",
+        )
+
+    request_properties = require_dict(
+        request_schema.get("properties"),
+        f"WebhookConfigurationRequest deve declarar properties: {path}",
+    )
+    response_properties = require_dict(
+        response_schema.get("properties"),
+        f"WebhookConfigurationResponse deve declarar properties: {path}",
+    )
+    status_update_properties = require_dict(
+        status_update_schema.get("properties"),
+        f"WebhookStatusUpdateRequest deve declarar properties: {path}",
+    )
+    list_response_properties = require_dict(
+        list_response_schema.get("properties"),
+        f"WebhookConfigurationListResponse deve declarar properties: {path}",
+    )
+    signing_properties = require_dict(
+        signing_schema.get("properties"),
+        f"WebhookSigningConfiguration deve declarar properties: {path}",
+    )
+    retry_properties = require_dict(
+        retry_schema.get("properties"),
+        f"WebhookRetryPolicy deve declarar properties: {path}",
+    )
+    error_properties = require_dict(
+        error_schema.get("properties"),
+        f"Webhook ErrorResponse deve declarar properties: {path}",
+    )
+
+    require(
+        set(request_schema.get("required", [])) == WEBHOOK_PUBLIC_REQUEST_REQUIRED,
+        f"Webhook public request required divergente: {path}",
+    )
+    require(
+        set(response_schema.get("required", [])) == WEBHOOK_PUBLIC_RESPONSE_REQUIRED,
+        f"Webhook public response required divergente: {path}",
+    )
+    require(
+        set(list_response_schema.get("required", []))
+        == {"contract_version", "items", "correlation_id"},
+        f"Webhook public list response required divergente: {path}",
+    )
+    require(
+        set(
+            require_dict(
+                request_properties.get("events"),
+                f"WebhookConfigurationRequest.events deve ser objeto: {path}",
+            )
+            .get("items", {})
+            .get("enum", [])
+        )
+        == WEBHOOK_PUBLIC_EVENTS,
+        f"Webhook public events enum divergente: {path}",
+    )
+    require(
+        set(
+            require_dict(
+                response_properties.get("events"),
+                f"WebhookConfigurationResponse.events deve ser objeto: {path}",
+            )
+            .get("items", {})
+            .get("enum", [])
+        )
+        == WEBHOOK_PUBLIC_EVENTS,
+        f"Webhook public events enum divergente: {path}",
+    )
+    require(
+        set(
+            require_dict(
+                request_properties.get("status"),
+                f"WebhookConfigurationRequest.status deve ser objeto: {path}",
+            ).get("enum", [])
+        )
+        == WEBHOOK_PUBLIC_REQUEST_STATUSES,
+        f"Webhook public request status enum divergente: {path}",
+    )
+    require(
+        set(
+            require_dict(
+                response_properties.get("status"),
+                f"WebhookConfigurationResponse.status deve ser objeto: {path}",
+            ).get("enum", [])
+        )
+        == WEBHOOK_PUBLIC_RESPONSE_STATUSES,
+        f"Webhook public response status enum divergente: {path}",
+    )
+    require(
+        set(
+            require_dict(
+                status_update_properties.get("status"),
+                f"WebhookStatusUpdateRequest.status deve ser objeto: {path}",
+            ).get("enum", [])
+        )
+        == WEBHOOK_PUBLIC_STATUS_UPDATE_STATUSES,
+        f"Webhook public status update enum divergente: {path}",
+    )
+    require(
+        require_dict(
+            list_response_properties.get("items"),
+            f"WebhookConfigurationListResponse.items deve ser objeto: {path}",
+        ).get("type")
+        == "array",
+        f"WebhookConfigurationListResponse.items deve ser array: {path}",
+    )
+    require(
+        require_dict(
+            signing_properties.get("algorithm"),
+            f"WebhookSigningConfiguration.algorithm deve ser objeto: {path}",
+        ).get("enum")
+        == ["hmac_sha256"],
+        f"Webhook public signing algorithm divergente: {path}",
+    )
+    require(
+        set(
+            require_dict(
+                retry_properties.get("strategy"),
+                f"WebhookRetryPolicy.strategy deve ser objeto: {path}",
+            ).get("enum", [])
+        )
+        == WEBHOOK_PUBLIC_RETRY_STRATEGIES,
+        f"Webhook public retry strategy enum divergente: {path}",
+    )
+    require(
+        set(
+            require_dict(
+                error_properties.get("error_code"),
+                f"Webhook ErrorResponse.error_code deve ser objeto: {path}",
+            ).get("enum", [])
+        )
+        == WEBHOOK_PUBLIC_ERROR_CODES,
+        f"Webhook public error_code enum divergente: {path}",
+    )
+    forbidden_fields = (
+        set(iter_property_names({"schemas": schemas})) & WEBHOOK_PUBLIC_FORBIDDEN_FIELDS
+    )
+    require(
+        not forbidden_fields,
+        "Webhook public contract não pode expor campos sensíveis: "
+        f"{sorted(forbidden_fields)} em {path}",
+    )
 
 
 def validate_proposal_openapi_contract(paths: dict[str, Any], path: Path) -> None:

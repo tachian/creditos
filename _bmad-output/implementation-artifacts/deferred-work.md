@@ -67,3 +67,7 @@
 - WORM real e infraestrutura: materializar S3 Object Lock ou alternativa aprovada por IaC, com KMS, bucket policy, versionamento, retenção, legal hold, scheduler/worker, DLQ, alarmes e runbooks operacionais/jurídicos.
 - Caminho local completo de validação: estabilizar ou documentar o comando único recomendado para execução completa com `uv`/harness, removendo dependência de conhecimento tribal e reduzindo ruído em `tests/test_local_harness.py`.
 - Executor consultivo ausente no `Automated Review`: resolver a borda já registrada em que ausência de executor pode deixar reserva órfã antes de depender de executor/provider real em ambiente operacional.
+
+## Deferred from: code review of 8-3-configuracao-de-webhooks-por-tenant (2026-10-06)
+
+- Rollback sem controle transacional/CAS pode sobrescrever escrita concorrente em configuração de webhook: a implementação in-memory segue o padrão atual de rollback lógico em falha de auditoria, mas persistência produtiva deve usar transação, versionamento/CAS ou outbox para evitar sobrescrever atualização concorrente durante rollback.
