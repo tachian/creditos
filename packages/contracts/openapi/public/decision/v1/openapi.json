@@ -109,30 +109,29 @@
         "required": [
           "contract_version",
           "proposal_id",
-          "decision_id",
           "status",
-          "outcome",
-          "decided_at",
-          "product_type",
-          "channel",
-          "correlation_id",
-          "policy",
-          "reason_codes",
-          "factors"
+          "message",
+          "correlation_id"
         ],
         "properties": {
           "contract_version": {
-            "const": "v1"
+            "const": "v1",
+            "description": "Versão pública do contrato de decisão/status."
           },
           "proposal_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Identificador técnico da proposta informado na consulta."
           },
           "decision_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Identificador da decisão quando uma decisão final/controlada já existe; ausente para status pré-decisão."
           },
           "status": {
             "type": "string",
+            "description": "Estado público versionado da análise/decisão. submitted/processing indicam que ainda não há decisão final; completed/requires_input/unable_to_decide indicam decisão controlada disponível.",
             "enum": [
+              "submitted",
+              "processing",
               "completed",
               "requires_input",
               "unable_to_decide"
@@ -146,35 +145,57 @@
               "approve_with_changes",
               "request_more_data",
               "unable_to_decide"
-            ]
+            ],
+            "description": "Resultado final versionado quando disponível; ausente para status pré-decisão."
           },
           "decided_at": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Instante UTC da decisão quando disponível; ausente para status pré-decisão."
           },
           "product_type": {
-            "type": "string"
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Produto associado por projeção governada ou decisão."
           },
           "channel": {
-            "type": "string"
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Canal associado por projeção governada ou decisão."
           },
           "correlation_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Correlation ID recebido na requisição para rastreabilidade."
           },
           "policy": {
-            "$ref": "#/components/schemas/DecisionPolicyMetadata"
+            "$ref": "#/components/schemas/DecisionPolicyMetadata",
+            "description": "Metadados de política apenas quando uma decisão final/controlada existe."
           },
           "reason_codes": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ReasonCode"
-            }
+            },
+            "description": "Reason codes públicos visíveis ao cliente quando uma decisão existe; vazio para status pré-decisão."
           },
           "factors": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ExplainableFactor"
-            }
+            },
+            "description": "Fatores explicáveis visíveis ao cliente quando uma decisão existe; vazio para status pré-decisão."
           },
           "approved_terms": {
             "oneOf": [
@@ -184,10 +205,272 @@
               {
                 "type": "null"
               }
+            ],
+            "description": "Termos aprovados quando aplicável; ausente para rejeição, status pré-decisão ou decisão sem termos aprovados."
+          },
+          "message": {
+            "type": "string",
+            "description": "Mensagem pública segura, sem payload bruto, dado pessoal, regra interna ou detalhe técnico proprietário.",
+            "enum": [
+              "análise recebida",
+              "análise em processamento",
+              "decisão aprovada",
+              "decisão recusada",
+              "decisão aprovada com alterações",
+              "dados adicionais necessários",
+              "decisão inconclusiva"
             ]
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "Resposta pública minimizada para status de análise ou decisão final da proposta no tenant autenticado.",
+        "oneOf": [
+          {
+            "title": "Status pré-decisão",
+            "required": [
+              "contract_version",
+              "proposal_id",
+              "status",
+              "message",
+              "correlation_id",
+              "product_type",
+              "channel"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "submitted",
+                  "processing"
+                ]
+              },
+              "message": {
+                "enum": [
+                  "análise recebida",
+                  "análise em processamento"
+                ]
+              },
+              "reason_codes": {
+                "maxItems": 0
+              },
+              "factors": {
+                "maxItems": 0
+              }
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "status": {
+                    "const": "submitted"
+                  },
+                  "message": {
+                    "const": "análise recebida"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "status": {
+                    "const": "processing"
+                  },
+                  "message": {
+                    "const": "análise em processamento"
+                  }
+                }
+              }
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "decision_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "outcome"
+                  ]
+                },
+                {
+                  "required": [
+                    "decided_at"
+                  ]
+                },
+                {
+                  "required": [
+                    "policy"
+                  ]
+                },
+                {
+                  "required": [
+                    "approved_terms"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "title": "Decisão aprovada",
+            "required": [
+              "contract_version",
+              "proposal_id",
+              "decision_id",
+              "status",
+              "outcome",
+              "decided_at",
+              "product_type",
+              "channel",
+              "message",
+              "correlation_id",
+              "policy",
+              "reason_codes",
+              "factors",
+              "approved_terms"
+            ],
+            "properties": {
+              "status": {
+                "const": "completed"
+              },
+              "outcome": {
+                "const": "approve"
+              },
+              "message": {
+                "const": "decisão aprovada"
+              }
+            }
+          },
+          {
+            "title": "Decisão recusada",
+            "required": [
+              "contract_version",
+              "proposal_id",
+              "decision_id",
+              "status",
+              "outcome",
+              "decided_at",
+              "product_type",
+              "channel",
+              "message",
+              "correlation_id",
+              "policy",
+              "reason_codes",
+              "factors"
+            ],
+            "properties": {
+              "status": {
+                "const": "completed"
+              },
+              "outcome": {
+                "const": "reject"
+              },
+              "message": {
+                "const": "decisão recusada"
+              }
+            },
+            "not": {
+              "required": [
+                "approved_terms"
+              ]
+            }
+          },
+          {
+            "title": "Decisão aprovada com alterações",
+            "required": [
+              "contract_version",
+              "proposal_id",
+              "decision_id",
+              "status",
+              "outcome",
+              "decided_at",
+              "product_type",
+              "channel",
+              "message",
+              "correlation_id",
+              "policy",
+              "reason_codes",
+              "factors",
+              "approved_terms"
+            ],
+            "properties": {
+              "status": {
+                "const": "completed"
+              },
+              "outcome": {
+                "const": "approve_with_changes"
+              },
+              "message": {
+                "const": "decisão aprovada com alterações"
+              }
+            }
+          },
+          {
+            "title": "Dados adicionais necessários",
+            "required": [
+              "contract_version",
+              "proposal_id",
+              "decision_id",
+              "status",
+              "outcome",
+              "decided_at",
+              "product_type",
+              "channel",
+              "message",
+              "correlation_id",
+              "policy",
+              "reason_codes",
+              "factors"
+            ],
+            "properties": {
+              "status": {
+                "const": "requires_input"
+              },
+              "outcome": {
+                "const": "request_more_data"
+              },
+              "message": {
+                "const": "dados adicionais necessários"
+              }
+            },
+            "not": {
+              "required": [
+                "approved_terms"
+              ]
+            }
+          },
+          {
+            "title": "Decisão inconclusiva",
+            "required": [
+              "contract_version",
+              "proposal_id",
+              "decision_id",
+              "status",
+              "outcome",
+              "decided_at",
+              "product_type",
+              "channel",
+              "message",
+              "correlation_id",
+              "policy",
+              "reason_codes",
+              "factors"
+            ],
+            "properties": {
+              "status": {
+                "const": "unable_to_decide"
+              },
+              "outcome": {
+                "const": "unable_to_decide"
+              },
+              "message": {
+                "const": "decisão inconclusiva"
+              }
+            },
+            "not": {
+              "required": [
+                "approved_terms"
+              ]
+            }
+          }
+        ]
       },
       "DecisionPolicyMetadata": {
         "type": "object",
@@ -298,16 +581,25 @@
         ],
         "properties": {
           "error_code": {
-            "type": "string"
+            "type": "string",
+            "description": "Código público versionado, seguro e estável. decision_not_available também cobre inexistente, cross-tenant e permissão insuficiente quando a existência não puder ser revelada.",
+            "enum": [
+              "invalid_request",
+              "decision_not_available",
+              "decision_query_failed"
+            ]
           },
           "message": {
-            "type": "string"
+            "type": "string",
+            "description": "Mensagem pública segura sem payload bruto ou detalhe técnico interno."
           },
           "correlation_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Correlation ID recebido na requisição para rastreabilidade."
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "Erro público versionado e seguro para consulta de decisão/status."
       }
     }
   }

@@ -19,6 +19,8 @@ from creditos_decision.application.ports import (
     CreditPolicyRepository,
     PolicySimulationAuditIntent,
     PolicySimulationRepository,
+    PublicProposalStatusRepository,
+    PublicProposalStatusSnapshot,
     ReasonCodeCatalogAuditIntent,
     ReasonCodeCatalogRepository,
 )
@@ -238,17 +240,18 @@ class PublicCreditDecisionPolicyMetadata:
 class PublicCreditDecisionResponse:
     contract_version: str
     proposal_id: str
-    decision_id: str
     status: str
-    outcome: str
-    decided_at: datetime
-    product_type: str
-    channel: str
+    message: str
     correlation_id: str
-    policy: PublicCreditDecisionPolicyMetadata
-    reason_codes: tuple[CreditDecisionExplanationReasonCode, ...]
-    factors: tuple[CreditDecisionExplanationFactor, ...]
-    approved_terms: CreditDecisionApprovedTerms | None
+    decision_id: str | None = None
+    outcome: str | None = None
+    decided_at: datetime | None = None
+    product_type: str | None = None
+    channel: str | None = None
+    policy: PublicCreditDecisionPolicyMetadata | None = None
+    reason_codes: tuple[CreditDecisionExplanationReasonCode, ...] = ()
+    factors: tuple[CreditDecisionExplanationFactor, ...] = ()
+    approved_terms: CreditDecisionApprovedTerms | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,12 +328,14 @@ class DecisionApplicationService:
         reason_code_catalog_repository: ReasonCodeCatalogRepository | None = None,
         policy_simulation_repository: PolicySimulationRepository | None = None,
         credit_decision_repository: CreditDecisionRepository | None = None,
+        public_proposal_status_repository: PublicProposalStatusRepository | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._repository = repository
         self._reason_code_catalog_repository = reason_code_catalog_repository
         self._policy_simulation_repository = policy_simulation_repository
         self._credit_decision_repository = credit_decision_repository
+        self._public_proposal_status_repository = public_proposal_status_repository
         self._audit_publisher = audit_publisher
         self._environment = environment
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -1130,39 +1135,51 @@ class DecisionApplicationService:
                     code=error.code,
                     field_path=error.field_path,
                 ) from error
-            decision = self._require_credit_decision_repository().get_by_proposal(
+            decision_repository = self._require_credit_decision_repository()
+            decision = decision_repository.get_by_proposal(
                 tenant_id=operation_context.tenant_id,
                 proposal_id=proposal_id,
             )
+            status_snapshot: PublicProposalStatusSnapshot | None = None
             if decision is None:
-                raise CreditDecisionNotFoundError()
+                status_snapshot = self._public_proposal_status_snapshot(
+                    tenant_id=operation_context.tenant_id,
+                    proposal_id=proposal_id,
+                )
+                if status_snapshot is None:
+                    raise CreditDecisionNotFoundError()
+                decision = decision_repository.get_by_proposal(
+                    tenant_id=operation_context.tenant_id,
+                    proposal_id=proposal_id,
+                )
 
-            catalog = self._require_reason_code_catalog_repository().get(
-                tenant_id=operation_context.tenant_id,
-                catalog_id=decision.reason_code_catalog_id,
-                catalog_version_id=decision.reason_code_catalog_version_id,
-            )
-            if catalog is None or catalog.product_type != decision.product_type:
-                raise ReasonCodeCatalogNotFoundError()
+            if decision is not None:
+                catalog = self._require_reason_code_catalog_repository().get(
+                    tenant_id=operation_context.tenant_id,
+                    catalog_id=decision.reason_code_catalog_id,
+                    catalog_version_id=decision.reason_code_catalog_version_id,
+                )
+                if catalog is None or catalog.product_type != decision.product_type:
+                    raise ReasonCodeCatalogNotFoundError()
 
-            explanation = decision.to_explainable_response(catalog=catalog, audience="customer")
-            public_decision = public_credit_decision_response(
-                explanation,
-                correlation_id=context.correlation_id,
-            )
+                explanation = decision.to_explainable_response(catalog=catalog, audience="customer")
+                public_decision = public_credit_decision_response(
+                    explanation,
+                    correlation_id=context.correlation_id,
+                )
+            else:
+                assert status_snapshot is not None
+                public_decision = public_credit_decision_status_response(
+                    status_snapshot,
+                    correlation_id=context.correlation_id,
+                )
             duration_ms = _duration_ms(started_at)
-            self._publish_credit_decision_audit_intent(
+            self._publish_public_credit_decision_query_retrieved_intent(
                 decision=decision,
-                event_type="credit_decision.public_query_retrieved",
+                public_decision=public_decision,
                 operation_context=operation_context,
-                context=context,
                 trusted_context=trusted_context,
                 duration_ms=duration_ms,
-                operation="credit_decision.public_query.get",
-                safe_details=_public_credit_decision_audit_safe_details(
-                    public_decision,
-                    duration_ms=duration_ms,
-                ),
             )
             public_log = self._log_operation(
                 context=context,
@@ -1814,6 +1831,60 @@ class DecisionApplicationService:
                     field_path="applicability",
                 )
 
+    def _public_proposal_status_snapshot(
+        self,
+        *,
+        tenant_id: str,
+        proposal_id: str,
+    ) -> PublicProposalStatusSnapshot | None:
+        if self._public_proposal_status_repository is None:
+            return None
+        return self._public_proposal_status_repository.find(
+            tenant_id=tenant_id,
+            proposal_id=proposal_id,
+        )
+
+    def _publish_public_credit_decision_query_retrieved_intent(
+        self,
+        *,
+        decision: CreditDecision | None,
+        public_decision: PublicCreditDecisionResponse,
+        operation_context: _PolicyOperationContext,
+        trusted_context: PropagatedContext,
+        duration_ms: float,
+    ) -> None:
+        self._audit_publisher.publish(
+            CreditDecisionAuditIntent(
+                event_type="credit_decision.public_query_retrieved",
+                tenant_id=operation_context.tenant_id,
+                tenant_isolation_tier=operation_context.tenant_isolation_tier,
+                actor_subject_id=operation_context.actor_subject_id,
+                decision_id=decision.decision_id if decision is not None else None,
+                proposal_id=public_decision.proposal_id,
+                policy_id=decision.policy_id if decision is not None else "unknown_policy",
+                policy_version_id=(
+                    decision.policy_version_id if decision is not None else "unknown_policy_version"
+                ),
+                reason_code_catalog_id=(
+                    decision.reason_code_catalog_id
+                    if decision is not None
+                    else "unknown_reason_code_catalog"
+                ),
+                reason_code_catalog_version_id=(
+                    decision.reason_code_catalog_version_id
+                    if decision is not None
+                    else "unknown_reason_code_catalog_version"
+                ),
+                correlation_id=trusted_context.correlation_id,
+                request_id=trusted_context.request_id,
+                traceparent=trusted_context.traceparent,
+                safe_details=_public_credit_decision_audit_safe_details(
+                    public_decision,
+                    duration_ms=duration_ms,
+                ),
+            )
+        )
+
     def _require_reason_code_catalog_repository(self) -> ReasonCodeCatalogRepository:
         if self._reason_code_catalog_repository is None:
             raise ReasonCodeCatalogNotFoundError()
@@ -2112,9 +2183,7 @@ class DecisionApplicationService:
                     tenant_id=tenant_id,
                     tenant_isolation_tier=tenant_isolation_tier,
                     actor_subject_id=actor_subject_id,
-                    decision_id=(
-                        decision.decision_id if decision is not None else "unknown_credit_decision"
-                    ),
+                    decision_id=decision.decision_id if decision is not None else None,
                     proposal_id=(
                         decision.proposal_id
                         if decision is not None
@@ -2338,13 +2407,14 @@ def public_credit_decision_response(
     return PublicCreditDecisionResponse(
         contract_version=PUBLIC_DECISION_CONTRACT_VERSION,
         proposal_id=explanation.proposal_id,
-        decision_id=explanation.decision_id,
         status=explanation.status,
+        message=_public_decision_message(status=explanation.status, outcome=explanation.outcome),
+        correlation_id=correlation_id,
+        decision_id=explanation.decision_id,
         outcome=explanation.outcome,
         decided_at=explanation.decided_at,
         product_type=explanation.product_type,
         channel=explanation.channel,
-        correlation_id=correlation_id,
         policy=PublicCreditDecisionPolicyMetadata(
             policy_id=explanation.policy_id,
             policy_version_id=explanation.policy_version_id,
@@ -2354,6 +2424,22 @@ def public_credit_decision_response(
         reason_codes=explanation.reason_codes,
         factors=explanation.factors,
         approved_terms=explanation.approved_terms,
+    )
+
+
+def public_credit_decision_status_response(
+    snapshot: PublicProposalStatusSnapshot,
+    *,
+    correlation_id: str,
+) -> PublicCreditDecisionResponse:
+    return PublicCreditDecisionResponse(
+        contract_version=PUBLIC_DECISION_CONTRACT_VERSION,
+        proposal_id=snapshot.proposal_id,
+        status=snapshot.status,
+        message=_public_decision_message(status=snapshot.status, outcome=None),
+        correlation_id=correlation_id,
+        product_type=snapshot.product_type,
+        channel=snapshot.channel,
     )
 
 
@@ -2394,16 +2480,21 @@ def public_credit_decision_internal_error_response(
 def _public_credit_decision_log_extra(
     public_decision: PublicCreditDecisionResponse,
 ) -> dict[str, str | int]:
-    return {
-        "channel": public_decision.channel,
+    extra: dict[str, str | int] = {
         "contract_version": public_decision.contract_version,
         "factor_count": len(public_decision.factors),
-        "outcome": public_decision.outcome,
-        "policy_revision": public_decision.policy.policy_revision,
-        "product_type": public_decision.product_type,
         "reason_code_count": len(public_decision.reason_codes),
         "status": public_decision.status,
     }
+    if public_decision.channel is not None:
+        extra["channel"] = public_decision.channel
+    if public_decision.outcome is not None:
+        extra["outcome"] = public_decision.outcome
+    if public_decision.policy is not None:
+        extra["policy_revision"] = public_decision.policy.policy_revision
+    if public_decision.product_type is not None:
+        extra["product_type"] = public_decision.product_type
+    return extra
 
 
 def _public_credit_decision_audit_safe_details(
@@ -2411,18 +2502,39 @@ def _public_credit_decision_audit_safe_details(
     *,
     duration_ms: float,
 ) -> dict[str, str]:
-    return {
-        "channel": public_decision.channel,
+    safe_details = {
         "duration_ms": str(duration_ms),
         "factor_count": str(len(public_decision.factors)),
         "operation": "credit_decision.public_query.get",
-        "outcome": public_decision.outcome,
-        "policy_revision": str(public_decision.policy.policy_revision),
-        "product_type": public_decision.product_type,
         "reason_code_count": str(len(public_decision.reason_codes)),
         "schema_version": public_decision.contract_version,
         "status": public_decision.status,
     }
+    if public_decision.channel is not None:
+        safe_details["channel"] = public_decision.channel
+    if public_decision.outcome is not None:
+        safe_details["outcome"] = public_decision.outcome
+    if public_decision.policy is not None:
+        safe_details["policy_revision"] = str(public_decision.policy.policy_revision)
+    if public_decision.product_type is not None:
+        safe_details["product_type"] = public_decision.product_type
+    return safe_details
+
+
+def _public_decision_message(*, status: str, outcome: str | None) -> str:
+    public_messages = {
+        ("submitted", None): "análise recebida",
+        ("processing", None): "análise em processamento",
+        ("completed", "approve"): "decisão aprovada",
+        ("completed", "reject"): "decisão recusada",
+        ("completed", "approve_with_changes"): "decisão aprovada com alterações",
+        ("requires_input", "request_more_data"): "dados adicionais necessários",
+        ("unable_to_decide", "unable_to_decide"): "decisão inconclusiva",
+    }
+    try:
+        return public_messages[(status, outcome)]
+    except KeyError as error:
+        raise ValueError("combinação pública de status/outcome inválida") from error
 
 
 def _require_explanation_audience(

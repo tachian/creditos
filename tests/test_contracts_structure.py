@@ -420,6 +420,51 @@ def test_decision_public_openapi_defines_minimized_query_by_proposal() -> None:
     assert set(operation["responses"]) >= {"200", "400", "401", "404", "500"}
     assert response_properties["contract_version"]["const"] == "v1"
     assert response_schema["additionalProperties"] is False
+    assert set(response_schema["required"]) == {
+        "contract_version",
+        "proposal_id",
+        "status",
+        "message",
+        "correlation_id",
+    }
+    assert set(response_properties["status"]["enum"]) == {
+        "submitted",
+        "processing",
+        "completed",
+        "requires_input",
+        "unable_to_decide",
+    }
+    assert set(response_properties["outcome"]["enum"]) == {
+        "approve",
+        "reject",
+        "approve_with_changes",
+        "request_more_data",
+        "unable_to_decide",
+    }
+    assert set(response_properties["message"]["enum"]) == {
+        "análise recebida",
+        "análise em processamento",
+        "decisão aprovada",
+        "decisão recusada",
+        "decisão aprovada com alterações",
+        "dados adicionais necessários",
+        "decisão inconclusiva",
+    }
+    conditional_titles = {branch["title"] for branch in response_schema["oneOf"]}
+    assert conditional_titles == {
+        "Status pré-decisão",
+        "Decisão aprovada",
+        "Decisão recusada",
+        "Decisão aprovada com alterações",
+        "Dados adicionais necessários",
+        "Decisão inconclusiva",
+    }
+    pending_branch = next(
+        branch for branch in response_schema["oneOf"] if branch["title"] == "Status pré-decisão"
+    )
+    assert set(pending_branch["properties"]["status"]["enum"]) == {"submitted", "processing"}
+    assert "not" in pending_branch
+    assert "stack trace" not in dumped(response_properties["message"]).lower()
     assert "tenant_id" not in set(iter_property_names(response_schema))
     assert "triggered_rule_ids" not in set(iter_property_names(response_schema))
     assert "decision_fingerprint" not in set(iter_property_names(response_schema))
@@ -428,6 +473,92 @@ def test_decision_public_openapi_defines_minimized_query_by_proposal() -> None:
     assert "required_data_refs" not in set(iter_property_names(response_schema))
     assert "validation_issue_codes" not in set(iter_property_names(response_schema))
     assert "fallback_action" not in set(iter_property_names(response_schema))
+
+
+def test_decision_public_openapi_defines_versioned_safe_error_codes() -> None:
+    openapi = load_json(DECISION_OPENAPI)
+    error_schema = openapi["components"]["schemas"]["ErrorResponse"]
+
+    assert error_schema["additionalProperties"] is False
+    assert set(error_schema["required"]) == {"error_code", "message", "correlation_id"}
+    assert set(error_schema["properties"]["error_code"]["enum"]) == {
+        "invalid_request",
+        "decision_not_available",
+        "decision_query_failed",
+    }
+    serialized_error = dumped(error_schema).lower()
+    assert "stack" not in serialized_error
+    assert "traceback" not in serialized_error
+    assert "tenant_id" not in set(iter_property_names(error_schema))
+
+
+def test_decision_public_api_catalog_marks_v1_as_pre_production_experimental() -> None:
+    catalog = tomllib.loads((CONTRACTS / "catalog" / "contracts.toml").read_text(encoding="utf-8"))
+    decision_contract = next(
+        contract for contract in catalog["contracts"] if contract["id"] == "decision-public-api"
+    )
+
+    assert decision_contract["version"] == "v1"
+    assert decision_contract["compatibility"] == "experimental"
+    assert decision_contract["lifecycle"] == "mvp-pre-production"
+    assert decision_contract["pre_production_breaking_changes_allowed"] is True
+    assert decision_contract["freeze_trigger"] == "first-external-client-integration"
+
+
+def test_contract_governance_check_rejects_decision_public_status_enum_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "decision" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    status_enum = openapi["components"]["schemas"]["DecisionQueryResponse"]["properties"]["status"][
+        "enum"
+    ]
+    status_enum.remove("submitted")
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Decision public status enum divergente" in result.stderr
+
+
+def test_contract_governance_check_rejects_decision_public_message_enum_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "decision" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    message_enum = openapi["components"]["schemas"]["DecisionQueryResponse"]["properties"][
+        "message"
+    ]["enum"]
+    message_enum.remove("decisão inconclusiva")
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Decision public message enum divergente" in result.stderr
+
+
+def test_contract_governance_check_rejects_decision_public_conditional_branch_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "decision" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    pending_branch = next(
+        branch
+        for branch in openapi["components"]["schemas"]["DecisionQueryResponse"]["oneOf"]
+        if branch["title"] == "Status pré-decisão"
+    )
+    pending_branch["properties"]["status"]["enum"].append("completed")
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Branch Decision public status divergente" in result.stderr
 
 
 def test_contract_governance_check_allows_get_without_idempotency_header() -> None:

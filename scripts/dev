@@ -3,6 +3,16 @@ set -euo pipefail
 
 command="${1:-help}"
 
+run_python() {
+  if command -v uv >/dev/null 2>&1; then
+    uv run python "$@"
+  elif [ -x ".venv/bin/python" ]; then
+    .venv/bin/python "$@"
+  else
+    python3 "$@"
+  fi
+}
+
 show_usage() {
   cat <<'USAGE'
 Uso: ./scripts/dev <comando>
@@ -38,13 +48,13 @@ case "$command" in
     uv run pyright
     ;;
   contracts)
-    uv run python scripts/check_contracts.py
+    run_python scripts/check_contracts.py
     ;;
   harness-up)
-    uv run python scripts/local_harness.py up
+    run_python scripts/local_harness.py up
     ;;
   harness-check)
-    uv run python scripts/local_harness.py check
+    run_python scripts/local_harness.py check
     ;;
   test)
     uv run pytest
