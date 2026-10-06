@@ -74,10 +74,14 @@ class AuditEvidenceDecisionAuditPublisher:
     def publish(self, event: DecisionAuditIntent) -> None:
         if not isinstance(event, CreditDecisionAuditIntent):
             raise TypeError("adapter suporta apenas auditoria de decisão de crédito")
-        public_query_without_decision = event.event_type in {
-            "credit_decision.public_query_retrieved",
-            "credit_decision.public_query_rejected",
-        } and event.decision_id is None
+        public_query_without_decision = (
+            event.event_type
+            in {
+                "credit_decision.public_query_retrieved",
+                "credit_decision.public_query_rejected",
+            }
+            and event.decision_id is None
+        )
         if event.decision_id is None:
             if not public_query_without_decision:
                 raise ValueError("decision_id obrigatório fora de consulta pública sem decisão")
