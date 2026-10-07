@@ -46,6 +46,9 @@ _SENSITIVE_QUERY_SUBSTRINGS = {
     "secret_key",
     "x_api_key",
 }
+_SENSITIVE_QUERY_COMPACT_SUBSTRINGS = {
+    value.replace("_", "") for value in _SENSITIVE_QUERY_SUBSTRINGS
+}
 _LOCAL_HOSTNAMES = {"localhost", "localhost.localdomain"}
 _ALLOWED_WEBHOOK_PORTS = {443}
 
@@ -140,9 +143,9 @@ def validate_webhook_endpoint_url(
     allowed_domains: tuple[str, ...] = (),
     resolved_addresses: tuple[str, ...] = (),
 ) -> str:
-    parsed = urlsplit(value.strip())
-    hostname = (parsed.hostname or "").strip().lower().rstrip(".")
     try:
+        parsed = urlsplit(value.strip())
+        hostname = (parsed.hostname or "").strip().lower().rstrip(".")
         port = parsed.port
     except ValueError as error:
         raise _insecure_endpoint() from error
@@ -266,14 +269,7 @@ def _reject_resolved_addresses(addresses: tuple[str, ...]) -> None:
 
 
 def _reject_unsafe_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
-    if (
-        address.is_loopback
-        or address.is_private
-        or address.is_link_local
-        or address.is_multicast
-        or address.is_reserved
-        or address.is_unspecified
-    ):
+    if not address.is_global or address.is_multicast:
         raise _insecure_endpoint()
 
 
@@ -284,7 +280,7 @@ def _reject_sensitive_query(query: str) -> None:
         compact_key = normalized_key.replace("_", "")
         if (
             query_key_tokens & _SENSITIVE_QUERY_TOKENS
-            or compact_key in _SENSITIVE_QUERY_SUBSTRINGS
+            or compact_key in _SENSITIVE_QUERY_COMPACT_SUBSTRINGS
             or normalized_key in _SENSITIVE_QUERY_SUBSTRINGS
         ):
             raise IntegrationValidationError(

@@ -148,6 +148,134 @@ def test_webhook_configuration_id_seed_uses_normalized_endpoint() -> None:
     ]
 
 
+def test_webhook_configuration_rejects_camel_case_sensitive_query_and_malformed_url() -> None:
+    service = _service()
+
+    with pytest.raises(IntegrationValidationError) as camel_case_error:
+        service.configure_webhook(
+            _configure_command(
+                endpoint_url="https://callbacks.example.com/status?clientSecret=abc"
+            ),
+            context=_context(),
+        )
+    with pytest.raises(IntegrationValidationError) as malformed_url_error:
+        service.configure_webhook(
+            _configure_command(endpoint_url="https://[::1"),
+            context=_context(),
+        )
+
+    assert camel_case_error.value.code == "sensitive_webhook_query"
+    assert malformed_url_error.value.code == "insecure_webhook_endpoint"
+
+
+def test_webhook_configuration_rejects_shared_network_dns_resolution() -> None:
+    service = _service(dns_resolver=lambda _hostname: ("100.64.0.1",))
+
+    with pytest.raises(IntegrationValidationError) as error:
+        service.configure_webhook(
+            _configure_command(endpoint_url="https://callbacks.example.com/status"),
+            context=_context(),
+        )
+
+    assert error.value.code == "insecure_webhook_endpoint"
+
+
+def test_configure_webhook_idempotency_replays_same_request_without_duplicate_audit() -> None:
+    audit_publisher = InMemoryAuditEventPublisher()
+    service = _service(audit_publisher=audit_publisher)
+
+    first = service.configure_webhook(_configure_command(), context=_context())
+    second = service.configure_webhook(_configure_command(), context=_context())
+
+    assert second == first
+    assert [event.operation for event in audit_publisher.events] == ["webhook_configuration.create"]
+    assert service.logged_events[-1]["extra"]["idempotency_replay"] is True
+
+
+def test_configure_webhook_idempotency_rejects_same_key_with_different_payload() -> None:
+    audit_publisher = InMemoryAuditEventPublisher()
+    service = _service(audit_publisher=audit_publisher)
+    service.configure_webhook(_configure_command(), context=_context())
+
+    with pytest.raises(IntegrationValidationError) as error:
+        service.configure_webhook(
+            _configure_command(endpoint_url="https://callbacks.example.com/other"),
+            context=_context(),
+        )
+
+    assert error.value.code == "webhook_idempotency_conflict"
+    assert [event.operation for event in audit_publisher.events] == [
+        "webhook_configuration.create",
+        "webhook_configuration.configure",
+    ]
+    assert audit_publisher.events[-1].result == "rejected"
+
+
+def test_disable_webhook_idempotency_replays_and_rejects_key_conflicts() -> None:
+    audit_publisher = InMemoryAuditEventPublisher()
+    service = _service(audit_publisher=audit_publisher)
+    service.configure_webhook(_configure_command(), context=_context())
+
+    command = DisableWebhookConfigurationCommand(
+        idempotency_key="idem-webhook-disable-001",
+        webhook_configuration_id="wcfg_fixed",
+        scopes=("webhook_configuration:write",),
+    )
+    first = service.disable_webhook_configuration(command, context=_context())
+    second = service.disable_webhook_configuration(command, context=_context())
+
+    assert second == first
+    assert [event.operation for event in audit_publisher.events] == [
+        "webhook_configuration.create",
+        "webhook_configuration.disable",
+    ]
+    assert service.logged_events[-1]["extra"]["idempotency_replay"] is True
+
+    with pytest.raises(IntegrationValidationError) as error:
+        service.disable_webhook_configuration(
+            DisableWebhookConfigurationCommand(
+                idempotency_key="idem-webhook-disable-001",
+                webhook_configuration_id="wcfg_other",
+                scopes=("webhook_configuration:write",),
+            ),
+            context=_context(),
+        )
+
+    assert error.value.code == "webhook_idempotency_conflict"
+    assert audit_publisher.events[-1].operation == "webhook_configuration.disable"
+    assert audit_publisher.events[-1].result == "rejected"
+
+
+def test_webhook_rejections_audit_only_after_trusted_tenant_and_include_disable_failures() -> None:
+    audit_publisher = InMemoryAuditEventPublisher()
+    service = _service(audit_publisher=audit_publisher)
+
+    with pytest.raises(IntegrationValidationError) as tenant_error:
+        service.configure_webhook(
+            _configure_command(),
+            context=_context(tenant_isolation_tier="pooled"),
+        )
+
+    assert tenant_error.value.code == "unsupported_tenant_isolation_tier"
+    assert audit_publisher.events == []
+
+    with pytest.raises(IntegrationValidationError) as disable_error:
+        service.disable_webhook_configuration(
+            DisableWebhookConfigurationCommand(
+                idempotency_key="idem-webhook-disable-001",
+                webhook_configuration_id="wcfg_missing",
+                scopes=("webhook_configuration:write",),
+            ),
+            context=_context(),
+        )
+
+    assert disable_error.value.code == "webhook_configuration_not_found"
+    assert audit_publisher.events[-1].operation == "webhook_configuration.disable"
+    assert audit_publisher.events[-1].result == "rejected"
+    assert audit_publisher.events[-1].tenant_id == "tenant-bridge-001"
+    assert audit_publisher.events[-1].webhook_configuration_id == "wcfg_missing"
+
+
 def test_list_webhook_configurations_is_tenant_scoped_and_requires_scope() -> None:
     repository = InMemoryWebhookConfigurationRepository()
     service = _service(repository=repository)
@@ -250,13 +378,20 @@ def _configure_command(
     )
 
 
-def _context(tenant_id: str | None = "tenant-bridge-001") -> ObservabilityContext:
+def _context(
+    tenant_id: str | None = "tenant-bridge-001",
+    tenant_isolation_tier: str | None = None,
+) -> ObservabilityContext:
     return ObservabilityContext.new(
         correlation_id="corr-webhook-001",
         request_id="req-webhook-001",
         trace_id="33333333333333333333333333333333",
         tenant_id=tenant_id,
-        tenant_isolation_tier="bridge" if tenant_id is not None else None,
+        tenant_isolation_tier=tenant_isolation_tier
+        if tenant_isolation_tier is not None
+        else "bridge"
+        if tenant_id is not None
+        else None,
     )
 
 
