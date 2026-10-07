@@ -33,6 +33,9 @@ from creditos_integration.application.ports.mock_integration_adapter import (
     MockIntegrationAdapter,
     MockIntegrationAdapterRegistry,
 )
+from creditos_integration.application.ports.webhook_configuration_repository import (
+    WebhookConfigurationRepository,
+)
 from creditos_integration.domain.entities import (
     IntegrationConfiguration,
     IntegrationExecution,
@@ -41,6 +44,7 @@ from creditos_integration.domain.entities import (
     IntegrationPlan,
     IntegrationPlanItem,
     IntegrationResult,
+    WebhookConfiguration,
 )
 from creditos_integration.domain.errors import IntegrationValidationError
 from creditos_integration.domain.value_objects.catalog import (
@@ -60,11 +64,23 @@ from creditos_integration.domain.value_objects.result import (
     validate_supported_mock_integration_class,
     validate_synthetic_subject_reference,
 )
+from creditos_integration.domain.value_objects.webhook import (
+    resolve_webhook_endpoint_addresses,
+    validate_webhook_configuration_id,
+    validate_webhook_endpoint_url,
+    webhook_endpoint_host,
+)
 
 SERVICE_NAME = "integration"
 SERVICE_VERSION = "0.1.0"
 CONTRACT = "integration-catalog-application"
 CONTRACT_VERSION = "v1"
+
+
+@dataclass(frozen=True, slots=True)
+class _WebhookIdempotencyRecord:
+    request_fingerprint: str
+    webhook_configuration_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +137,34 @@ class ReprocessIntegrationDlqCommand:
     scopes: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class ConfigureWebhookCommand:
+    idempotency_key: str
+    endpoint_url: str
+    events: tuple[str, ...]
+    status: str
+    signing_algorithm: str
+    signing_key_ref: str
+    retry_strategy: str
+    max_attempts: int
+    initial_backoff_ms: int
+    max_backoff_ms: int
+    timeout_ms: int
+    scopes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ListWebhookConfigurationsQuery:
+    scopes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DisableWebhookConfigurationCommand:
+    idempotency_key: str
+    webhook_configuration_id: str
+    scopes: tuple[str, ...] = ()
+
+
 class IntegrationCatalogApplicationService:
     def __init__(
         self,
@@ -138,6 +182,10 @@ class IntegrationCatalogApplicationService:
         integration_execution_result_publisher: IntegrationExecutionResultPublisher | None = None,
         execution_id_factory: Callable[[str], str] | None = None,
         job_id_factory: Callable[[str], str] | None = None,
+        webhook_configuration_repository: WebhookConfigurationRepository | None = None,
+        webhook_configuration_id_factory: Callable[[str], str] | None = None,
+        webhook_allowed_domains_by_tenant: Mapping[str, tuple[str, ...]] | None = None,
+        webhook_dns_resolver: Callable[[str], tuple[str, ...]] | None = None,
     ) -> None:
         self._repository = repository
         self._adapter_registry = adapter_registry
@@ -152,6 +200,18 @@ class IntegrationCatalogApplicationService:
         self._configuration_id_factory = configuration_id_factory or _default_configuration_id
         self._execution_id_factory = execution_id_factory or _default_execution_id
         self._job_id_factory = job_id_factory or _default_job_id
+        self._webhook_configuration_repository = webhook_configuration_repository
+        self._webhook_configuration_id_factory = (
+            webhook_configuration_id_factory or _default_webhook_configuration_id
+        )
+        self._webhook_allowed_domains_by_tenant = MappingProxyType(
+            {
+                tenant_id: tuple(domain.strip().lower().rstrip(".") for domain in domains)
+                for tenant_id, domains in (webhook_allowed_domains_by_tenant or {}).items()
+            }
+        )
+        self._webhook_dns_resolver = webhook_dns_resolver or resolve_webhook_endpoint_addresses
+        self._webhook_idempotency_records: dict[str, _WebhookIdempotencyRecord] = {}
         self._logged_events: list[dict[str, Any]] = []
 
     @property
@@ -999,6 +1059,398 @@ class IntegrationCatalogApplicationService:
                 )
             raise
 
+    def configure_webhook(
+        self,
+        command: ConfigureWebhookCommand,
+        *,
+        context: ObservabilityContext,
+    ) -> WebhookConfiguration:
+        started_at = perf_counter()
+        tenant_id = context.tenant_id
+        trusted_tenant_id: str | None = None
+        configuration: WebhookConfiguration | None = None
+        previous_configuration: WebhookConfiguration | None = None
+        operation = "webhook_configuration.configure"
+        try:
+            tenant_id = _require_trusted_tenant(context)
+            trusted_tenant_id = tenant_id
+            _require_scope(command.scopes, "webhook_configuration:write")
+            validate_idempotency_key(command.idempotency_key)
+            if self._webhook_configuration_repository is None:
+                raise IntegrationValidationError(
+                    "repositório de configuração de webhook não configurado",
+                    code="webhook_configuration_repository_not_configured",
+                    field_path="webhook_configuration_repository",
+                )
+            allowed_domains = _webhook_allowed_domains_for_tenant(
+                tenant_id=tenant_id,
+                allowed_domains_by_tenant=self._webhook_allowed_domains_by_tenant,
+            )
+            normalized_endpoint_url = validate_webhook_endpoint_url(
+                command.endpoint_url,
+                allowed_domains=allowed_domains,
+            )
+            resolved_addresses = self._webhook_dns_resolver(
+                webhook_endpoint_host(normalized_endpoint_url)
+            )
+            normalized_endpoint_url = validate_webhook_endpoint_url(
+                normalized_endpoint_url,
+                allowed_domains=allowed_domains,
+                resolved_addresses=resolved_addresses,
+            )
+            configuration_id = self._webhook_configuration_id_factory(
+                _webhook_configuration_seed(
+                    tenant_id=tenant_id,
+                    endpoint_url=normalized_endpoint_url,
+                    events=command.events,
+                )
+            )
+            idempotency_record_key = _webhook_idempotency_record_key(
+                tenant_id=tenant_id,
+                operation=operation,
+                idempotency_key=command.idempotency_key,
+            )
+            request_fingerprint = _webhook_configure_request_fingerprint(
+                endpoint_url=normalized_endpoint_url,
+                command=command,
+            )
+            replayed_configuration = self._webhook_idempotent_replay(
+                record_key=idempotency_record_key,
+                request_fingerprint=request_fingerprint,
+                tenant_id=tenant_id,
+            )
+            if replayed_configuration is not None:
+                self._log_operation(
+                    context=context,
+                    operation="webhook_configuration.configure",
+                    status="accepted",
+                    duration_ms=_duration_ms(started_at),
+                    payload=_webhook_rejection_payload(command),
+                    extra=replayed_configuration.to_log_safe_dict() | {"idempotency_replay": True},
+                )
+                return replayed_configuration
+            previous_configuration = self._webhook_configuration_repository.get(
+                configuration_id,
+                tenant_id,
+            )
+            configuration = WebhookConfiguration.create(
+                webhook_configuration_id=configuration_id,
+                tenant_id=tenant_id,
+                endpoint_url=normalized_endpoint_url,
+                events=command.events,
+                status=command.status,
+                signing_algorithm=command.signing_algorithm,
+                signing_key_ref=command.signing_key_ref,
+                retry_strategy=command.retry_strategy,
+                max_attempts=command.max_attempts,
+                initial_backoff_ms=command.initial_backoff_ms,
+                max_backoff_ms=command.max_backoff_ms,
+                timeout_ms=command.timeout_ms,
+                allowed_domains=allowed_domains,
+                resolved_addresses=resolved_addresses,
+                created_at=previous_configuration.created_at
+                if previous_configuration is not None
+                else None,
+                now=self._clock(),
+            )
+            operation = (
+                "webhook_configuration.update"
+                if previous_configuration is not None
+                else "webhook_configuration.create"
+            )
+            self._webhook_configuration_repository.save(configuration)
+            try:
+                self._audit_publisher.publish(
+                    _webhook_audit_event(
+                        configuration=configuration,
+                        operation=operation,
+                        result="accepted",
+                        context=context,
+                    )
+                )
+            except Exception:
+                if previous_configuration is None:
+                    self._webhook_configuration_repository.delete(
+                        configuration.webhook_configuration_id,
+                        tenant_id,
+                    )
+                else:
+                    self._webhook_configuration_repository.save(previous_configuration)
+                raise
+            self._webhook_idempotency_records[idempotency_record_key] = _WebhookIdempotencyRecord(
+                request_fingerprint=request_fingerprint,
+                webhook_configuration_id=configuration.webhook_configuration_id,
+            )
+            self._log_operation(
+                context=context,
+                operation=operation,
+                status="accepted",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                extra=configuration.to_log_safe_dict(),
+            )
+            return configuration
+        except Exception as error:
+            self._publish_webhook_rejection_audit(
+                tenant_id=trusted_tenant_id,
+                command=command,
+                context=context,
+                error=error,
+            )
+            self._log_operation(
+                context=context,
+                operation=operation,
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=_webhook_rejection_payload(command),
+                error_type=type(error).__name__,
+                extra={
+                    "tenant_id_present": _tenant_id_present(tenant_id),
+                    "denial_reason": getattr(error, "code", type(error).__name__),
+                    "endpoint_host": configuration.endpoint_host
+                    if configuration is not None
+                    else None,
+                    "event_count": len(command.events),
+                },
+            )
+            raise
+
+    def list_webhook_configurations(
+        self,
+        query: ListWebhookConfigurationsQuery,
+        *,
+        context: ObservabilityContext,
+    ) -> tuple[WebhookConfiguration, ...]:
+        started_at = perf_counter()
+        tenant_id = context.tenant_id
+        try:
+            tenant_id = _require_trusted_tenant(context)
+            _require_scope(query.scopes, "webhook_configuration:read")
+            if self._webhook_configuration_repository is None:
+                raise IntegrationValidationError(
+                    "repositório de configuração de webhook não configurado",
+                    code="webhook_configuration_repository_not_configured",
+                    field_path="webhook_configuration_repository",
+                )
+            configurations = self._webhook_configuration_repository.list_for_tenant(
+                tenant_id=tenant_id
+            )
+            self._log_operation(
+                context=context,
+                operation="webhook_configuration.list",
+                status="accepted",
+                duration_ms=_duration_ms(started_at),
+                payload=query,
+                extra={
+                    "configured_items": len(configurations),
+                    "webhook_configuration_ids": tuple(
+                        configuration.webhook_configuration_id for configuration in configurations
+                    ),
+                    "event_types": tuple(
+                        sorted(
+                            {
+                                event
+                                for configuration in configurations
+                                for event in configuration.events
+                            }
+                        )
+                    ),
+                },
+            )
+            return configurations
+        except Exception as error:
+            self._log_operation(
+                context=context,
+                operation="webhook_configuration.list",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=query,
+                error_type=type(error).__name__,
+                extra={
+                    "tenant_id_present": _tenant_id_present(tenant_id),
+                    "denial_reason": getattr(error, "code", type(error).__name__),
+                },
+            )
+            raise
+
+    def disable_webhook_configuration(
+        self,
+        command: DisableWebhookConfigurationCommand,
+        *,
+        context: ObservabilityContext,
+    ) -> WebhookConfiguration:
+        started_at = perf_counter()
+        tenant_id = context.tenant_id
+        trusted_tenant_id: str | None = None
+        webhook_configuration_id = ""
+        try:
+            tenant_id = _require_trusted_tenant(context)
+            trusted_tenant_id = tenant_id
+            _require_scope(command.scopes, "webhook_configuration:write")
+            validate_idempotency_key(command.idempotency_key)
+            if self._webhook_configuration_repository is None:
+                raise IntegrationValidationError(
+                    "repositório de configuração de webhook não configurado",
+                    code="webhook_configuration_repository_not_configured",
+                    field_path="webhook_configuration_repository",
+                )
+            webhook_configuration_id = validate_webhook_configuration_id(
+                command.webhook_configuration_id
+            )
+            idempotency_record_key = _webhook_idempotency_record_key(
+                tenant_id=tenant_id,
+                operation="webhook_configuration.disable",
+                idempotency_key=command.idempotency_key,
+            )
+            request_fingerprint = _webhook_disable_request_fingerprint(command)
+            replayed_configuration = self._webhook_idempotent_replay(
+                record_key=idempotency_record_key,
+                request_fingerprint=request_fingerprint,
+                tenant_id=tenant_id,
+            )
+            if replayed_configuration is not None:
+                self._log_operation(
+                    context=context,
+                    operation="webhook_configuration.disable",
+                    status="accepted",
+                    duration_ms=_duration_ms(started_at),
+                    payload=command,
+                    extra=replayed_configuration.to_log_safe_dict() | {"idempotency_replay": True},
+                )
+                return replayed_configuration
+            existing_configuration = self._webhook_configuration_repository.get(
+                webhook_configuration_id,
+                tenant_id,
+            )
+            if existing_configuration is None:
+                raise IntegrationValidationError(
+                    "configuração de webhook não encontrada",
+                    code="webhook_configuration_not_found",
+                    field_path="webhook_configuration_id",
+                )
+            disabled_configuration = existing_configuration.disable(now=self._clock())
+            self._webhook_configuration_repository.save(disabled_configuration)
+            try:
+                self._audit_publisher.publish(
+                    _webhook_audit_event(
+                        configuration=disabled_configuration,
+                        operation="webhook_configuration.disable",
+                        result="accepted",
+                        context=context,
+                    )
+                )
+            except Exception:
+                self._webhook_configuration_repository.save(existing_configuration)
+                raise
+            self._webhook_idempotency_records[idempotency_record_key] = _WebhookIdempotencyRecord(
+                request_fingerprint=request_fingerprint,
+                webhook_configuration_id=disabled_configuration.webhook_configuration_id,
+            )
+            self._log_operation(
+                context=context,
+                operation="webhook_configuration.disable",
+                status="accepted",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                extra=disabled_configuration.to_log_safe_dict(),
+            )
+            return disabled_configuration
+        except Exception as error:
+            self._publish_webhook_disable_rejection_audit(
+                tenant_id=trusted_tenant_id,
+                webhook_configuration_id=webhook_configuration_id,
+                context=context,
+                error=error,
+            )
+            self._log_operation(
+                context=context,
+                operation="webhook_configuration.disable",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=command,
+                error_type=type(error).__name__,
+                extra={
+                    "tenant_id_present": _tenant_id_present(tenant_id),
+                    "webhook_configuration_id_present": bool(webhook_configuration_id),
+                    "denial_reason": getattr(error, "code", type(error).__name__),
+                },
+            )
+            raise
+
+    def _publish_webhook_rejection_audit(
+        self,
+        *,
+        tenant_id: str | None,
+        command: ConfigureWebhookCommand,
+        context: ObservabilityContext,
+        error: Exception,
+    ) -> None:
+        if not tenant_id:
+            return
+        with suppress(Exception):
+            self._audit_publisher.publish(
+                _webhook_rejection_audit_event(
+                    tenant_id=tenant_id,
+                    command=command,
+                    context=context,
+                    operation="webhook_configuration.configure",
+                    denial_reason=getattr(error, "code", type(error).__name__),
+                    occurred_at=self._clock(),
+                )
+            )
+
+    def _publish_webhook_disable_rejection_audit(
+        self,
+        *,
+        tenant_id: str | None,
+        webhook_configuration_id: str,
+        context: ObservabilityContext,
+        error: Exception,
+    ) -> None:
+        if not tenant_id:
+            return
+        with suppress(Exception):
+            self._audit_publisher.publish(
+                _webhook_rejection_audit_event(
+                    tenant_id=tenant_id,
+                    context=context,
+                    operation="webhook_configuration.disable",
+                    denial_reason=getattr(error, "code", type(error).__name__),
+                    occurred_at=self._clock(),
+                    webhook_configuration_id=webhook_configuration_id or None,
+                )
+            )
+
+    def _webhook_idempotent_replay(
+        self,
+        *,
+        record_key: str,
+        request_fingerprint: str,
+        tenant_id: str,
+    ) -> WebhookConfiguration | None:
+        record = self._webhook_idempotency_records.get(record_key)
+        if record is None:
+            return None
+        if record.request_fingerprint != request_fingerprint:
+            raise IntegrationValidationError(
+                "chave de idempotência já usada com payload diferente",
+                code="webhook_idempotency_conflict",
+                field_path="idempotency_key",
+            )
+        if self._webhook_configuration_repository is None:
+            return None
+        configuration = self._webhook_configuration_repository.get(
+            record.webhook_configuration_id,
+            tenant_id,
+        )
+        if configuration is None:
+            raise IntegrationValidationError(
+                "resultado idempotente de webhook indisponível",
+                code="webhook_idempotency_result_unavailable",
+                field_path="idempotency_key",
+            )
+        return configuration
+
     def list_integration_configurations(
         self,
         query: ListIntegrationConfigurationsQuery,
@@ -1088,6 +1540,144 @@ class IntegrationCatalogApplicationService:
                 error_type=error_type,
             )
         )
+
+
+def _webhook_audit_event(
+    *,
+    configuration: WebhookConfiguration,
+    operation: str,
+    result: str,
+    context: ObservabilityContext,
+) -> IntegrationAuditEvent:
+    return IntegrationAuditEvent(
+        tenant_id=configuration.tenant_id,
+        operation=operation,
+        product_type="webhook",
+        integration_class="webhook_callback",
+        adapter_id="webhook-public-api",
+        result=result,
+        correlation_id=context.correlation_id,
+        trace_id=context.trace_id,
+        schema_version=configuration.schema_version,
+        occurred_at=configuration.updated_at,
+        webhook_configuration_id=configuration.webhook_configuration_id,
+        event_types=configuration.events,
+        webhook_status=configuration.status,
+    )
+
+
+def _webhook_rejection_payload(command: ConfigureWebhookCommand) -> dict[str, object]:
+    return {
+        "event_count": len(command.events),
+        "status": command.status,
+        "signing_algorithm": command.signing_algorithm,
+        "signing_key_ref_present": bool(command.signing_key_ref),
+        "retry_strategy": command.retry_strategy,
+        "max_attempts": command.max_attempts,
+        "initial_backoff_ms": command.initial_backoff_ms,
+        "max_backoff_ms": command.max_backoff_ms,
+        "timeout_ms": command.timeout_ms,
+        "idempotency_key_present": bool(command.idempotency_key),
+        "scopes": command.scopes,
+    }
+
+
+def _webhook_idempotency_record_key(
+    *,
+    tenant_id: str,
+    operation: str,
+    idempotency_key: str,
+) -> str:
+    return "|".join((tenant_id, operation, idempotency_key))
+
+
+def _webhook_configure_request_fingerprint(
+    *,
+    endpoint_url: str,
+    command: ConfigureWebhookCommand,
+) -> str:
+    safe_request = {
+        "operation": "webhook_configuration.configure",
+        "endpoint_url": endpoint_url,
+        "events": tuple(sorted(command.events)),
+        "status": command.status,
+        "signing_algorithm": command.signing_algorithm,
+        "signing_key_ref": command.signing_key_ref,
+        "retry_strategy": command.retry_strategy,
+        "max_attempts": command.max_attempts,
+        "initial_backoff_ms": command.initial_backoff_ms,
+        "max_backoff_ms": command.max_backoff_ms,
+        "timeout_ms": command.timeout_ms,
+        "schema_version": "1.0",
+    }
+    encoded = dumps(safe_request, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"widem_{sha256(encoded).hexdigest()}"
+
+
+def _webhook_disable_request_fingerprint(command: DisableWebhookConfigurationCommand) -> str:
+    safe_request = {
+        "operation": "webhook_configuration.disable",
+        "webhook_configuration_id": command.webhook_configuration_id,
+        "schema_version": "1.0",
+    }
+    encoded = dumps(safe_request, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"widem_{sha256(encoded).hexdigest()}"
+
+
+def _webhook_rejection_audit_event(
+    *,
+    tenant_id: str,
+    context: ObservabilityContext,
+    operation: str,
+    denial_reason: str,
+    occurred_at: datetime,
+    command: ConfigureWebhookCommand | None = None,
+    webhook_configuration_id: str | None = None,
+) -> IntegrationAuditEvent:
+    return IntegrationAuditEvent(
+        tenant_id=tenant_id,
+        operation=operation,
+        product_type="webhook",
+        integration_class="webhook_callback",
+        adapter_id="webhook-public-api",
+        result="rejected",
+        correlation_id=context.correlation_id,
+        trace_id=context.trace_id,
+        schema_version="1.0",
+        occurred_at=occurred_at,
+        webhook_configuration_id=webhook_configuration_id,
+        event_types=_safe_webhook_event_types(command.events) if command is not None else (),
+        webhook_status=_safe_webhook_status(command.status) if command is not None else None,
+        denial_reason=denial_reason,
+    )
+
+
+def _safe_webhook_event_types(events: tuple[str, ...]) -> tuple[str, ...]:
+    allowed_events = {"decision.completed", "decision.status_changed"}
+    return tuple(sorted(event for event in events if event in allowed_events))
+
+
+def _safe_webhook_status(status: str) -> str | None:
+    if status in {"active", "disabled", "pending_verification", "rejected"}:
+        return status
+    return None
+
+
+def _webhook_configuration_seed(
+    *,
+    tenant_id: str,
+    endpoint_url: str,
+    events: tuple[str, ...],
+) -> str:
+    return "|".join((tenant_id, endpoint_url, ",".join(sorted(events))))
+
+
+def _webhook_allowed_domains_for_tenant(
+    *,
+    tenant_id: str,
+    allowed_domains_by_tenant: Mapping[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    return allowed_domains_by_tenant.get(tenant_id, ())
 
 
 def _configuration_log_extra(configuration: IntegrationConfiguration) -> dict[str, object]:
@@ -2132,6 +2722,10 @@ def _default_execution_id(seed: str) -> str:
 
 def _default_job_id(seed: str) -> str:
     return f"ijob_{sha256(seed.encode('utf-8')).hexdigest()[:32]}"
+
+
+def _default_webhook_configuration_id(seed: str) -> str:
+    return f"wcfg_{sha256(seed.encode('utf-8')).hexdigest()[:32]}"
 
 
 def _duration_ms(started_at: float) -> float:

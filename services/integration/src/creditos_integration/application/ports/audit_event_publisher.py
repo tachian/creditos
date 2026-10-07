@@ -19,6 +19,10 @@ class IntegrationAuditEvent:
     occurred_at: datetime
     dlq_id: str | None = None
     reprocess_execution_id: str | None = None
+    webhook_configuration_id: str | None = None
+    event_types: tuple[str, ...] = ()
+    webhook_status: str | None = None
+    denial_reason: str | None = None
 
     def to_log_safe_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -37,6 +41,14 @@ class IntegrationAuditEvent:
             payload["dlq_id"] = self.dlq_id
         if self.reprocess_execution_id is not None:
             payload["reprocess_execution_id"] = self.reprocess_execution_id
+        if self.webhook_configuration_id is not None:
+            payload["webhook_configuration_id"] = self.webhook_configuration_id
+        if self.event_types:
+            payload["event_types"] = self.event_types
+        if self.webhook_status is not None:
+            payload["webhook_status"] = self.webhook_status
+        if self.denial_reason is not None:
+            payload["denial_reason"] = self.denial_reason
         return payload
 
 

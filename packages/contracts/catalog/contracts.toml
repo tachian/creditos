@@ -110,3 +110,17 @@ freeze_trigger = "first-external-client-integration"
 breaking_change_policy = "new-major-version-required"
 compatibility_window = "to-be-defined-before-production"
 contract_tests_required = true
+
+[[contracts]]
+id = "webhook-configuration-public-api"
+kind = "openapi"
+version = "v1"
+owner = "Integration"
+path = "openapi/public/webhooks/v1/openapi.json"
+compatibility = "experimental"
+lifecycle = "mvp-pre-production"
+pre_production_breaking_changes_allowed = true
+freeze_trigger = "first-external-client-integration"
+breaking_change_policy = "new-major-version-required"
+compatibility_window = "to-be-defined-before-production"
+contract_tests_required = true

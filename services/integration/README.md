@@ -75,3 +75,31 @@ integrações externas.
 
 Esta fase não executa fornecedor real, NATS JetStream real, replay durável,
 banco real, migration, transactional outbox/inbox real, broker produtivo ou gRPC real.
+
+
+## Configuração de Webhooks por Tenant
+
+O `Integration Service` é o bounded context responsável por configurar webhooks
+externos por tenant e evento. A configuração usa DDD/arquitetura hexagonal: o
+domínio modela `WebhookConfiguration`, o caso de uso aplica tenant confiável,
+escopos, validação de endpoint, auditoria e logs seguros, e o adapter in-memory
+serve apenas para testes/harness.
+
+A Story 8.3 implementa configuração, listagem e desativação lógica. Ela não
+executa chamada HTTP ao cliente, não entrega eventos, não assina payload de
+entrega, não agenda retry real e não envia itens para DLQ; esses comportamentos
+ficam para a Story 8.4.
+
+Regras principais:
+
+- aceitar somente endpoints `https://` sem `userinfo`;
+- rejeitar localhost, loopback, IP privado, link-local, multicast, reserved e
+  unspecified;
+- rejeitar query string com chaves sensíveis óbvias, como `token`, `secret`,
+  `key`, `authorization` e `password`;
+- aplicar allowlist confiável por tenant quando configurada no serviço, nunca a partir do payload público;
+- persistir apenas referência de chave de assinatura (`signing_key_ref`), nunca
+  segredo em claro;
+- auditar criação, atualização, desativação e rejeição controlada via porta de auditoria;
+- registrar logs estruturados com endpoint minimizado por host, sem payload bruto
+  ou segredo.

@@ -27,6 +27,9 @@ from creditos_integration.application.ports.mock_integration_adapter import (
     MockIntegrationAdapter,
     MockIntegrationAdapterRegistry,
 )
+from creditos_integration.application.ports.webhook_configuration_repository import (
+    WebhookConfigurationRepository,
+)
 
 __all__ = [
     "AdapterRegistry",
@@ -50,4 +53,5 @@ __all__ = [
     "JETSTREAM_RESILIENCE_MAPPING",
     "MockIntegrationAdapter",
     "MockIntegrationAdapterRegistry",
+    "WebhookConfigurationRepository",
 ]

@@ -10,6 +10,7 @@ from creditos_integration.domain.entities.integration_plan import (
     IntegrationPlanItem,
 )
 from creditos_integration.domain.entities.integration_result import IntegrationResult
+from creditos_integration.domain.entities.webhook_configuration import WebhookConfiguration
 
 __all__ = [
     "IntegrationConfiguration",
@@ -20,4 +21,5 @@ __all__ = [
     "IntegrationPlan",
     "IntegrationPlanItem",
     "IntegrationResult",
+    "WebhookConfiguration",
 ]
