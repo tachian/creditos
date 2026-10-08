@@ -1,5 +1,5 @@
 # generated: 2026-07-30
-# last_updated: 2026-10-06
+# last_updated: 2026-10-07
 # project: CreditOS
 # project_key: CTOS
 # tracking_system: file-system
@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-30
-last_updated: 2026-10-06
+last_updated: 2026-10-07
 project: CreditOS
 project_key: CTOS
 tracking_system: file-system
@@ -118,7 +118,7 @@ development_status:
   8-1-consulta-de-decisao-por-proposta: done
   8-2-contrato-publico-de-status-e-decisao: done
   8-3-configuracao-de-webhooks-por-tenant: done
-  8-4-entrega-assincrona-de-webhooks-com-retry-e-dlq: backlog
+  8-4-entrega-assincrona-de-webhooks-com-retry-e-dlq: done
   8-5-observabilidade-e-auditoria-de-consulta-callback: backlog
   8-6-testes-de-contrato-para-consulta-e-webhooks: backlog
   8-7-fluxo-e2e-de-analise-com-integracoes-mockadas: backlog

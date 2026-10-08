@@ -36,6 +36,12 @@ from creditos_integration.application.ports.mock_integration_adapter import (
 from creditos_integration.application.ports.webhook_configuration_repository import (
     WebhookConfigurationRepository,
 )
+from creditos_integration.application.ports.webhook_delivery import (
+    WebhookDeliveryDispatcher,
+    WebhookDeliveryDispatchResult,
+    WebhookDeliveryDlqStore,
+    WebhookDeliveryStore,
+)
 from creditos_integration.domain.entities import (
     IntegrationConfiguration,
     IntegrationExecution,
@@ -45,6 +51,8 @@ from creditos_integration.domain.entities import (
     IntegrationPlanItem,
     IntegrationResult,
     WebhookConfiguration,
+    WebhookDeliveryJob,
+    WebhookNotificationEvent,
 )
 from creditos_integration.domain.errors import IntegrationValidationError
 from creditos_integration.domain.value_objects.catalog import (
@@ -65,6 +73,7 @@ from creditos_integration.domain.value_objects.result import (
     validate_synthetic_subject_reference,
 )
 from creditos_integration.domain.value_objects.webhook import (
+    WebhookStatus,
     resolve_webhook_endpoint_addresses,
     validate_webhook_configuration_id,
     validate_webhook_endpoint_url,
@@ -165,6 +174,31 @@ class DisableWebhookConfigurationCommand:
     scopes: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class DispatchWebhookNotificationCommand:
+    event_id: str
+    event_type: str
+    proposal_id: str
+    decision_status: str
+    occurred_at: datetime
+    decision_outcome: str | None = None
+    idempotency_key: str | None = None
+    scopes: tuple[str, ...] = ()
+    unsafe_payload: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReprocessWebhookDlqCommand:
+    dlq_id: str
+    idempotency_key: str
+    scopes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessWebhookRetriesCommand:
+    scopes: tuple[str, ...] = ()
+
+
 class IntegrationCatalogApplicationService:
     def __init__(
         self,
@@ -186,6 +220,11 @@ class IntegrationCatalogApplicationService:
         webhook_configuration_id_factory: Callable[[str], str] | None = None,
         webhook_allowed_domains_by_tenant: Mapping[str, tuple[str, ...]] | None = None,
         webhook_dns_resolver: Callable[[str], tuple[str, ...]] | None = None,
+        webhook_delivery_store: WebhookDeliveryStore | None = None,
+        webhook_delivery_dlq_store: WebhookDeliveryDlqStore | None = None,
+        webhook_delivery_dispatcher: WebhookDeliveryDispatcher | None = None,
+        webhook_delivery_job_id_factory: Callable[[str], str] | None = None,
+        webhook_delivery_dlq_id_factory: Callable[[str], str] | None = None,
     ) -> None:
         self._repository = repository
         self._adapter_registry = adapter_registry
@@ -211,6 +250,15 @@ class IntegrationCatalogApplicationService:
             }
         )
         self._webhook_dns_resolver = webhook_dns_resolver or resolve_webhook_endpoint_addresses
+        self._webhook_delivery_store = webhook_delivery_store
+        self._webhook_delivery_dlq_store = webhook_delivery_dlq_store
+        self._webhook_delivery_dispatcher = webhook_delivery_dispatcher
+        self._webhook_delivery_job_id_factory = (
+            webhook_delivery_job_id_factory or _default_webhook_delivery_job_id
+        )
+        self._webhook_delivery_dlq_id_factory = (
+            webhook_delivery_dlq_id_factory or _default_webhook_delivery_dlq_id
+        )
         self._webhook_idempotency_records: dict[str, _WebhookIdempotencyRecord] = {}
         self._logged_events: list[dict[str, Any]] = []
 
@@ -1451,6 +1499,402 @@ class IntegrationCatalogApplicationService:
             )
         return configuration
 
+    def dispatch_webhook_notification(
+        self,
+        command: DispatchWebhookNotificationCommand,
+        *,
+        context: ObservabilityContext,
+    ) -> WebhookDeliveryDispatchResult:
+        started_at = perf_counter()
+        tenant_id = context.tenant_id
+        try:
+            tenant_id = _require_trusted_tenant(context)
+            _require_scope(command.scopes, "webhook_delivery:dispatch")
+            _ensure_webhook_delivery_dependencies(
+                configuration_repository=self._webhook_configuration_repository,
+                delivery_store=self._webhook_delivery_store,
+                delivery_dispatcher=self._webhook_delivery_dispatcher,
+                dlq_store=self._webhook_delivery_dlq_store,
+            )
+            assert self._webhook_configuration_repository is not None
+            assert self._webhook_delivery_store is not None
+            assert self._webhook_delivery_dispatcher is not None
+            assert self._webhook_delivery_dlq_store is not None
+            event = WebhookNotificationEvent.create(
+                event_id=command.event_id,
+                event_type=command.event_type,
+                proposal_id=command.proposal_id,
+                decision_status=command.decision_status,
+                decision_outcome=command.decision_outcome,
+                occurred_at=command.occurred_at,
+                correlation_id=context.correlation_id,
+                trace_id=context.trace_id,
+            )
+            configurations = tuple(
+                configuration
+                for configuration in self._webhook_configuration_repository.list_for_tenant(
+                    tenant_id=tenant_id
+                )
+                if configuration.status == WebhookStatus.ACTIVE.value
+                and event.event_type in configuration.events
+            )
+            dispatch_results: list[WebhookDeliveryDispatchResult] = []
+            for configuration in configurations:
+                idempotency_key = _webhook_delivery_effective_idempotency_key(
+                    explicit_idempotency_key=command.idempotency_key,
+                    event=event,
+                    configuration=configuration,
+                )
+                job = WebhookDeliveryJob.create(
+                    job_id=self._webhook_delivery_job_id_factory(
+                        _webhook_delivery_job_seed(
+                            tenant_id=tenant_id,
+                            event_id=event.event_id,
+                            webhook_configuration_id=configuration.webhook_configuration_id,
+                        )
+                    ),
+                    tenant_id=tenant_id,
+                    webhook_configuration_id=configuration.webhook_configuration_id,
+                    event=event,
+                    idempotency_key=idempotency_key,
+                    created_at=self._clock(),
+                )
+                existing_job = self._webhook_delivery_store.reserve_or_get(job=job, event=event)
+                if existing_job is not None:
+                    dispatch_results.append(WebhookDeliveryDispatchResult(jobs=(existing_job,)))
+                    self._log_operation(
+                        context=context,
+                        operation="webhook_delivery.created",
+                        status="accepted",
+                        duration_ms=_duration_ms(started_at),
+                        payload=_webhook_notification_payload(command),
+                        extra=existing_job.to_log_safe_dict() | {"idempotency_replay": True},
+                    )
+                    continue
+                self._log_operation(
+                    context=context,
+                    operation="webhook_delivery.created",
+                    status="accepted",
+                    duration_ms=_duration_ms(started_at),
+                    payload=_webhook_notification_payload(command),
+                    extra=job.to_log_safe_dict() | _webhook_delivery_endpoint_extra(configuration),
+                )
+                try:
+                    result = self._webhook_delivery_dispatcher.dispatch(
+                        job=job,
+                        event=event,
+                        configuration=configuration,
+                        context=context,
+                        clock=self._clock,
+                        dlq_id_factory=self._webhook_delivery_dlq_id_factory,
+                    )
+                except Exception:
+                    self._webhook_delivery_store.release(job)
+                    raise
+                for dispatched_job in result.jobs:
+                    self._webhook_delivery_store.save(dispatched_job)
+                    self._log_operation(
+                        context=context,
+                        operation=_webhook_delivery_operation_for_job(dispatched_job),
+                        status="accepted",
+                        duration_ms=_duration_ms(started_at),
+                        payload=_webhook_notification_payload(command),
+                        extra=dispatched_job.to_log_safe_dict()
+                        | _webhook_delivery_endpoint_extra(configuration),
+                    )
+                for retry_schedule in result.retry_schedules:
+                    self._webhook_delivery_store.save_retry_schedule(retry_schedule)
+                    self._log_operation(
+                        context=context,
+                        operation="webhook_delivery.retry_scheduled",
+                        status="accepted",
+                        duration_ms=_duration_ms(started_at),
+                        payload=_webhook_notification_payload(command),
+                        extra=retry_schedule.to_log_safe_dict()
+                        | _webhook_delivery_endpoint_extra(configuration),
+                    )
+                for dlq_record in result.dlq_records:
+                    saved_record = self._webhook_delivery_dlq_store.save(dlq_record)
+                    self._log_operation(
+                        context=context,
+                        operation="webhook_delivery.dlq_recorded",
+                        status="accepted",
+                        duration_ms=_duration_ms(started_at),
+                        payload=_webhook_notification_payload(command),
+                        extra=saved_record.to_log_safe_dict()
+                        | _webhook_delivery_endpoint_extra(configuration),
+                    )
+                dispatch_results.append(result)
+            return _merge_webhook_delivery_results(dispatch_results)
+        except Exception as error:
+            self._log_operation(
+                context=context,
+                operation="webhook_delivery.dispatch",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload=_webhook_notification_payload(command),
+                error_type=type(error).__name__,
+                extra={
+                    "tenant_id_present": _tenant_id_present(tenant_id),
+                    "denial_reason": getattr(error, "code", type(error).__name__),
+                },
+            )
+            raise
+
+    def reprocess_webhook_dlq(
+        self,
+        command: ReprocessWebhookDlqCommand,
+        *,
+        context: ObservabilityContext,
+    ) -> WebhookDeliveryDispatchResult:
+        started_at = perf_counter()
+        tenant_id = context.tenant_id
+        try:
+            tenant_id = _require_trusted_tenant(context)
+            _require_scope(command.scopes, "webhook_delivery:reprocess")
+            validate_idempotency_key(command.idempotency_key)
+            _ensure_webhook_delivery_dependencies(
+                configuration_repository=self._webhook_configuration_repository,
+                delivery_store=self._webhook_delivery_store,
+                delivery_dispatcher=self._webhook_delivery_dispatcher,
+                dlq_store=self._webhook_delivery_dlq_store,
+            )
+            assert self._webhook_configuration_repository is not None
+            assert self._webhook_delivery_store is not None
+            assert self._webhook_delivery_dispatcher is not None
+            assert self._webhook_delivery_dlq_store is not None
+            record = self._webhook_delivery_dlq_store.get(
+                tenant_id=tenant_id,
+                dlq_id=command.dlq_id,
+            )
+            if record is None:
+                raise IntegrationValidationError(
+                    "registro de DLQ de webhook não encontrado",
+                    code="webhook_delivery_dlq_not_found",
+                    field_path="dlq_id",
+                )
+            configuration = self._webhook_configuration_repository.get(
+                record.webhook_configuration_id,
+                tenant_id,
+            )
+            if configuration is None:
+                raise IntegrationValidationError(
+                    "configuração de webhook não encontrada",
+                    code="webhook_configuration_not_found",
+                    field_path="webhook_configuration_id",
+                )
+            if configuration.status != WebhookStatus.ACTIVE.value:
+                raise IntegrationValidationError(
+                    "configuração de webhook inativa para reprocessamento",
+                    code="webhook_configuration_inactive_for_reprocess",
+                    field_path="webhook_configuration_id",
+                )
+            event = record.notification_event()
+            job = WebhookDeliveryJob.create(
+                job_id=self._webhook_delivery_job_id_factory(
+                    _webhook_delivery_reprocess_job_seed(
+                        tenant_id=tenant_id,
+                        dlq_id=record.dlq_id,
+                        idempotency_key=command.idempotency_key,
+                    )
+                ),
+                tenant_id=tenant_id,
+                webhook_configuration_id=configuration.webhook_configuration_id,
+                event=event,
+                idempotency_key=_webhook_delivery_reprocess_idempotency_key(
+                    idempotency_key=command.idempotency_key,
+                    dlq_id=record.dlq_id,
+                ),
+                created_at=self._clock(),
+            )
+            existing_job = self._webhook_delivery_store.reserve_or_get(job=job, event=event)
+            if existing_job is not None:
+                return WebhookDeliveryDispatchResult(jobs=(existing_job,))
+            self._log_operation(
+                context=context,
+                operation="webhook_delivery.reprocess_requested",
+                status="accepted",
+                duration_ms=_duration_ms(started_at),
+                payload={"dlq_id": command.dlq_id, "idempotency_key_present": True},
+                extra=record.to_log_safe_dict(),
+            )
+            try:
+                result = self._webhook_delivery_dispatcher.dispatch(
+                    job=job,
+                    event=event,
+                    configuration=configuration,
+                    context=context,
+                    clock=self._clock,
+                    dlq_id_factory=self._webhook_delivery_dlq_id_factory,
+                )
+            except Exception:
+                self._webhook_delivery_store.release(job)
+                raise
+            for dispatched_job in result.jobs:
+                self._webhook_delivery_store.save(dispatched_job)
+                self._log_operation(
+                    context=context,
+                    operation=_webhook_delivery_operation_for_job(dispatched_job),
+                    status="accepted",
+                    duration_ms=_duration_ms(started_at),
+                    payload={"dlq_id": command.dlq_id, "idempotency_key_present": True},
+                    extra=dispatched_job.to_log_safe_dict()
+                    | _webhook_delivery_endpoint_extra(configuration),
+                )
+            for retry_schedule in result.retry_schedules:
+                self._webhook_delivery_store.save_retry_schedule(retry_schedule)
+                self._log_operation(
+                    context=context,
+                    operation="webhook_delivery.retry_scheduled",
+                    status="accepted",
+                    duration_ms=_duration_ms(started_at),
+                    payload={"dlq_id": command.dlq_id, "idempotency_key_present": True},
+                    extra=retry_schedule.to_log_safe_dict()
+                    | _webhook_delivery_endpoint_extra(configuration),
+                )
+            for dlq_record in result.dlq_records:
+                self._webhook_delivery_dlq_store.save(dlq_record)
+                self._log_operation(
+                    context=context,
+                    operation="webhook_delivery.dlq_recorded",
+                    status="accepted",
+                    duration_ms=_duration_ms(started_at),
+                    payload={"dlq_id": command.dlq_id, "idempotency_key_present": True},
+                    extra=dlq_record.to_log_safe_dict()
+                    | _webhook_delivery_endpoint_extra(configuration),
+                )
+            sent_jobs = tuple(job for job in result.jobs if job.status == "sent")
+            if sent_jobs:
+                self._webhook_delivery_dlq_store.mark_reprocessed(
+                    tenant_id=tenant_id,
+                    dlq_id=command.dlq_id,
+                    reprocess_job_id=sent_jobs[0].job_id,
+                    reprocessed_at=self._clock(),
+                )
+            return result
+        except Exception as error:
+            self._log_operation(
+                context=context,
+                operation="webhook_delivery.reprocess",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload={"dlq_id": command.dlq_id, "idempotency_key_present": True},
+                error_type=type(error).__name__,
+                extra={
+                    "tenant_id_present": _tenant_id_present(tenant_id),
+                    "denial_reason": getattr(error, "code", type(error).__name__),
+                },
+            )
+            raise
+
+    def process_due_webhook_retries(
+        self,
+        command: ProcessWebhookRetriesCommand,
+        *,
+        context: ObservabilityContext,
+    ) -> WebhookDeliveryDispatchResult:
+        started_at = perf_counter()
+        tenant_id = context.tenant_id
+        try:
+            tenant_id = _require_trusted_tenant(context)
+            _require_scope(command.scopes, "webhook_delivery:dispatch")
+            _ensure_webhook_delivery_dependencies(
+                configuration_repository=self._webhook_configuration_repository,
+                delivery_store=self._webhook_delivery_store,
+                delivery_dispatcher=self._webhook_delivery_dispatcher,
+                dlq_store=self._webhook_delivery_dlq_store,
+            )
+            assert self._webhook_configuration_repository is not None
+            assert self._webhook_delivery_store is not None
+            assert self._webhook_delivery_dispatcher is not None
+            assert self._webhook_delivery_dlq_store is not None
+            schedules = self._webhook_delivery_store.list_due_retry_schedules(
+                tenant_id=tenant_id,
+                due_at=self._clock(),
+            )
+            dispatch_results: list[WebhookDeliveryDispatchResult] = []
+            for schedule in schedules:
+                job = self._webhook_delivery_store.get(
+                    tenant_id=tenant_id,
+                    job_id=schedule.job_id,
+                )
+                event = self._webhook_delivery_store.get_event(
+                    tenant_id=tenant_id,
+                    job_id=schedule.job_id,
+                )
+                if job is None or event is None:
+                    self._webhook_delivery_store.consume_retry_schedule(schedule)
+                    continue
+                configuration = self._webhook_configuration_repository.get(
+                    job.webhook_configuration_id,
+                    tenant_id,
+                )
+                if configuration is None or configuration.status != WebhookStatus.ACTIVE.value:
+                    continue
+                retry_job = job.with_status(
+                    status="pending",
+                    attempt_count=schedule.next_attempt_count,
+                    updated_at=self._clock(),
+                )
+                result = self._webhook_delivery_dispatcher.dispatch(
+                    job=retry_job,
+                    event=event,
+                    configuration=configuration,
+                    context=context,
+                    clock=self._clock,
+                    dlq_id_factory=self._webhook_delivery_dlq_id_factory,
+                )
+                self._webhook_delivery_store.consume_retry_schedule(schedule)
+                for dispatched_job in result.jobs:
+                    self._webhook_delivery_store.save(dispatched_job)
+                    self._log_operation(
+                        context=context,
+                        operation=_webhook_delivery_operation_for_job(dispatched_job),
+                        status="accepted",
+                        duration_ms=_duration_ms(started_at),
+                        payload=_webhook_retry_payload(schedule),
+                        extra=dispatched_job.to_log_safe_dict()
+                        | _webhook_delivery_endpoint_extra(configuration),
+                    )
+                for retry_schedule in result.retry_schedules:
+                    self._webhook_delivery_store.save_retry_schedule(retry_schedule)
+                    self._log_operation(
+                        context=context,
+                        operation="webhook_delivery.retry_scheduled",
+                        status="accepted",
+                        duration_ms=_duration_ms(started_at),
+                        payload=_webhook_retry_payload(schedule),
+                        extra=retry_schedule.to_log_safe_dict()
+                        | _webhook_delivery_endpoint_extra(configuration),
+                    )
+                for dlq_record in result.dlq_records:
+                    saved_record = self._webhook_delivery_dlq_store.save(dlq_record)
+                    self._log_operation(
+                        context=context,
+                        operation="webhook_delivery.dlq_recorded",
+                        status="accepted",
+                        duration_ms=_duration_ms(started_at),
+                        payload=_webhook_retry_payload(schedule),
+                        extra=saved_record.to_log_safe_dict()
+                        | _webhook_delivery_endpoint_extra(configuration),
+                    )
+                dispatch_results.append(result)
+            return _merge_webhook_delivery_results(dispatch_results)
+        except Exception as error:
+            self._log_operation(
+                context=context,
+                operation="webhook_delivery.retry_due",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload={"scopes": command.scopes},
+                error_type=type(error).__name__,
+                extra={
+                    "tenant_id_present": _tenant_id_present(tenant_id),
+                    "denial_reason": getattr(error, "code", type(error).__name__),
+                },
+            )
+            raise
+
     def list_integration_configurations(
         self,
         query: ListIntegrationConfigurationsQuery,
@@ -1678,6 +2122,137 @@ def _webhook_allowed_domains_for_tenant(
     allowed_domains_by_tenant: Mapping[str, tuple[str, ...]],
 ) -> tuple[str, ...]:
     return allowed_domains_by_tenant.get(tenant_id, ())
+
+
+def _ensure_webhook_delivery_dependencies(
+    *,
+    configuration_repository: WebhookConfigurationRepository | None,
+    delivery_store: WebhookDeliveryStore | None,
+    delivery_dispatcher: WebhookDeliveryDispatcher | None,
+    dlq_store: WebhookDeliveryDlqStore | None,
+) -> None:
+    missing_dependencies = []
+    if configuration_repository is None:
+        missing_dependencies.append("webhook_configuration_repository")
+    if delivery_store is None:
+        missing_dependencies.append("webhook_delivery_store")
+    if delivery_dispatcher is None:
+        missing_dependencies.append("webhook_delivery_dispatcher")
+    if dlq_store is None:
+        missing_dependencies.append("webhook_delivery_dlq_store")
+    if missing_dependencies:
+        raise IntegrationValidationError(
+            "dependências de entrega de webhook não configuradas",
+            code="webhook_delivery_dependencies_not_configured",
+            field_path=",".join(missing_dependencies),
+        )
+
+
+def _webhook_delivery_idempotency_key(
+    *,
+    event: WebhookNotificationEvent,
+    configuration: WebhookConfiguration,
+) -> str:
+    return f"webhook:{event.event_id}:{configuration.webhook_configuration_id}"
+
+
+def _webhook_delivery_effective_idempotency_key(
+    *,
+    explicit_idempotency_key: str | None,
+    event: WebhookNotificationEvent,
+    configuration: WebhookConfiguration,
+) -> str:
+    if explicit_idempotency_key is None:
+        return _webhook_delivery_idempotency_key(event=event, configuration=configuration)
+    validate_idempotency_key(explicit_idempotency_key)
+    return _webhook_delivery_idempotency_key(event=event, configuration=configuration)
+
+
+def _webhook_delivery_reprocess_idempotency_key(
+    *,
+    idempotency_key: str,
+    dlq_id: str,
+) -> str:
+    validate_idempotency_key(idempotency_key)
+    fingerprint = "|".join(("webhook_delivery.reprocess", idempotency_key, dlq_id))
+    return f"widem_{sha256(fingerprint.encode('utf-8')).hexdigest()}"
+
+
+def _webhook_delivery_job_seed(
+    *,
+    tenant_id: str,
+    event_id: str,
+    webhook_configuration_id: str,
+) -> str:
+    return "|".join((tenant_id, event_id, webhook_configuration_id))
+
+
+def _webhook_delivery_reprocess_job_seed(
+    *,
+    tenant_id: str,
+    dlq_id: str,
+    idempotency_key: str,
+) -> str:
+    return "|".join((tenant_id, dlq_id, idempotency_key))
+
+
+def _webhook_notification_payload(
+    command: DispatchWebhookNotificationCommand,
+) -> dict[str, object]:
+    return {
+        "event_id": command.event_id,
+        "event_type": command.event_type,
+        "proposal_id": command.proposal_id,
+        "decision_status": command.decision_status,
+        "decision_outcome_present": command.decision_outcome is not None,
+        "occurred_at": command.occurred_at.isoformat(),
+        "idempotency_key_present": bool(command.idempotency_key),
+        "unsafe_payload_present": command.unsafe_payload is not None,
+        "scopes": command.scopes,
+    }
+
+
+def _webhook_delivery_endpoint_extra(configuration: WebhookConfiguration) -> dict[str, object]:
+    return {
+        "endpoint_host": configuration.endpoint_host,
+        "webhook_configuration_id": configuration.webhook_configuration_id,
+        "event_types": configuration.events,
+        "retry_strategy": configuration.retry_strategy,
+        "max_attempts": configuration.max_attempts,
+        "contract_version": configuration.contract_version,
+    }
+
+
+def _webhook_delivery_operation_for_job(job: WebhookDeliveryJob) -> str:
+    if job.status == "sent":
+        return "webhook_delivery.sent"
+    if job.status == "dlq_recorded":
+        return "webhook_delivery.failed"
+    if job.status == "retry_scheduled":
+        return "webhook_delivery.failed"
+    return f"webhook_delivery.{job.status}"
+
+
+def _webhook_retry_payload(schedule: Any) -> dict[str, object]:
+    return {
+        "job_id": schedule.job_id,
+        "event_id": schedule.event_id,
+        "webhook_configuration_id": schedule.webhook_configuration_id,
+        "attempt_count": schedule.attempt_count,
+        "next_attempt_count": schedule.next_attempt_count,
+    }
+
+
+def _merge_webhook_delivery_results(
+    results: list[WebhookDeliveryDispatchResult],
+) -> WebhookDeliveryDispatchResult:
+    return WebhookDeliveryDispatchResult(
+        jobs=tuple(job for result in results for job in result.jobs),
+        retry_schedules=tuple(
+            schedule for result in results for schedule in result.retry_schedules
+        ),
+        dlq_records=tuple(record for result in results for record in result.dlq_records),
+    )
 
 
 def _configuration_log_extra(configuration: IntegrationConfiguration) -> dict[str, object]:
@@ -2726,6 +3301,14 @@ def _default_job_id(seed: str) -> str:
 
 def _default_webhook_configuration_id(seed: str) -> str:
     return f"wcfg_{sha256(seed.encode('utf-8')).hexdigest()[:32]}"
+
+
+def _default_webhook_delivery_job_id(seed: str) -> str:
+    return f"wjob_{sha256(seed.encode('utf-8')).hexdigest()[:32]}"
+
+
+def _default_webhook_delivery_dlq_id(seed: str) -> str:
+    return f"wdlq_{sha256(seed.encode('utf-8')).hexdigest()[:32]}"
 
 
 def _duration_ms(started_at: float) -> float:
