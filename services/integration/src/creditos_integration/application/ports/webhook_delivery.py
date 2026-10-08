@@ -154,11 +154,34 @@ class WebhookSigningKeyResolver(Protocol):
 
 
 class WebhookDeliveryStore(Protocol):
-    def reserve_or_get(self, job: WebhookDeliveryJob) -> WebhookDeliveryJob | None: ...
+    def reserve_or_get(
+        self,
+        *,
+        job: WebhookDeliveryJob,
+        event: WebhookNotificationEvent,
+    ) -> WebhookDeliveryJob | None: ...
 
     def save(self, job: WebhookDeliveryJob) -> None: ...
 
     def release(self, job: WebhookDeliveryJob) -> None: ...
+
+    def save_retry_schedule(self, schedule: WebhookDeliveryRetrySchedule) -> None: ...
+
+    def list_due_retry_schedules(
+        self,
+        *,
+        tenant_id: str,
+        due_at: datetime,
+    ) -> tuple[WebhookDeliveryRetrySchedule, ...]: ...
+
+    def consume_retry_schedule(self, schedule: WebhookDeliveryRetrySchedule) -> None: ...
+
+    def get_event(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+    ) -> WebhookNotificationEvent | None: ...
 
     def get(
         self,

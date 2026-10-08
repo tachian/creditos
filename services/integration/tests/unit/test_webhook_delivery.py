@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from hashlib import sha256
+from threading import Event, Thread
 from typing import Any
 
 import pytest
@@ -26,8 +27,10 @@ from creditos_integration.application.service import (
     ConfigureWebhookCommand,
     DispatchWebhookNotificationCommand,
     IntegrationCatalogApplicationService,
+    ProcessWebhookRetriesCommand,
     ReprocessWebhookDlqCommand,
 )
+from creditos_integration.domain.entities import WebhookDeliveryJob, WebhookNotificationEvent
 from creditos_integration.domain.errors import IntegrationValidationError
 from creditos_observability.context import ObservabilityContext
 
@@ -203,7 +206,7 @@ def test_webhook_dlq_reprocess_requires_scope_active_configuration_and_preserves
     assert updated_record.reprocess_count == 1
     assert updated_record.reprocess_job_ids == (result.jobs[0].job_id,)
     assert retry_adapter.requests[0].headers["X-CreditOS-Idempotency-Key"] == (
-        "idem-webhook-reprocess-001"
+        f"widem_{sha256(f'webhook_delivery.reprocess|idem-webhook-reprocess-001|{dlq_id}'.encode()).hexdigest()}"
     )
 
 
@@ -249,7 +252,75 @@ def test_explicit_idempotency_key_is_scoped_per_webhook_configuration() -> None:
         request.headers["X-CreditOS-Idempotency-Key"] for request in adapter.requests
     }
     assert len(delivered_idempotency_keys) == 2
-    assert all(key.startswith("widem_") for key in delivered_idempotency_keys)
+    assert all(key.startswith("webhook:evt_") for key in delivered_idempotency_keys)
+
+
+def test_explicit_idempotency_does_not_duplicate_same_event_and_configuration() -> None:
+    adapter = InMemoryWebhookDeliveryAdapter(
+        [
+            WebhookDeliveryAdapterResult.accepted(status_code=202),
+            WebhookDeliveryAdapterResult.accepted(status_code=202),
+        ]
+    )
+    service = _service(delivery_adapter=adapter)
+    service.configure_webhook(_configure_command(), context=_context())
+
+    first = service.dispatch_webhook_notification(
+        _notification_command(idempotency_key="idem-webhook-dispatch-001"),
+        context=_context(),
+    )
+    second = service.dispatch_webhook_notification(
+        _notification_command(idempotency_key="idem-webhook-dispatch-002"),
+        context=_context(),
+    )
+
+    assert second.jobs == first.jobs
+    assert len(adapter.requests) == 1
+
+
+def test_due_retry_processor_executes_schedules_until_success() -> None:
+    now = _FIXED_TIME
+    adapter = InMemoryWebhookDeliveryAdapter(
+        [
+            WebhookDeliveryAdapterResult.temporary_failure(
+                status_code=503,
+                failure_code="endpoint_unavailable",
+            ),
+            WebhookDeliveryAdapterResult.temporary_failure(
+                status_code=503,
+                failure_code="endpoint_unavailable",
+            ),
+            WebhookDeliveryAdapterResult.accepted(status_code=202),
+        ]
+    )
+    delivery_store = InMemoryWebhookDeliveryStore()
+    service = _service(
+        delivery_store=delivery_store,
+        delivery_adapter=adapter,
+        clock=lambda: now,
+    )
+    service.configure_webhook(_configure_command(), context=_context())
+    initial = service.dispatch_webhook_notification(_notification_command(), context=_context())
+
+    assert initial.jobs[0].status == "retry_scheduled"
+
+    now = datetime(2026, 10, 7, 12, 0, 1, tzinfo=UTC)
+    first_retry = service.process_due_webhook_retries(
+        ProcessWebhookRetriesCommand(scopes=("webhook_delivery:dispatch",)),
+        context=_context(),
+    )
+    now = datetime(2026, 10, 7, 12, 0, 2, tzinfo=UTC)
+    second_retry = service.process_due_webhook_retries(
+        ProcessWebhookRetriesCommand(scopes=("webhook_delivery:dispatch",)),
+        context=_context(),
+    )
+
+    assert first_retry.jobs[0].status == "retry_scheduled"
+    assert second_retry.jobs[0].status == "sent"
+    assert len(adapter.requests) == 3
+    operations = [event["operation"] for event in service.logged_events]
+    assert operations.count("webhook_delivery.retry_scheduled") == 2
+    assert operations.count("webhook_delivery.failed") >= 2
 
 
 def test_webhook_public_payload_rejects_sensitive_identifier_values() -> None:
@@ -322,6 +393,112 @@ def test_webhook_reprocess_marks_dlq_only_after_successful_delivery() -> None:
     assert updated_record is not None
     assert updated_record.reprocess_count == 0
     assert updated_record.reprocess_job_ids == ()
+
+
+def test_webhook_reprocess_idempotency_is_bound_to_each_dlq_record() -> None:
+    failing_adapter = InMemoryWebhookDeliveryAdapter(
+        [
+            WebhookDeliveryAdapterResult.final_failure(
+                status_code=400,
+                failure_code="endpoint_rejected",
+            ),
+            WebhookDeliveryAdapterResult.final_failure(
+                status_code=400,
+                failure_code="endpoint_rejected",
+            ),
+        ]
+    )
+    dlq_store = InMemoryWebhookDeliveryDlqStore()
+    delivery_store = InMemoryWebhookDeliveryStore()
+    repository = InMemoryWebhookConfigurationRepository()
+    dlq_index = 0
+
+    def dlq_id_factory(_seed: str) -> str:
+        nonlocal dlq_index
+        dlq_index += 1
+        return f"wdlq_fixed_{dlq_index}"
+
+    service = _service(
+        repository=repository,
+        delivery_store=delivery_store,
+        dlq_store=dlq_store,
+        delivery_adapter=failing_adapter,
+        dlq_id_factory=dlq_id_factory,
+    )
+    service.configure_webhook(_configure_command(), context=_context())
+    first_failed = service.dispatch_webhook_notification(
+        _notification_command(), context=_context()
+    )
+    second_failed = service.dispatch_webhook_notification(
+        _notification_command(event_id="evt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        context=_context(),
+    )
+    retry_adapter = InMemoryWebhookDeliveryAdapter(
+        [
+            WebhookDeliveryAdapterResult.accepted(status_code=202),
+            WebhookDeliveryAdapterResult.accepted(status_code=202),
+        ]
+    )
+    service = _service(
+        repository=repository,
+        delivery_store=delivery_store,
+        dlq_store=dlq_store,
+        delivery_adapter=retry_adapter,
+        dlq_id_factory=dlq_id_factory,
+    )
+
+    first_reprocess = service.reprocess_webhook_dlq(
+        ReprocessWebhookDlqCommand(
+            dlq_id=first_failed.dlq_records[0].dlq_id,
+            idempotency_key="idem-webhook-reprocess-shared",
+            scopes=("webhook_delivery:reprocess",),
+        ),
+        context=_context(),
+    )
+    second_reprocess = service.reprocess_webhook_dlq(
+        ReprocessWebhookDlqCommand(
+            dlq_id=second_failed.dlq_records[0].dlq_id,
+            idempotency_key="idem-webhook-reprocess-shared",
+            scopes=("webhook_delivery:reprocess",),
+        ),
+        context=_context(),
+    )
+
+    assert first_reprocess.jobs[0].job_id != second_reprocess.jobs[0].job_id
+    assert len(retry_adapter.requests) == 2
+
+
+def test_webhook_delivery_store_waits_for_in_flight_reservation() -> None:
+    store = InMemoryWebhookDeliveryStore()
+    event = _notification_event()
+    job = WebhookDeliveryJob.create(
+        job_id="wjob_concurrent",
+        tenant_id="tenant-bridge-001",
+        webhook_configuration_id="wcfg_fixed",
+        event=event,
+        idempotency_key="webhook:evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:wcfg_fixed",
+        created_at=_FIXED_TIME,
+    )
+    saved_job = job.with_status(status="sent", attempt_count=1, updated_at=_FIXED_TIME)
+    assert store.reserve_or_get(job=job, event=event) is None
+    started = Event()
+    finished = Event()
+    result: list[WebhookDeliveryJob | None] = []
+
+    def reserve_same_job() -> None:
+        started.set()
+        result.append(store.reserve_or_get(job=job, event=event))
+        finished.set()
+
+    thread = Thread(target=reserve_same_job)
+    thread.start()
+    assert started.wait(timeout=1)
+    assert not finished.wait(timeout=0.05)
+    store.save(saved_job)
+    thread.join(timeout=1)
+
+    assert finished.is_set()
+    assert result == [saved_job]
 
 
 def test_failed_dispatch_releases_pending_idempotency_reservation() -> None:
@@ -416,6 +593,8 @@ def _service(
     delivery_dispatcher: WebhookDeliveryDispatcher | None = None,
     configuration_id_factory: Callable[[str], str] | None = None,
     job_id_factory: Callable[[str], str] | None = None,
+    dlq_id_factory: Callable[[str], str] | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> IntegrationCatalogApplicationService:
     from creditos_integration.adapters.persistence import InMemoryIntegrationCatalogRepository
     from creditos_integration.application.ports.adapter_registry import InMemoryAdapterRegistry
@@ -425,7 +604,7 @@ def _service(
         adapter_registry=InMemoryAdapterRegistry({}),
         audit_publisher=audit_publisher or InMemoryAuditEventPublisher(),
         environment="test",
-        clock=lambda: _FIXED_TIME,
+        clock=clock or (lambda: _FIXED_TIME),
         webhook_configuration_repository=repository or InMemoryWebhookConfigurationRepository(),
         webhook_configuration_id_factory=configuration_id_factory or (lambda _seed: "wcfg_fixed"),
         webhook_allowed_domains_by_tenant={"tenant-bridge-001": ("example.com",)},
@@ -441,7 +620,7 @@ def _service(
             ),
         ),
         webhook_delivery_job_id_factory=job_id_factory,
-        webhook_delivery_dlq_id_factory=lambda _seed: "wdlq_fixed",
+        webhook_delivery_dlq_id_factory=dlq_id_factory or (lambda _seed: "wdlq_fixed"),
     )
 
 
@@ -482,6 +661,19 @@ def _notification_command(**overrides: Any) -> DispatchWebhookNotificationComman
     }
     values.update(overrides)
     return DispatchWebhookNotificationCommand(**values)
+
+
+def _notification_event() -> WebhookNotificationEvent:
+    return WebhookNotificationEvent.create(
+        event_id=_EVENT_ID,
+        event_type="decision.completed",
+        proposal_id="proposal-123",
+        decision_status="completed",
+        decision_outcome="approved",
+        occurred_at=_FIXED_TIME,
+        correlation_id="corr-webhook-001",
+        trace_id="33333333333333333333333333333333",
+    )
 
 
 def _context(

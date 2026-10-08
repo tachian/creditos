@@ -194,6 +194,11 @@ class ReprocessWebhookDlqCommand:
     scopes: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class ProcessWebhookRetriesCommand:
+    scopes: tuple[str, ...] = ()
+
+
 class IntegrationCatalogApplicationService:
     def __init__(
         self,
@@ -1554,7 +1559,7 @@ class IntegrationCatalogApplicationService:
                     idempotency_key=idempotency_key,
                     created_at=self._clock(),
                 )
-                existing_job = self._webhook_delivery_store.reserve_or_get(job)
+                existing_job = self._webhook_delivery_store.reserve_or_get(job=job, event=event)
                 if existing_job is not None:
                     dispatch_results.append(WebhookDeliveryDispatchResult(jobs=(existing_job,)))
                     self._log_operation(
@@ -1598,6 +1603,7 @@ class IntegrationCatalogApplicationService:
                         | _webhook_delivery_endpoint_extra(configuration),
                     )
                 for retry_schedule in result.retry_schedules:
+                    self._webhook_delivery_store.save_retry_schedule(retry_schedule)
                     self._log_operation(
                         context=context,
                         operation="webhook_delivery.retry_scheduled",
@@ -1695,10 +1701,13 @@ class IntegrationCatalogApplicationService:
                 tenant_id=tenant_id,
                 webhook_configuration_id=configuration.webhook_configuration_id,
                 event=event,
-                idempotency_key=command.idempotency_key,
+                idempotency_key=_webhook_delivery_reprocess_idempotency_key(
+                    idempotency_key=command.idempotency_key,
+                    dlq_id=record.dlq_id,
+                ),
                 created_at=self._clock(),
             )
-            existing_job = self._webhook_delivery_store.reserve_or_get(job)
+            existing_job = self._webhook_delivery_store.reserve_or_get(job=job, event=event)
             if existing_job is not None:
                 return WebhookDeliveryDispatchResult(jobs=(existing_job,))
             self._log_operation(
@@ -1733,6 +1742,7 @@ class IntegrationCatalogApplicationService:
                     | _webhook_delivery_endpoint_extra(configuration),
                 )
             for retry_schedule in result.retry_schedules:
+                self._webhook_delivery_store.save_retry_schedule(retry_schedule)
                 self._log_operation(
                     context=context,
                     operation="webhook_delivery.retry_scheduled",
@@ -1769,6 +1779,114 @@ class IntegrationCatalogApplicationService:
                 status="rejected",
                 duration_ms=_duration_ms(started_at),
                 payload={"dlq_id": command.dlq_id, "idempotency_key_present": True},
+                error_type=type(error).__name__,
+                extra={
+                    "tenant_id_present": _tenant_id_present(tenant_id),
+                    "denial_reason": getattr(error, "code", type(error).__name__),
+                },
+            )
+            raise
+
+    def process_due_webhook_retries(
+        self,
+        command: ProcessWebhookRetriesCommand,
+        *,
+        context: ObservabilityContext,
+    ) -> WebhookDeliveryDispatchResult:
+        started_at = perf_counter()
+        tenant_id = context.tenant_id
+        try:
+            tenant_id = _require_trusted_tenant(context)
+            _require_scope(command.scopes, "webhook_delivery:dispatch")
+            _ensure_webhook_delivery_dependencies(
+                configuration_repository=self._webhook_configuration_repository,
+                delivery_store=self._webhook_delivery_store,
+                delivery_dispatcher=self._webhook_delivery_dispatcher,
+                dlq_store=self._webhook_delivery_dlq_store,
+            )
+            assert self._webhook_configuration_repository is not None
+            assert self._webhook_delivery_store is not None
+            assert self._webhook_delivery_dispatcher is not None
+            assert self._webhook_delivery_dlq_store is not None
+            schedules = self._webhook_delivery_store.list_due_retry_schedules(
+                tenant_id=tenant_id,
+                due_at=self._clock(),
+            )
+            dispatch_results: list[WebhookDeliveryDispatchResult] = []
+            for schedule in schedules:
+                job = self._webhook_delivery_store.get(
+                    tenant_id=tenant_id,
+                    job_id=schedule.job_id,
+                )
+                event = self._webhook_delivery_store.get_event(
+                    tenant_id=tenant_id,
+                    job_id=schedule.job_id,
+                )
+                if job is None or event is None:
+                    self._webhook_delivery_store.consume_retry_schedule(schedule)
+                    continue
+                configuration = self._webhook_configuration_repository.get(
+                    job.webhook_configuration_id,
+                    tenant_id,
+                )
+                if configuration is None or configuration.status != WebhookStatus.ACTIVE.value:
+                    continue
+                retry_job = job.with_status(
+                    status="pending",
+                    attempt_count=schedule.next_attempt_count,
+                    updated_at=self._clock(),
+                )
+                result = self._webhook_delivery_dispatcher.dispatch(
+                    job=retry_job,
+                    event=event,
+                    configuration=configuration,
+                    context=context,
+                    clock=self._clock,
+                    dlq_id_factory=self._webhook_delivery_dlq_id_factory,
+                )
+                self._webhook_delivery_store.consume_retry_schedule(schedule)
+                for dispatched_job in result.jobs:
+                    self._webhook_delivery_store.save(dispatched_job)
+                    self._log_operation(
+                        context=context,
+                        operation=_webhook_delivery_operation_for_job(dispatched_job),
+                        status="accepted",
+                        duration_ms=_duration_ms(started_at),
+                        payload=_webhook_retry_payload(schedule),
+                        extra=dispatched_job.to_log_safe_dict()
+                        | _webhook_delivery_endpoint_extra(configuration),
+                    )
+                for retry_schedule in result.retry_schedules:
+                    self._webhook_delivery_store.save_retry_schedule(retry_schedule)
+                    self._log_operation(
+                        context=context,
+                        operation="webhook_delivery.retry_scheduled",
+                        status="accepted",
+                        duration_ms=_duration_ms(started_at),
+                        payload=_webhook_retry_payload(schedule),
+                        extra=retry_schedule.to_log_safe_dict()
+                        | _webhook_delivery_endpoint_extra(configuration),
+                    )
+                for dlq_record in result.dlq_records:
+                    saved_record = self._webhook_delivery_dlq_store.save(dlq_record)
+                    self._log_operation(
+                        context=context,
+                        operation="webhook_delivery.dlq_recorded",
+                        status="accepted",
+                        duration_ms=_duration_ms(started_at),
+                        payload=_webhook_retry_payload(schedule),
+                        extra=saved_record.to_log_safe_dict()
+                        | _webhook_delivery_endpoint_extra(configuration),
+                    )
+                dispatch_results.append(result)
+            return _merge_webhook_delivery_results(dispatch_results)
+        except Exception as error:
+            self._log_operation(
+                context=context,
+                operation="webhook_delivery.retry_due",
+                status="rejected",
+                duration_ms=_duration_ms(started_at),
+                payload={"scopes": command.scopes},
                 error_type=type(error).__name__,
                 extra={
                     "tenant_id_present": _tenant_id_present(tenant_id),
@@ -2047,14 +2165,16 @@ def _webhook_delivery_effective_idempotency_key(
     if explicit_idempotency_key is None:
         return _webhook_delivery_idempotency_key(event=event, configuration=configuration)
     validate_idempotency_key(explicit_idempotency_key)
-    fingerprint = "|".join(
-        (
-            "webhook_delivery.dispatch",
-            explicit_idempotency_key,
-            event.event_id,
-            configuration.webhook_configuration_id,
-        )
-    )
+    return _webhook_delivery_idempotency_key(event=event, configuration=configuration)
+
+
+def _webhook_delivery_reprocess_idempotency_key(
+    *,
+    idempotency_key: str,
+    dlq_id: str,
+) -> str:
+    validate_idempotency_key(idempotency_key)
+    fingerprint = "|".join(("webhook_delivery.reprocess", idempotency_key, dlq_id))
     return f"widem_{sha256(fingerprint.encode('utf-8')).hexdigest()}"
 
 
@@ -2109,8 +2229,18 @@ def _webhook_delivery_operation_for_job(job: WebhookDeliveryJob) -> str:
     if job.status == "dlq_recorded":
         return "webhook_delivery.failed"
     if job.status == "retry_scheduled":
-        return "webhook_delivery.retry_scheduled"
+        return "webhook_delivery.failed"
     return f"webhook_delivery.{job.status}"
+
+
+def _webhook_retry_payload(schedule: Any) -> dict[str, object]:
+    return {
+        "job_id": schedule.job_id,
+        "event_id": schedule.event_id,
+        "webhook_configuration_id": schedule.webhook_configuration_id,
+        "attempt_count": schedule.attempt_count,
+        "next_attempt_count": schedule.next_attempt_count,
+    }
 
 
 def _merge_webhook_delivery_results(
