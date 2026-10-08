@@ -11,6 +11,12 @@ from creditos_integration.domain.entities.integration_plan import (
 )
 from creditos_integration.domain.entities.integration_result import IntegrationResult
 from creditos_integration.domain.entities.webhook_configuration import WebhookConfiguration
+from creditos_integration.domain.entities.webhook_delivery import (
+    WebhookDeliveryDlqRecord,
+    WebhookDeliveryJob,
+    WebhookDeliveryRetrySchedule,
+    WebhookNotificationEvent,
+)
 
 __all__ = [
     "IntegrationConfiguration",
@@ -22,4 +28,8 @@ __all__ = [
     "IntegrationPlanItem",
     "IntegrationResult",
     "WebhookConfiguration",
+    "WebhookDeliveryDlqRecord",
+    "WebhookDeliveryJob",
+    "WebhookDeliveryRetrySchedule",
+    "WebhookNotificationEvent",
 ]
