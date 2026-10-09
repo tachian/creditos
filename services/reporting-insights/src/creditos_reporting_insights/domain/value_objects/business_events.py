@@ -80,6 +80,7 @@ _FORBIDDEN_DIMENSION_KEYS = frozenset(
 
 class BusinessEventType(StrEnum):
     PROPOSAL = "proposal"
+    DECISION_QUERY = "decision_query"
     DECISION = "decision"
     INTEGRATION = "integration"
     AI_REVIEW = "ai_review"
@@ -87,6 +88,7 @@ class BusinessEventType(StrEnum):
 
 
 class ProductType(StrEnum):
+    UNKNOWN = "unknown"
     PERSONAL_CREDIT = "personal_credit"
     BNPL = "bnpl"
     BUSINESS_CREDIT = "business_credit"
@@ -126,6 +128,13 @@ class DecisionOutcome(StrEnum):
     INCONCLUSIVE = "inconclusive"
 
 
+class DecisionQueryStatus(StrEnum):
+    SUCCEEDED = "succeeded"
+    NOT_AVAILABLE = "not_available"
+    INVALID_REQUEST = "invalid_request"
+    FAILED = "failed"
+
+
 class IntegrationStatus(StrEnum):
     REQUESTED = "requested"
     SUCCEEDED = "succeeded"
@@ -145,6 +154,8 @@ class CallbackStatus(StrEnum):
     DELIVERED = "delivered"
     FAILED = "failed"
     RETRYING = "retrying"
+    DLQ = "dlq"
+    REPROCESS_REQUESTED = "reprocess_requested"
     SKIPPED = "skipped"
 
 
@@ -162,6 +173,7 @@ class BusinessEvent:
     tenant_isolation_tier: TenantIsolationTier = TenantIsolationTier.BRIDGE
     channel: Channel | None = None
     funnel_status: ProposalFunnelStatus | None = None
+    decision_query_status: DecisionQueryStatus | None = None
     decision_outcome: DecisionOutcome | None = None
     integration_class: str | None = None
     adapter_id: str | None = None
@@ -317,6 +329,39 @@ class BusinessEvent:
         )
 
     @classmethod
+    def decision_query(
+        cls,
+        *,
+        event_id: str,
+        source: str,
+        tenant_id: str,
+        product_type: ProductType,
+        occurred_at: datetime,
+        processed_at: datetime,
+        status: DecisionQueryStatus,
+        channel: Channel | None = None,
+        schema_version: str = INTERNAL_DTO_SCHEMA_VERSION,
+        idempotency_key: str | None = None,
+        latency_ms: int | None = None,
+        error_count: int = 0,
+    ) -> BusinessEvent:
+        return cls(
+            event_id=event_id,
+            source=source,
+            event_type=BusinessEventType.DECISION_QUERY,
+            tenant_id=tenant_id,
+            product_type=product_type,
+            occurred_at=occurred_at,
+            processed_at=processed_at,
+            schema_version=schema_version,
+            channel=channel,
+            decision_query_status=status,
+            idempotency_key=idempotency_key,
+            latency_ms=latency_ms,
+            error_count=error_count,
+        )
+
+    @classmethod
     def integration(
         cls,
         *,
@@ -432,6 +477,12 @@ class BusinessEvent:
     def _validate_required_status(self) -> None:
         if self.funnel_status is not None:
             _validate_enum(self.funnel_status, ProposalFunnelStatus, field_path="funnel_status")
+        if self.decision_query_status is not None:
+            _validate_enum(
+                self.decision_query_status,
+                DecisionQueryStatus,
+                field_path="decision_query_status",
+            )
         if self.decision_outcome is not None:
             _validate_enum(self.decision_outcome, DecisionOutcome, field_path="decision_outcome")
         if self.integration_status is not None:
@@ -446,6 +497,7 @@ class BusinessEvent:
             _validate_enum(self.callback_status, CallbackStatus, field_path="callback_status")
         required_by_type = {
             BusinessEventType.PROPOSAL: self.funnel_status,
+            BusinessEventType.DECISION_QUERY: self.decision_query_status,
             BusinessEventType.DECISION: self.decision_outcome,
             BusinessEventType.INTEGRATION: self.integration_status,
             BusinessEventType.AI_REVIEW: self.review_status,
@@ -538,6 +590,7 @@ def _validate_schema_version(event_type: BusinessEventType, schema_version: str)
     expected = {
         BusinessEventType.PROPOSAL: PROPOSAL_EVENT_SCHEMA_VERSION,
         BusinessEventType.INTEGRATION: INTEGRATION_SCHEMA_VERSION,
+        BusinessEventType.DECISION_QUERY: INTERNAL_DTO_SCHEMA_VERSION,
         BusinessEventType.DECISION: INTERNAL_DTO_SCHEMA_VERSION,
         BusinessEventType.AI_REVIEW: INTERNAL_DTO_SCHEMA_VERSION,
         BusinessEventType.CALLBACK: INTERNAL_DTO_SCHEMA_VERSION,

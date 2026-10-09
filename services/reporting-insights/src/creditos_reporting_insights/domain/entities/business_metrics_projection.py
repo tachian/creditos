@@ -11,6 +11,7 @@ from creditos_reporting_insights.domain.value_objects.business_events import (
     CallbackStatus,
     Channel,
     DecisionOutcome,
+    DecisionQueryStatus,
     ProductType,
     ProposalFunnelStatus,
     ReviewStatus,
@@ -51,6 +52,7 @@ class FreshnessSnapshot:
 class BusinessMetricsSnapshot:
     key: ProjectionKey
     funnel_counts: MappingProxyType[str, int]
+    decision_query_counts: MappingProxyType[str, int]
     decision_counts: MappingProxyType[str, int]
     reason_code_counts: MappingProxyType[str, int]
     integration_counts: MappingProxyType[str, int]
@@ -74,6 +76,7 @@ class BusinessMetricsSnapshot:
 class BusinessMetricsProjection:
     key: ProjectionKey
     funnel_counts: dict[str, int] = field(default_factory=dict)
+    decision_query_counts: dict[str, int] = field(default_factory=dict)
     decision_counts: dict[str, int] = field(default_factory=dict)
     reason_code_counts: dict[str, int] = field(default_factory=dict)
     integration_counts: dict[str, int] = field(default_factory=dict)
@@ -104,6 +107,8 @@ class BusinessMetricsProjection:
 
         if event.event_type is BusinessEventType.PROPOSAL:
             self._increment_funnel(event.funnel_status)
+        elif event.event_type is BusinessEventType.DECISION_QUERY:
+            self._increment_decision_query(event.decision_query_status)
         elif event.event_type is BusinessEventType.DECISION:
             self._increment_funnel(ProposalFunnelStatus.DECIDED)
             self._increment_funnel(event.funnel_status)
@@ -134,6 +139,7 @@ class BusinessMetricsProjection:
         return BusinessMetricsSnapshot(
             key=self.key,
             funnel_counts=MappingProxyType(dict(self.funnel_counts)),
+            decision_query_counts=MappingProxyType(dict(self.decision_query_counts)),
             decision_counts=MappingProxyType(dict(self.decision_counts)),
             reason_code_counts=MappingProxyType(dict(self.reason_code_counts)),
             integration_counts=MappingProxyType(dict(self.integration_counts)),
@@ -174,6 +180,10 @@ class BusinessMetricsProjection:
     def _increment_decision(self, outcome: DecisionOutcome | None) -> None:
         if outcome is not None:
             self._increment(self.decision_counts, outcome.value)
+
+    def _increment_decision_query(self, status: DecisionQueryStatus | None) -> None:
+        if status is not None:
+            self._increment(self.decision_query_counts, status.value)
 
     def _increment_review(self, status: ReviewStatus | None) -> None:
         if status is not None:

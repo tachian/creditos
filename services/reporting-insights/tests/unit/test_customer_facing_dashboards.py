@@ -32,6 +32,7 @@ from creditos_reporting_insights.domain.value_objects.business_events import (
     CallbackStatus,
     Channel,
     DecisionOutcome,
+    DecisionQueryStatus,
     IntegrationStatus,
     ProductType,
     ProposalFunnelStatus,
@@ -79,6 +80,7 @@ def test_builds_customer_dashboard_from_curated_projection_only() -> None:
     assert sections["business_funnel"]["cards"]["received"]["count"] == 1
     assert sections["business_funnel"]["cards"]["decided"]["count"] == 1
     assert sections["decisions"]["cards"]["approved_with_changes"]["count"] == 1
+    assert sections["decision_queries"]["cards"] == {}
     assert sections["reason_codes"]["cards"]["policy_income_band"]["count"] == 1
     assert sections["integrations"]["cards"]["credit_bureau"]["succeeded"] == 1
     assert sections["reviews"]["cards"]["completed"]["count"] == 1
@@ -110,6 +112,42 @@ def test_customer_dashboard_output_passes_epic7_exposure_gate() -> None:
         )
     )
 
+    validate_customer_facing_observability_payload(
+        dashboard.to_dict(),
+        expected_tenant_ref="tenant-alpha",
+        granted_scopes=frozenset({"dashboard:read"}),
+        curated_source="reporting_insights_projection",
+    )
+
+
+def test_customer_dashboard_exposes_curated_decision_query_counts() -> None:
+    repository = projection_repositories.InMemoryBusinessProjectionRepository()
+    reporting_service = _reporting_service(repository)
+    occurred_at = _utc_now() - timedelta(seconds=60)
+    reporting_service.record_event(
+        BusinessEvent.decision_query(
+            event_id="evt-query-alpha",
+            source="creditos://decision",
+            tenant_id="tenant-alpha",
+            product_type=ProductType.BNPL,
+            occurred_at=occurred_at,
+            processed_at=occurred_at + timedelta(seconds=1),
+            channel=Channel.CHECKOUT,
+            status=DecisionQueryStatus.SUCCEEDED,
+            idempotency_key="idem-query-alpha",
+            latency_ms=15,
+        )
+    )
+
+    dashboard = CustomerDashboardService(repository=repository).build_dashboard(
+        context=CustomerDashboardAccessContext(
+            tenant_id="tenant-alpha",
+            scopes=frozenset({"dashboard:read"}),
+        )
+    )
+
+    sections = _sections(dashboard.to_dict())
+    assert sections["decision_queries"]["cards"]["succeeded"]["count"] == 1
     validate_customer_facing_observability_payload(
         dashboard.to_dict(),
         expected_tenant_ref="tenant-alpha",

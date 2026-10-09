@@ -84,6 +84,9 @@ bancos transacionais.
   verdade continua sendo `Audit & Evidence`.
 - Dashboards customer-facing devem consumir projeções curadas do
   `Reporting & Insights`, nunca estes dashboards internos ou telemetria bruta.
+- Consultas públicas de decisão e callbacks entram na visão customer-facing
+  somente como contadores, latência agregada, erros agregados, retry/DLQ e
+  freshness derivados de eventos minimizados.
 - Alertas, SLO watch e regras do Alertmanager são responsabilidade da Story 7.3.
 
 ## Visão customer-facing curada
@@ -95,7 +98,8 @@ real, rede ou credenciais.
 
 Essa visão expõe apenas cards agregados e seguros:
 
-- funil, decisões, reason codes governados, revisão automatizada e callbacks;
+- funil, consultas públicas de decisão, decisões, reason codes governados,
+  revisão automatizada e callbacks;
 - integrações por classe, custo em unidades inteiras, latência agregada, erros e
   freshness;
 - saúde operacional por componente lógico (`api`, `callbacks`, `integrations`)

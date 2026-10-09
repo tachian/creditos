@@ -17,6 +17,7 @@ from creditos_integration.adapters.persistence import (
 from creditos_integration.application.ports.audit_event_publisher import InMemoryAuditEventPublisher
 from creditos_integration.application.ports.webhook_delivery import (
     CLOUDEVENT_WEBHOOK_DELIVERY_MAPPING,
+    WEBHOOK_DELIVERY_EVENT_TYPES,
     InMemoryWebhookDeliveryAdapter,
     StaticWebhookSigningKeyResolver,
     WebhookDeliveryAdapterResult,
@@ -33,10 +34,20 @@ from creditos_integration.application.service import (
 from creditos_integration.domain.entities import WebhookDeliveryJob, WebhookNotificationEvent
 from creditos_integration.domain.errors import IntegrationValidationError
 from creditos_observability.context import ObservabilityContext
+from creditos_observability.gates import validate_observability_exposure_payload
 
 _FIXED_TIME = datetime(2026, 10, 7, 12, 0, tzinfo=UTC)
 _EVENT_ID = "evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 _PUBLIC_CALLBACK_IP = "93.184.216.34"
+
+
+class RecordingTelemetry:
+    def __init__(self) -> None:
+        self.operations: list[dict[str, object]] = []
+
+    def record_operation(self, **kwargs: object) -> dict[str, object]:
+        self.operations.append(dict(kwargs))
+        return {"telemetry_recorded": True}
 
 
 def test_dispatch_webhook_notification_creates_signed_minimized_idempotent_job() -> None:
@@ -395,6 +406,80 @@ def test_webhook_reprocess_marks_dlq_only_after_successful_delivery() -> None:
     assert updated_record.reprocess_job_ids == ()
 
 
+def test_webhook_reprocess_business_events_are_scoped_by_command_idempotency_key() -> None:
+    failing_adapter = InMemoryWebhookDeliveryAdapter(
+        [
+            WebhookDeliveryAdapterResult.final_failure(
+                status_code=400,
+                failure_code="endpoint_rejected",
+            )
+        ]
+    )
+    dlq_store = InMemoryWebhookDeliveryDlqStore()
+    delivery_store = InMemoryWebhookDeliveryStore()
+    repository = InMemoryWebhookConfigurationRepository()
+    service = _service(
+        repository=repository,
+        delivery_store=delivery_store,
+        dlq_store=dlq_store,
+        delivery_adapter=failing_adapter,
+    )
+    service.configure_webhook(_configure_command(), context=_context())
+    failed = service.dispatch_webhook_notification(_notification_command(), context=_context())
+    dlq_id = failed.dlq_records[0].dlq_id
+    retry_adapter = InMemoryWebhookDeliveryAdapter(
+        [
+            WebhookDeliveryAdapterResult.temporary_failure(
+                status_code=503,
+                failure_code="endpoint_unavailable",
+            ),
+            WebhookDeliveryAdapterResult.temporary_failure(
+                status_code=503,
+                failure_code="endpoint_unavailable",
+            ),
+        ]
+    )
+    service = _service(
+        repository=repository,
+        delivery_store=delivery_store,
+        dlq_store=dlq_store,
+        delivery_adapter=retry_adapter,
+    )
+
+    first_reprocess = service.reprocess_webhook_dlq(
+        ReprocessWebhookDlqCommand(
+            dlq_id=dlq_id,
+            idempotency_key="idem-webhook-reprocess-first",
+            scopes=("webhook_delivery:reprocess",),
+        ),
+        context=_context(),
+    )
+    second_reprocess = service.reprocess_webhook_dlq(
+        ReprocessWebhookDlqCommand(
+            dlq_id=dlq_id,
+            idempotency_key="idem-webhook-reprocess-second",
+            scopes=("webhook_delivery:reprocess",),
+        ),
+        context=_context(),
+    )
+
+    assert first_reprocess.jobs[0].job_id != second_reprocess.jobs[0].job_id
+    assert first_reprocess.business_events[0]["operation"] == (
+        "webhook_delivery.reprocess_requested"
+    )
+    assert second_reprocess.business_events[0]["operation"] == (
+        "webhook_delivery.reprocess_requested"
+    )
+    assert (
+        first_reprocess.business_events[0]["event_id"]
+        != (second_reprocess.business_events[0]["event_id"])
+    )
+    assert (
+        first_reprocess.business_events[0]["idempotency_key"]
+        != (second_reprocess.business_events[0]["idempotency_key"])
+    )
+
+
 def test_webhook_reprocess_idempotency_is_bound_to_each_dlq_record() -> None:
     failing_adapter = InMemoryWebhookDeliveryAdapter(
         [
@@ -558,6 +643,7 @@ def test_static_webhook_signing_key_resolver_is_tenant_scoped() -> None:
 
 
 def test_webhook_delivery_cloudevent_mapping_is_explicit() -> None:
+    assert WEBHOOK_DELIVERY_EVENT_TYPES["retry_due"] == "creditos.webhook.delivery.retry_due.v1"
     assert CLOUDEVENT_WEBHOOK_DELIVERY_MAPPING["specversion"] == "1.0"
     assert CLOUDEVENT_WEBHOOK_DELIVERY_MAPPING["source"] == (
         "creditos.integration.webhook-delivery"
@@ -566,6 +652,97 @@ def test_webhook_delivery_cloudevent_mapping_is_explicit() -> None:
     assert "type" in CLOUDEVENT_WEBHOOK_DELIVERY_MAPPING
     assert "subject" in CLOUDEVENT_WEBHOOK_DELIVERY_MAPPING
     assert "data" in CLOUDEVENT_WEBHOOK_DELIVERY_MAPPING
+
+
+def test_webhook_delivery_emits_safe_normalized_observability_and_business_signals() -> None:
+    telemetry = RecordingTelemetry()
+    now = _FIXED_TIME
+    adapter = InMemoryWebhookDeliveryAdapter(
+        [
+            WebhookDeliveryAdapterResult.temporary_failure(
+                status_code=503,
+                failure_code="endpoint_unavailable",
+            ),
+            WebhookDeliveryAdapterResult.final_failure(
+                status_code=400,
+                failure_code="endpoint_rejected",
+            ),
+        ]
+    )
+    service = _service(delivery_adapter=adapter, telemetry=telemetry, clock=lambda: now)
+    service.configure_webhook(_configure_command(), context=_context())
+
+    initial = service.dispatch_webhook_notification(_notification_command(), context=_context())
+    now = datetime(2026, 10, 7, 12, 0, 1, tzinfo=UTC)
+    retry = service.process_due_webhook_retries(
+        ProcessWebhookRetriesCommand(scopes=("webhook_delivery:dispatch",)),
+        context=_context(),
+    )
+
+    operations = [operation["operation"] for operation in telemetry.operations]
+    assert "webhook_delivery.created" in operations
+    assert "webhook_delivery.retry_scheduled" in operations
+    assert "webhook_delivery.failed" in operations
+    assert "webhook_delivery.dlq_recorded" in operations
+    assert {operation["operation_type"] for operation in telemetry.operations} == {"job"}
+    assert "endpoint_unavailable" in str(telemetry.operations)
+    assert "endpoint_rejected" in str(telemetry.operations)
+    assert "proposal-123" not in str(telemetry.operations)
+    assert "callbacks.example.com/creditos/status" not in str(telemetry.operations)
+    assert "signing-secret" not in str(telemetry.operations)
+    failure_operations = [
+        operation
+        for operation in telemetry.operations
+        if operation["operation"] == "webhook_delivery.failed"
+    ]
+    failure_operation_attributes = [operation.get("attributes") for operation in failure_operations]
+    assert {"failure_code": "endpoint_unavailable"} in failure_operation_attributes
+    assert {"failure_code": "endpoint_rejected"} in failure_operation_attributes
+
+    initial_failed_event = next(
+        event
+        for event in initial.business_events
+        if event["operation"] == "webhook_delivery.failed"
+    )
+    initial_retry_event = next(
+        event
+        for event in initial.business_events
+        if event["operation"] == "webhook_delivery.retry_scheduled"
+    )
+    retry_failed_event = next(
+        event for event in retry.business_events if event["operation"] == "webhook_delivery.failed"
+    )
+    retry_dlq_event = next(
+        event
+        for event in retry.business_events
+        if event["operation"] == "webhook_delivery.dlq_recorded"
+    )
+
+    assert initial_failed_event["error_count"] == 1
+    assert "latency_ms" in initial_failed_event
+    assert initial_retry_event["callback_status"] == "retrying"
+    assert initial_retry_event["error_count"] == 0
+    assert "latency_ms" not in initial_retry_event
+    assert initial_retry_event["failure_code"] == "endpoint_unavailable"
+    assert all(event["callback_status"] != "skipped" for event in initial.business_events)
+    assert retry_failed_event["error_count"] == 1
+    assert "latency_ms" in retry_failed_event
+    assert retry_dlq_event["callback_status"] == "dlq"
+    assert retry_dlq_event["error_count"] == 0
+    assert "latency_ms" not in retry_dlq_event
+    assert retry_dlq_event["failure_code"] == "endpoint_rejected"
+    assert retry_dlq_event["product_type"] == "unknown"
+    assert retry_dlq_event["channel"] == "api"
+    assert "proposal_id" not in retry_dlq_event
+    assert "endpoint_url" not in retry_dlq_event
+    assert "event_ref" not in retry_dlq_event
+    validate_observability_exposure_payload(
+        {
+            "logs": service.logged_events,
+            "business_events": (*initial.business_events, *retry.business_events),
+        },
+        exposure="technical_internal",
+    )
 
 
 class _RaisingWebhookDeliveryDispatcher:
@@ -591,6 +768,7 @@ def _service(
     dlq_store: InMemoryWebhookDeliveryDlqStore | None = None,
     delivery_adapter: InMemoryWebhookDeliveryAdapter | None = None,
     delivery_dispatcher: WebhookDeliveryDispatcher | None = None,
+    telemetry: RecordingTelemetry | None = None,
     configuration_id_factory: Callable[[str], str] | None = None,
     job_id_factory: Callable[[str], str] | None = None,
     dlq_id_factory: Callable[[str], str] | None = None,
@@ -621,6 +799,7 @@ def _service(
         ),
         webhook_delivery_job_id_factory=job_id_factory,
         webhook_delivery_dlq_id_factory=dlq_id_factory or (lambda _seed: "wdlq_fixed"),
+        telemetry=telemetry,
     )
 
 

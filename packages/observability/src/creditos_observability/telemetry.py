@@ -38,6 +38,7 @@ _METRIC_ATTRIBUTE_ALLOWLIST = {
     "cost_units_present",
     "destination",
     "fallback_action",
+    "failure_code",
     "operation",
     "operation_type",
     "output_validation_status",
@@ -65,6 +66,7 @@ _OPERATION_METRIC_ATTRIBUTES = (
     "contract",
     "contract_version",
     "destination",
+    "failure_code",
     "operation",
     "operation_type",
     "product_type",
@@ -116,10 +118,11 @@ _DERIVED_OPERATION_ATTRIBUTE_KEYS = frozenset(
         "contract_version",
     }
 )
-_OPTIONAL_OPERATION_ATTRIBUTE_KEYS = frozenset({"channel", "product_type"})
+_OPTIONAL_OPERATION_ATTRIBUTE_KEYS = frozenset({"channel", "failure_code", "product_type"})
 _SAFE_OPERATION_LOG_EXTRA_KEYS = frozenset(
     {
         "attempts",
+        "failure_code",
         "integration_class",
         "provider_ref",
         "retry_count",
