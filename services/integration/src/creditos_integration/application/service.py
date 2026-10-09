@@ -9,7 +9,7 @@ from hashlib import sha256
 from json import dumps
 from time import perf_counter
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Protocol
 
 from creditos_observability.context import ObservabilityContext
 from creditos_observability.logging import build_structured_log
@@ -51,6 +51,7 @@ from creditos_integration.domain.entities import (
     IntegrationPlanItem,
     IntegrationResult,
     WebhookConfiguration,
+    WebhookDeliveryDlqRecord,
     WebhookDeliveryJob,
     WebhookNotificationEvent,
 )
@@ -84,6 +85,11 @@ SERVICE_NAME = "integration"
 SERVICE_VERSION = "0.1.0"
 CONTRACT = "integration-catalog-application"
 CONTRACT_VERSION = "v1"
+WEBHOOK_BUSINESS_SCHEMA_VERSION = "internal-v1"
+
+
+class IntegrationOperationTelemetry(Protocol):
+    def record_operation(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +231,7 @@ class IntegrationCatalogApplicationService:
         webhook_delivery_dispatcher: WebhookDeliveryDispatcher | None = None,
         webhook_delivery_job_id_factory: Callable[[str], str] | None = None,
         webhook_delivery_dlq_id_factory: Callable[[str], str] | None = None,
+        telemetry: IntegrationOperationTelemetry | None = None,
     ) -> None:
         self._repository = repository
         self._adapter_registry = adapter_registry
@@ -259,6 +266,7 @@ class IntegrationCatalogApplicationService:
         self._webhook_delivery_dlq_id_factory = (
             webhook_delivery_dlq_id_factory or _default_webhook_delivery_dlq_id
         )
+        self._telemetry = telemetry
         self._webhook_idempotency_records: dict[str, _WebhookIdempotencyRecord] = {}
         self._logged_events: list[dict[str, Any]] = []
 
@@ -1540,6 +1548,7 @@ class IntegrationCatalogApplicationService:
             )
             dispatch_results: list[WebhookDeliveryDispatchResult] = []
             for configuration in configurations:
+                business_events: list[dict[str, Any]] = []
                 idempotency_key = _webhook_delivery_effective_idempotency_key(
                     explicit_idempotency_key=command.idempotency_key,
                     event=event,
@@ -1561,7 +1570,6 @@ class IntegrationCatalogApplicationService:
                 )
                 existing_job = self._webhook_delivery_store.reserve_or_get(job=job, event=event)
                 if existing_job is not None:
-                    dispatch_results.append(WebhookDeliveryDispatchResult(jobs=(existing_job,)))
                     self._log_operation(
                         context=context,
                         operation="webhook_delivery.created",
@@ -1569,6 +1577,12 @@ class IntegrationCatalogApplicationService:
                         duration_ms=_duration_ms(started_at),
                         payload=_webhook_notification_payload(command),
                         extra=existing_job.to_log_safe_dict() | {"idempotency_replay": True},
+                    )
+                    dispatch_results.append(
+                        WebhookDeliveryDispatchResult(
+                            jobs=(existing_job,),
+                            business_events=tuple(business_events),
+                        )
                     )
                     continue
                 self._log_operation(
@@ -1602,6 +1616,17 @@ class IntegrationCatalogApplicationService:
                         extra=dispatched_job.to_log_safe_dict()
                         | _webhook_delivery_endpoint_extra(configuration),
                     )
+                    business_events.append(
+                        _webhook_delivery_business_event_for_job(
+                            operation=_webhook_delivery_operation_for_job(dispatched_job),
+                            job=dispatched_job,
+                            callback_status=_callback_status_for_webhook_job(dispatched_job),
+                            context=context,
+                            duration_ms=_duration_ms(started_at),
+                            occurred_at=self._clock(),
+                            error_count=_webhook_job_error_count(dispatched_job),
+                        )
+                    )
                 for retry_schedule in result.retry_schedules:
                     self._webhook_delivery_store.save_retry_schedule(retry_schedule)
                     self._log_operation(
@@ -1612,6 +1637,15 @@ class IntegrationCatalogApplicationService:
                         payload=_webhook_notification_payload(command),
                         extra=retry_schedule.to_log_safe_dict()
                         | _webhook_delivery_endpoint_extra(configuration),
+                    )
+                    business_events.append(
+                        _webhook_delivery_business_event_for_retry(
+                            operation="webhook_delivery.retry_scheduled",
+                            schedule=retry_schedule,
+                            context=context,
+                            duration_ms=_duration_ms(started_at),
+                            occurred_at=self._clock(),
+                        )
                     )
                 for dlq_record in result.dlq_records:
                     saved_record = self._webhook_delivery_dlq_store.save(dlq_record)
@@ -1624,7 +1658,23 @@ class IntegrationCatalogApplicationService:
                         extra=saved_record.to_log_safe_dict()
                         | _webhook_delivery_endpoint_extra(configuration),
                     )
-                dispatch_results.append(result)
+                    business_events.append(
+                        _webhook_delivery_business_event_for_dlq(
+                            operation="webhook_delivery.dlq_recorded",
+                            record=saved_record,
+                            context=context,
+                            duration_ms=_duration_ms(started_at),
+                            occurred_at=self._clock(),
+                        )
+                    )
+                dispatch_results.append(
+                    WebhookDeliveryDispatchResult(
+                        jobs=result.jobs,
+                        retry_schedules=result.retry_schedules,
+                        dlq_records=result.dlq_records,
+                        business_events=tuple(business_events),
+                    )
+                )
             return _merge_webhook_delivery_results(dispatch_results)
         except Exception as error:
             self._log_operation(
@@ -1709,7 +1759,31 @@ class IntegrationCatalogApplicationService:
             )
             existing_job = self._webhook_delivery_store.reserve_or_get(job=job, event=event)
             if existing_job is not None:
-                return WebhookDeliveryDispatchResult(jobs=(existing_job,))
+                return WebhookDeliveryDispatchResult(
+                    jobs=(existing_job,),
+                    business_events=(
+                        _webhook_delivery_business_event_for_job(
+                            operation="webhook_delivery.reprocess_requested",
+                            job=existing_job,
+                            callback_status="reprocess_requested",
+                            context=context,
+                            duration_ms=_duration_ms(started_at),
+                            occurred_at=self._clock(),
+                            error_count=0,
+                        ),
+                    ),
+                )
+            business_events: list[dict[str, Any]] = [
+                _webhook_delivery_business_event_for_dlq(
+                    operation="webhook_delivery.reprocess_requested",
+                    record=record,
+                    context=context,
+                    duration_ms=_duration_ms(started_at),
+                    occurred_at=self._clock(),
+                    callback_status="reprocess_requested",
+                    error_count=0,
+                )
+            ]
             self._log_operation(
                 context=context,
                 operation="webhook_delivery.reprocess_requested",
@@ -1741,6 +1815,17 @@ class IntegrationCatalogApplicationService:
                     extra=dispatched_job.to_log_safe_dict()
                     | _webhook_delivery_endpoint_extra(configuration),
                 )
+                business_events.append(
+                    _webhook_delivery_business_event_for_job(
+                        operation=_webhook_delivery_operation_for_job(dispatched_job),
+                        job=dispatched_job,
+                        callback_status=_callback_status_for_webhook_job(dispatched_job),
+                        context=context,
+                        duration_ms=_duration_ms(started_at),
+                        occurred_at=self._clock(),
+                        error_count=_webhook_job_error_count(dispatched_job),
+                    )
+                )
             for retry_schedule in result.retry_schedules:
                 self._webhook_delivery_store.save_retry_schedule(retry_schedule)
                 self._log_operation(
@@ -1751,6 +1836,15 @@ class IntegrationCatalogApplicationService:
                     payload={"dlq_id": command.dlq_id, "idempotency_key_present": True},
                     extra=retry_schedule.to_log_safe_dict()
                     | _webhook_delivery_endpoint_extra(configuration),
+                )
+                business_events.append(
+                    _webhook_delivery_business_event_for_retry(
+                        operation="webhook_delivery.retry_scheduled",
+                        schedule=retry_schedule,
+                        context=context,
+                        duration_ms=_duration_ms(started_at),
+                        occurred_at=self._clock(),
+                    )
                 )
             for dlq_record in result.dlq_records:
                 self._webhook_delivery_dlq_store.save(dlq_record)
@@ -1763,6 +1857,15 @@ class IntegrationCatalogApplicationService:
                     extra=dlq_record.to_log_safe_dict()
                     | _webhook_delivery_endpoint_extra(configuration),
                 )
+                business_events.append(
+                    _webhook_delivery_business_event_for_dlq(
+                        operation="webhook_delivery.dlq_recorded",
+                        record=dlq_record,
+                        context=context,
+                        duration_ms=_duration_ms(started_at),
+                        occurred_at=self._clock(),
+                    )
+                )
             sent_jobs = tuple(job for job in result.jobs if job.status == "sent")
             if sent_jobs:
                 self._webhook_delivery_dlq_store.mark_reprocessed(
@@ -1771,7 +1874,12 @@ class IntegrationCatalogApplicationService:
                     reprocess_job_id=sent_jobs[0].job_id,
                     reprocessed_at=self._clock(),
                 )
-            return result
+            return WebhookDeliveryDispatchResult(
+                jobs=result.jobs,
+                retry_schedules=result.retry_schedules,
+                dlq_records=result.dlq_records,
+                business_events=tuple(business_events),
+            )
         except Exception as error:
             self._log_operation(
                 context=context,
@@ -1814,6 +1922,23 @@ class IntegrationCatalogApplicationService:
             )
             dispatch_results: list[WebhookDeliveryDispatchResult] = []
             for schedule in schedules:
+                business_events: list[dict[str, Any]] = [
+                    _webhook_delivery_business_event_for_retry(
+                        operation="webhook_delivery.retry_due",
+                        schedule=schedule,
+                        context=context,
+                        duration_ms=_duration_ms(started_at),
+                        occurred_at=self._clock(),
+                    )
+                ]
+                self._log_operation(
+                    context=context,
+                    operation="webhook_delivery.retry_due",
+                    status="accepted",
+                    duration_ms=_duration_ms(started_at),
+                    payload=_webhook_retry_payload(schedule),
+                    extra=schedule.to_log_safe_dict(),
+                )
                 job = self._webhook_delivery_store.get(
                     tenant_id=tenant_id,
                     job_id=schedule.job_id,
@@ -1856,6 +1981,17 @@ class IntegrationCatalogApplicationService:
                         extra=dispatched_job.to_log_safe_dict()
                         | _webhook_delivery_endpoint_extra(configuration),
                     )
+                    business_events.append(
+                        _webhook_delivery_business_event_for_job(
+                            operation=_webhook_delivery_operation_for_job(dispatched_job),
+                            job=dispatched_job,
+                            callback_status=_callback_status_for_webhook_job(dispatched_job),
+                            context=context,
+                            duration_ms=_duration_ms(started_at),
+                            occurred_at=self._clock(),
+                            error_count=_webhook_job_error_count(dispatched_job),
+                        )
+                    )
                 for retry_schedule in result.retry_schedules:
                     self._webhook_delivery_store.save_retry_schedule(retry_schedule)
                     self._log_operation(
@@ -1866,6 +2002,15 @@ class IntegrationCatalogApplicationService:
                         payload=_webhook_retry_payload(schedule),
                         extra=retry_schedule.to_log_safe_dict()
                         | _webhook_delivery_endpoint_extra(configuration),
+                    )
+                    business_events.append(
+                        _webhook_delivery_business_event_for_retry(
+                            operation="webhook_delivery.retry_scheduled",
+                            schedule=retry_schedule,
+                            context=context,
+                            duration_ms=_duration_ms(started_at),
+                            occurred_at=self._clock(),
+                        )
                     )
                 for dlq_record in result.dlq_records:
                     saved_record = self._webhook_delivery_dlq_store.save(dlq_record)
@@ -1878,7 +2023,23 @@ class IntegrationCatalogApplicationService:
                         extra=saved_record.to_log_safe_dict()
                         | _webhook_delivery_endpoint_extra(configuration),
                     )
-                dispatch_results.append(result)
+                    business_events.append(
+                        _webhook_delivery_business_event_for_dlq(
+                            operation="webhook_delivery.dlq_recorded",
+                            record=saved_record,
+                            context=context,
+                            duration_ms=_duration_ms(started_at),
+                            occurred_at=self._clock(),
+                        )
+                    )
+                dispatch_results.append(
+                    WebhookDeliveryDispatchResult(
+                        jobs=result.jobs,
+                        retry_schedules=result.retry_schedules,
+                        dlq_records=result.dlq_records,
+                        business_events=tuple(business_events),
+                    )
+                )
             return _merge_webhook_delivery_results(dispatch_results)
         except Exception as error:
             self._log_operation(
@@ -1965,25 +2126,56 @@ class IntegrationCatalogApplicationService:
             else:
                 safe_context = replace(context, tenant_id=None, tenant_isolation_tier=None)
 
-        self._logged_events.append(
-            build_structured_log(
-                context=safe_context,
-                service_name=SERVICE_NAME,
-                service_version=SERVICE_VERSION,
-                environment=self._environment,
-                operation=operation,
-                source="integration-catalog-command",
-                destination=SERVICE_NAME,
-                contract=CONTRACT,
-                contract_version=CONTRACT_VERSION,
-                status=status,
-                technical_result=f"{operation}.{status}",
-                duration_ms=duration_ms,
-                payload=payload,
-                extra=extra,
-                error_type=error_type,
-            )
+        event = build_structured_log(
+            context=safe_context,
+            service_name=SERVICE_NAME,
+            service_version=SERVICE_VERSION,
+            environment=self._environment,
+            operation=operation,
+            source="integration-catalog-command",
+            destination=SERVICE_NAME,
+            contract=CONTRACT,
+            contract_version=CONTRACT_VERSION,
+            status=status,
+            technical_result=f"{operation}.{status}",
+            duration_ms=duration_ms,
+            payload=payload,
+            extra=extra,
+            error_type=error_type,
         )
+        self._logged_events.append(event)
+        self._record_webhook_delivery_telemetry(
+            context=safe_context,
+            operation=operation,
+            status=status,
+            duration_ms=duration_ms,
+            extra=extra,
+        )
+
+    def _record_webhook_delivery_telemetry(
+        self,
+        *,
+        context: ObservabilityContext,
+        operation: str,
+        status: str,
+        duration_ms: float,
+        extra: dict[str, Any],
+    ) -> None:
+        if self._telemetry is None or not operation.startswith("webhook_delivery."):
+            return
+        with suppress(Exception):
+            self._telemetry.record_operation(
+                context=context,
+                operation_type="job",
+                operation=operation,
+                status=status,
+                duration_ms=duration_ms,
+                source="integration",
+                destination="webhook_delivery",
+                contract="integration-webhook-delivery",
+                contract_version=CONTRACT_VERSION,
+                extra=_webhook_delivery_telemetry_extra(extra),
+            )
 
 
 def _webhook_audit_event(
@@ -2223,6 +2415,21 @@ def _webhook_delivery_endpoint_extra(configuration: WebhookConfiguration) -> dic
     }
 
 
+def _webhook_delivery_telemetry_extra(extra: dict[str, Any]) -> dict[str, object]:
+    safe_extra: dict[str, object] = {
+        "technical_result": "webhook_delivery_signal_recorded",
+    }
+    attempt_count = extra.get("attempt_count") or extra.get("next_attempt_count")
+    if isinstance(attempt_count, int):
+        safe_extra["attempts"] = attempt_count
+    if extra.get("retry_delay_ms") is not None:
+        safe_extra["retry_count"] = 1
+    failure_code = extra.get("failure_code")
+    if isinstance(failure_code, str):
+        safe_extra["failure_code"] = failure_code
+    return safe_extra
+
+
 def _webhook_delivery_operation_for_job(job: WebhookDeliveryJob) -> str:
     if job.status == "sent":
         return "webhook_delivery.sent"
@@ -2231,6 +2438,172 @@ def _webhook_delivery_operation_for_job(job: WebhookDeliveryJob) -> str:
     if job.status == "retry_scheduled":
         return "webhook_delivery.failed"
     return f"webhook_delivery.{job.status}"
+
+
+def _callback_status_for_webhook_job(job: WebhookDeliveryJob) -> str:
+    if job.status == "sent":
+        return "delivered"
+    if job.status == "retry_scheduled":
+        return "failed"
+    if job.status == "dlq_recorded":
+        return "failed"
+    return "skipped"
+
+
+def _webhook_job_error_count(job: WebhookDeliveryJob) -> int:
+    return (
+        0 if job.status == "sent" else 1 if job.status in {"retry_scheduled", "dlq_recorded"} else 0
+    )
+
+
+def _webhook_delivery_business_event_for_job(
+    *,
+    operation: str,
+    job: WebhookDeliveryJob,
+    callback_status: str,
+    context: ObservabilityContext,
+    duration_ms: float,
+    occurred_at: datetime,
+    error_count: int,
+) -> dict[str, Any]:
+    return _webhook_delivery_business_event(
+        operation=operation,
+        tenant_id=job.tenant_id,
+        tenant_isolation_tier=_webhook_signal_tenant_isolation_tier(
+            context=context,
+            tenant_id=job.tenant_id,
+        ),
+        callback_status=callback_status,
+        status=job.status,
+        event_ref=job.event_id,
+        idempotency_seed=job.idempotency_key,
+        attempt_count=job.attempt_count,
+        duration_ms=duration_ms,
+        occurred_at=occurred_at,
+        error_count=error_count,
+    )
+
+
+def _webhook_delivery_business_event_for_retry(
+    *,
+    operation: str,
+    schedule: Any,
+    context: ObservabilityContext,
+    duration_ms: float,
+    occurred_at: datetime,
+) -> dict[str, Any]:
+    return _webhook_delivery_business_event(
+        operation=operation,
+        tenant_id=schedule.tenant_id,
+        tenant_isolation_tier=_webhook_signal_tenant_isolation_tier(
+            context=context,
+            tenant_id=schedule.tenant_id,
+        ),
+        callback_status="retrying",
+        status="retry_scheduled",
+        event_ref=schedule.event_id,
+        idempotency_seed=f"{schedule.job_id}:{schedule.next_attempt_count}",
+        attempt_count=schedule.next_attempt_count,
+        duration_ms=duration_ms,
+        occurred_at=occurred_at,
+        error_count=1,
+        failure_code=schedule.failure_code,
+    )
+
+
+def _webhook_delivery_business_event_for_dlq(
+    *,
+    operation: str,
+    record: WebhookDeliveryDlqRecord,
+    context: ObservabilityContext,
+    duration_ms: float,
+    occurred_at: datetime,
+    callback_status: str = "dlq",
+    error_count: int = 1,
+) -> dict[str, Any]:
+    return _webhook_delivery_business_event(
+        operation=operation,
+        tenant_id=record.tenant_id,
+        tenant_isolation_tier=_webhook_signal_tenant_isolation_tier(
+            context=context,
+            tenant_id=record.tenant_id,
+        ),
+        callback_status=callback_status,
+        status="dlq_recorded",
+        event_ref=record.event_id,
+        idempotency_seed=record.idempotency_key,
+        attempt_count=record.attempt_count,
+        duration_ms=duration_ms,
+        occurred_at=occurred_at,
+        error_count=error_count,
+        failure_code=record.failure_code,
+    )
+
+
+def _webhook_delivery_business_event(
+    *,
+    operation: str,
+    tenant_id: str,
+    tenant_isolation_tier: str,
+    callback_status: str,
+    status: str,
+    event_ref: str,
+    idempotency_seed: str,
+    attempt_count: int,
+    duration_ms: float,
+    occurred_at: datetime,
+    error_count: int,
+    failure_code: str | None = None,
+) -> dict[str, Any]:
+    event_hash = sha256(
+        "|".join(
+            (
+                tenant_id,
+                operation,
+                callback_status,
+                status,
+                event_ref,
+                idempotency_seed,
+                str(attempt_count),
+            )
+        ).encode("utf-8")
+    ).hexdigest()
+    event: dict[str, Any] = {
+        "event_id": f"evt_callback_{event_hash[:24]}",
+        "source": "creditos://callback-dispatcher",
+        "event_type": "callback",
+        "tenant_id": tenant_id,
+        "tenant_isolation_tier": tenant_isolation_tier,
+        "product_type": "unknown",
+        "channel": "api",
+        "callback_status": callback_status,
+        "status": status,
+        "operation": operation,
+        "schema_version": WEBHOOK_BUSINESS_SCHEMA_VERSION,
+        "idempotency_key": f"idem_callback_{event_hash[:24]}",
+        "attempt_count": attempt_count,
+        "occurred_at": occurred_at.astimezone(UTC).isoformat(),
+        "processed_at": occurred_at.astimezone(UTC).isoformat(),
+        "latency_ms": int(round(duration_ms)),
+        "error_count": error_count,
+    }
+    if failure_code is not None:
+        event["failure_code"] = failure_code
+    return event
+
+
+def _webhook_signal_tenant_isolation_tier(
+    *,
+    context: ObservabilityContext,
+    tenant_id: str,
+) -> str:
+    if context.tenant_id is not None and context.tenant_id != tenant_id:
+        raise IntegrationValidationError(
+            "tenant do sinal de webhook diverge do contexto",
+            code="webhook_delivery_tenant_context_mismatch",
+            field_path="tenant_id",
+        )
+    return context.tenant_isolation_tier or "bridge"
 
 
 def _webhook_retry_payload(schedule: Any) -> dict[str, object]:
@@ -2252,6 +2625,7 @@ def _merge_webhook_delivery_results(
             schedule for result in results for schedule in result.retry_schedules
         ),
         dlq_records=tuple(record for result in results for record in result.dlq_records),
+        business_events=tuple(event for result in results for event in result.business_events),
     )
 
 

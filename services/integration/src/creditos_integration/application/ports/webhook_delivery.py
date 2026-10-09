@@ -26,6 +26,7 @@ WEBHOOK_DELIVERY_EVENT_TYPES = MappingProxyType(
         "sent": "creditos.webhook.delivery.sent.v1",
         "failed": "creditos.webhook.delivery.failed.v1",
         "retry_scheduled": "creditos.webhook.delivery.retry_scheduled.v1",
+        "retry_due": "creditos.webhook.delivery.retry_due.v1",
         "dlq_recorded": "creditos.webhook.delivery.dlq_recorded.v1",
         "reprocess_requested": "creditos.webhook.delivery.reprocess_requested.v1",
     }
@@ -143,6 +144,7 @@ class WebhookDeliveryDispatchResult:
     jobs: tuple[WebhookDeliveryJob, ...]
     retry_schedules: tuple[WebhookDeliveryRetrySchedule, ...] = ()
     dlq_records: tuple[WebhookDeliveryDlqRecord, ...] = ()
+    business_events: tuple[dict[str, Any], ...] = ()
 
 
 class WebhookDeliveryAdapter(Protocol):

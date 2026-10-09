@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 from time import perf_counter
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 from creditos_observability.context import ObservabilityContext
@@ -78,6 +80,11 @@ SERVICE_VERSION = "0.1.0"
 CONTRACT = "decision-credit-policy-application"
 CONTRACT_VERSION = "v1"
 PUBLIC_DECISION_CONTRACT_VERSION = "v1"
+PUBLIC_DECISION_BUSINESS_SCHEMA_VERSION = "internal-v1"
+
+
+class DecisionOperationTelemetry(Protocol):
+    def record_operation(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,6 +274,7 @@ class PublicCreditDecisionQueryApplicationResult:
     decision: PublicCreditDecisionResponse | None
     error: PublicCreditDecisionErrorResponse | None
     logs: tuple[dict[str, Any], ...]
+    business_events: tuple[dict[str, Any], ...] = ()
 
 
 class _PublicCreditDecisionInvalidRequestError(DecisionDomainError):
@@ -329,6 +337,7 @@ class DecisionApplicationService:
         policy_simulation_repository: PolicySimulationRepository | None = None,
         credit_decision_repository: CreditDecisionRepository | None = None,
         public_proposal_status_repository: PublicProposalStatusRepository | None = None,
+        telemetry: DecisionOperationTelemetry | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._repository = repository
@@ -337,6 +346,7 @@ class DecisionApplicationService:
         self._credit_decision_repository = credit_decision_repository
         self._public_proposal_status_repository = public_proposal_status_repository
         self._audit_publisher = audit_publisher
+        self._telemetry = telemetry
         self._environment = environment
         self._clock = clock or (lambda: datetime.now(UTC))
         self._logged_events: list[dict[str, Any]] = []
@@ -1189,10 +1199,26 @@ class DecisionApplicationService:
                 payload=command,
                 extra=_public_credit_decision_log_extra(public_decision),
             )
+            self._record_public_query_telemetry(
+                context=context,
+                status="accepted",
+                duration_ms=duration_ms,
+                public_decision=public_decision,
+            )
+            business_event = _public_credit_decision_query_business_event(
+                tenant_id=operation_context.tenant_id,
+                tenant_isolation_tier=operation_context.tenant_isolation_tier,
+                public_decision=public_decision,
+                query_status="succeeded",
+                signal_ref=context.request_id,
+                duration_ms=duration_ms,
+                occurred_at=self._clock(),
+            )
             return PublicCreditDecisionQueryApplicationResult(
                 decision=public_decision,
                 error=None,
                 logs=(public_log,),
+                business_events=(business_event,),
             )
         except DecisionDomainError as error:
             public_error = public_credit_decision_error_response(
@@ -1221,10 +1247,24 @@ class DecisionApplicationService:
                     "status_code": public_error.status_code,
                 },
             )
+            self._record_public_query_telemetry(
+                context=context,
+                status="rejected",
+                duration_ms=duration_ms,
+                public_error=public_error,
+            )
+            business_event = _public_credit_decision_query_rejection_business_event(
+                trusted_context=trusted_context,
+                public_error=public_error,
+                signal_ref=context.request_id,
+                duration_ms=duration_ms,
+                occurred_at=self._clock(),
+            )
             return PublicCreditDecisionQueryApplicationResult(
                 decision=None,
                 error=public_error,
                 logs=(public_log,),
+                business_events=(business_event,) if business_event is not None else (),
             )
         except Exception as error:
             public_error = public_credit_decision_internal_error_response(
@@ -1252,10 +1292,24 @@ class DecisionApplicationService:
                     "status_code": public_error.status_code,
                 },
             )
+            self._record_public_query_telemetry(
+                context=context,
+                status="failed",
+                duration_ms=duration_ms,
+                public_error=public_error,
+            )
+            business_event = _public_credit_decision_query_rejection_business_event(
+                trusted_context=trusted_context,
+                public_error=public_error,
+                signal_ref=context.request_id,
+                duration_ms=duration_ms,
+                occurred_at=self._clock(),
+            )
             return PublicCreditDecisionQueryApplicationResult(
                 decision=None,
                 error=public_error,
                 logs=(public_log,),
+                business_events=(business_event,) if business_event is not None else (),
             )
 
     def run_policy_simulation(
@@ -2380,6 +2434,40 @@ class DecisionApplicationService:
         self._logged_events.append(event)
         return event
 
+    def _record_public_query_telemetry(
+        self,
+        *,
+        context: ObservabilityContext,
+        status: str,
+        duration_ms: float,
+        public_decision: PublicCreditDecisionResponse | None = None,
+        public_error: PublicCreditDecisionErrorResponse | None = None,
+    ) -> None:
+        if self._telemetry is None:
+            return
+        with suppress(Exception):
+            self._telemetry.record_operation(
+                context=context,
+                operation_type="http",
+                operation="credit_decision.public_query.get",
+                status=status,
+                duration_ms=duration_ms,
+                source="public-api",
+                destination=SERVICE_NAME,
+                contract="decision-public-query",
+                contract_version=PUBLIC_DECISION_CONTRACT_VERSION,
+                channel=public_decision.channel if public_decision is not None else None,
+                product_type=public_decision.product_type if public_decision is not None else None,
+                status_code=public_error.status_code if public_error is not None else 200,
+                extra={
+                    "technical_result": (
+                        "public_decision_query_returned"
+                        if public_error is None
+                        else "public_decision_query_rejected"
+                    )
+                },
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class _PolicyLookupCommand:
@@ -2519,6 +2607,99 @@ def _public_credit_decision_audit_safe_details(
     if public_decision.product_type is not None:
         safe_details["product_type"] = public_decision.product_type
     return safe_details
+
+
+def _public_credit_decision_query_business_event(
+    *,
+    tenant_id: str,
+    tenant_isolation_tier: str,
+    public_decision: PublicCreditDecisionResponse,
+    query_status: str,
+    signal_ref: str,
+    duration_ms: float,
+    occurred_at: datetime,
+) -> dict[str, Any]:
+    event_seed = "|".join(
+        (
+            tenant_id,
+            "credit_decision.public_query.get",
+            query_status,
+            public_decision.contract_version,
+            public_decision.status,
+            public_decision.product_type or "unknown_product",
+            public_decision.channel or "unknown_channel",
+            signal_ref,
+        )
+    )
+    event_hash = sha256(event_seed.encode("utf-8")).hexdigest()
+    event: dict[str, Any] = {
+        "event_id": f"evt_public_query_{event_hash[:24]}",
+        "source": "creditos://decision",
+        "event_type": "decision_query",
+        "tenant_id": tenant_id,
+        "tenant_isolation_tier": tenant_isolation_tier,
+        "query_status": query_status,
+        "schema_version": PUBLIC_DECISION_BUSINESS_SCHEMA_VERSION,
+        "idempotency_key": f"idem_public_query_{event_hash[:24]}",
+        "occurred_at": occurred_at.astimezone(UTC).isoformat(),
+        "processed_at": occurred_at.astimezone(UTC).isoformat(),
+        "latency_ms": int(round(duration_ms)),
+        "error_count": 0,
+    }
+    if public_decision.product_type is not None:
+        event["product_type"] = public_decision.product_type
+    if public_decision.channel is not None:
+        event["channel"] = public_decision.channel
+    return event
+
+
+def _public_credit_decision_query_rejection_business_event(
+    *,
+    trusted_context: PropagatedContext,
+    public_error: PublicCreditDecisionErrorResponse,
+    signal_ref: str,
+    duration_ms: float,
+    occurred_at: datetime,
+) -> dict[str, Any] | None:
+    query_status = _public_query_business_status(public_error)
+    tenant_id = _trusted_tenant_id_or_unknown(trusted_context)
+    if tenant_id == "unknown_tenant":
+        return None
+    event_seed = "|".join(
+        (
+            tenant_id,
+            "credit_decision.public_query.get",
+            query_status,
+            public_error.error_code,
+            signal_ref,
+        )
+    )
+    event_hash = sha256(event_seed.encode("utf-8")).hexdigest()
+    return {
+        "event_id": f"evt_public_query_{event_hash[:24]}",
+        "source": "creditos://decision",
+        "event_type": "decision_query",
+        "tenant_id": tenant_id,
+        "tenant_isolation_tier": _trusted_tenant_isolation_tier_or_bridge(trusted_context),
+        "query_status": query_status,
+        "product_type": "unknown",
+        "channel": "api",
+        "schema_version": PUBLIC_DECISION_BUSINESS_SCHEMA_VERSION,
+        "idempotency_key": f"idem_public_query_{event_hash[:24]}",
+        "occurred_at": occurred_at.astimezone(UTC).isoformat(),
+        "processed_at": occurred_at.astimezone(UTC).isoformat(),
+        "latency_ms": int(round(duration_ms)),
+        "error_count": 1,
+        "error_code": public_error.error_code,
+    }
+
+
+def _public_query_business_status(error: PublicCreditDecisionErrorResponse) -> str:
+    if error.error_code == "decision_not_available":
+        return "not_available"
+    if error.error_code == "invalid_request":
+        return "invalid_request"
+    return "failed"
 
 
 def _public_decision_message(*, status: str, outcome: str | None) -> str:

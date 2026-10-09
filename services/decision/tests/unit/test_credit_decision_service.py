@@ -54,6 +54,7 @@ from creditos_decision.domain.value_objects import (
     ReasonCode,
 )
 from creditos_observability.context import ObservabilityContext
+from creditos_observability.gates import validate_observability_exposure_payload
 from creditos_security import PropagatedContext, TrustedContext
 
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
@@ -65,6 +66,15 @@ class RecordingAuditPublisher:
 
     def publish(self, event: DecisionAuditIntent) -> None:
         self.events.append(event)
+
+
+class RecordingTelemetry:
+    def __init__(self) -> None:
+        self.operations: list[dict[str, object]] = []
+
+    def record_operation(self, **kwargs: object) -> dict[str, object]:
+        self.operations.append(dict(kwargs))
+        return {"telemetry_recorded": True}
 
 
 def test_bounded_csv_never_truncates_selected_references() -> None:
@@ -325,8 +335,13 @@ def test_get_credit_decision_requires_read_scope_and_hides_cross_tenant_decision
 
 def test_get_public_credit_decision_by_proposal_returns_minimized_response() -> None:
     audit = RecordingAuditPublisher()
+    telemetry = RecordingTelemetry()
     decision_repository = InMemoryCreditDecisionRepository()
-    service = _service(audit=audit, decision_repository=decision_repository)
+    service = _service(
+        audit=audit,
+        decision_repository=decision_repository,
+        telemetry=telemetry,
+    )
     _create_and_publish_policy(service)
     service.execute_credit_decision(
         _execute_command(),
@@ -383,6 +398,27 @@ def test_get_public_credit_decision_by_proposal_returns_minimized_response() -> 
     assert audit.events[-1].safe_details["operation"] == "credit_decision.public_query.get"
     assert "fingerprint" not in audit.events[-1].safe_details
     assert "triggered_rule_ids" not in audit.events[-1].safe_details
+    assert telemetry.operations[-1]["operation"] == "credit_decision.public_query.get"
+    assert telemetry.operations[-1]["operation_type"] == "http"
+    assert telemetry.operations[-1]["status"] == "accepted"
+    assert telemetry.operations[-1]["product_type"] == "personal_credit"
+    assert telemetry.operations[-1]["channel"] == "api"
+    assert "proposal_id" not in str(telemetry.operations[-1])
+    assert "decision_id" not in str(telemetry.operations[-1])
+    assert result.business_events[-1]["event_type"] == "decision_query"
+    assert result.business_events[-1]["query_status"] == "succeeded"
+    assert result.business_events[-1]["tenant_id"] == "tenant_alpha"
+    assert result.business_events[-1]["product_type"] == "personal_credit"
+    assert result.business_events[-1]["channel"] == "api"
+    assert "proposal_id" not in result.business_events[-1]
+    assert "decision_id" not in result.business_events[-1]
+    validate_observability_exposure_payload(
+        {
+            "log": result.logs[-1],
+            "business_event": result.business_events[-1],
+        },
+        exposure="technical_internal",
+    )
 
     public_payload = asdict(result.decision)
     public_keys = set(_iter_nested_keys(public_payload))
@@ -700,8 +736,13 @@ def test_get_public_credit_decision_by_proposal_prefers_decision_over_stale_stat
 
 def test_get_public_credit_decision_by_proposal_standardizes_not_available_errors() -> None:
     audit = RecordingAuditPublisher()
+    telemetry = RecordingTelemetry()
     decision_repository = InMemoryCreditDecisionRepository()
-    service = _service(audit=audit, decision_repository=decision_repository)
+    service = _service(
+        audit=audit,
+        decision_repository=decision_repository,
+        telemetry=telemetry,
+    )
     _create_and_publish_policy(service)
     service.execute_credit_decision(
         _execute_command(),
@@ -751,6 +792,19 @@ def test_get_public_credit_decision_by_proposal_standardizes_not_available_error
         "error_code": "invalid_request",
         "status_code": 400,
     }
+    assert telemetry.operations[-1]["status"] == "rejected"
+    assert telemetry.operations[-1]["status_code"] == 400
+    assert "proposal_personal_credit_001" not in str(telemetry.operations)
+    assert "proposal_unknown_001" not in str(telemetry.operations)
+    for result in (cross_tenant, missing_scope, missing_decision, invalid_request):
+        assert result.business_events[-1]["event_type"] == "decision_query"
+        assert result.business_events[-1]["query_status"] in {
+            "not_available",
+            "invalid_request",
+        }
+        assert result.business_events[-1]["product_type"] == "unknown"
+        assert result.business_events[-1]["channel"] == "api"
+        assert "proposal_id" not in result.business_events[-1]
 
 
 def test_get_public_credit_decision_by_proposal_maps_internal_failures_to_500() -> None:
@@ -1218,6 +1272,7 @@ def _service(
     simulation_repository: InMemoryPolicySimulationRepository | None = None,
     decision_repository: CreditDecisionRepository | None = None,
     public_proposal_status_repository: InMemoryPublicProposalStatusRepository | None = None,
+    telemetry: RecordingTelemetry | None = None,
 ) -> DecisionApplicationService:
     return DecisionApplicationService(
         repository=repository or InMemoryCreditPolicyRepository(),
@@ -1226,6 +1281,7 @@ def _service(
         credit_decision_repository=decision_repository or InMemoryCreditDecisionRepository(),
         public_proposal_status_repository=public_proposal_status_repository,
         audit_publisher=audit,
+        telemetry=telemetry,
         environment="test",
         clock=lambda: NOW,
     )

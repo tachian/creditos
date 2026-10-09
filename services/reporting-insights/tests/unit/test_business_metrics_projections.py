@@ -18,6 +18,7 @@ from creditos_reporting_insights.domain.value_objects.business_events import (
     CallbackStatus,
     Channel,
     DecisionOutcome,
+    DecisionQueryStatus,
     IntegrationStatus,
     ProductType,
     ProposalFunnelStatus,
@@ -144,6 +145,52 @@ def test_projects_business_funnel_decisions_integrations_costs_and_freshness() -
     assert snapshot.latency_event_count == 3
     assert snapshot.freshness.status == "fresh"
     assert snapshot.key.tenant_id == "tenant-alpha"
+
+
+def test_projects_decision_query_and_callback_dlq_observability_events() -> None:
+    occurred_at = _utc_now() - timedelta(seconds=30)
+    processed_at = occurred_at + timedelta(seconds=5)
+    service = _service(processed_at=processed_at + timedelta(seconds=10))
+
+    query_result = service.record_event(
+        BusinessEvent.decision_query(
+            event_id="evt-public-query-001",
+            source="creditos://decision",
+            tenant_id="tenant-alpha",
+            product_type=ProductType.PERSONAL_CREDIT,
+            occurred_at=occurred_at,
+            processed_at=processed_at,
+            channel=Channel.API,
+            status=DecisionQueryStatus.SUCCEEDED,
+            idempotency_key="idem-public-query-001",
+            latency_ms=31,
+        )
+    )
+    dlq_result = service.record_event(
+        BusinessEvent.callback(
+            event_id="evt-callback-dlq-001",
+            source="creditos://callback-dispatcher",
+            tenant_id="tenant-alpha",
+            product_type=ProductType.PERSONAL_CREDIT,
+            occurred_at=occurred_at + timedelta(seconds=1),
+            processed_at=processed_at + timedelta(seconds=1),
+            channel=Channel.API,
+            status=CallbackStatus.DLQ,
+            idempotency_key="idem-callback-dlq-001",
+            latency_ms=52,
+            error_count=1,
+        )
+    )
+
+    snapshot = dlq_result.snapshot
+
+    assert query_result.applied is True
+    assert dlq_result.applied is True
+    assert snapshot.decision_query_counts["succeeded"] == 1
+    assert snapshot.callback_counts["dlq"] == 1
+    assert snapshot.error_count == 1
+    assert snapshot.total_latency_ms == 83
+    assert snapshot.latency_event_count == 2
 
 
 def test_duplicate_events_are_idempotent_by_source_id_and_idempotency_key() -> None:

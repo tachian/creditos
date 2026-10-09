@@ -189,11 +189,12 @@ mantendo read models curados por tenant/produto/canal/período. Essas projeçõe
 não são telemetria técnica e não devem consultar bancos transacionais de outros
 serviços.
 
-A primeira base de projeção cobre funil, decisões, reason codes governados,
-integrações, custos em unidades inteiras, latência, erros e freshness. A
-freshness usa `last_event_time`, `last_processed_at`, `lag_seconds` e status,
-permitindo medir o objetivo interno de atualização das visões operacionais sem
-transformá-lo em SLA contratual nesta etapa.
+A primeira base de projeção cobre funil, consultas públicas de decisão,
+decisões, reason codes governados, integrações, callbacks, custos em unidades
+inteiras, latência, erros e freshness. A freshness usa `last_event_time`,
+`last_processed_at`, `lag_seconds` e status, permitindo medir o objetivo interno
+de atualização das visões operacionais sem transformá-lo em SLA contratual nesta
+etapa.
 
 `tenant_id` é dimensão permitida no read model de negócio porque a consulta é
 isolada por tenant. Isso não autoriza usar `tenant_id`, `proposal_id`,
@@ -205,6 +206,29 @@ Duplicatas devem ser ignoradas antes de alterar contadores, usando `source +
 event_id` e `tenant + event_type + schema_version + idempotency_key` quando
 disponível. Eventos fora de ordem podem atualizar contadores históricos, mas
 não devem reduzir `last_event_time` nem `last_processed_at` da projeção.
+
+## Consulta pública e callbacks
+
+A consulta pública de decisão usa a operação técnica
+`credit_decision.public_query.get`. O sinal técnico permitido contém tenant
+confiável, `tenant_isolation_tier`, operação, status, duração, contrato,
+versão, correlação e resultado técnico normalizado. O evento de negócio
+minimizado usa `event_type=decision_query` e `query_status` em
+`succeeded`, `not_available`, `invalid_request` ou `failed`, sem `proposal_id`,
+`decision_id`, documento, nome, e-mail, payload bruto ou evidência restrita.
+
+Callbacks/webhooks usam a família operacional `webhook_delivery.*`, com estados
+normalizados `created`, `sent`, `failed`, `retry_scheduled`, `retry_due`,
+`dlq_recorded` e `reprocess_requested`. Métricas e traces técnicos recebem
+apenas atributos de baixa cardinalidade; retries, DLQ e reprocessamento entram
+nas projeções de negócio como status agregáveis de callback, nunca como endpoint
+completo, segredo de assinatura, body de resposta do cliente ou payload bruto.
+
+Observabilidade técnica não substitui auditoria oficial. Quando uma consulta
+autorizada acessa decisão, explicabilidade ou referência de evidência sensível,
+o `Decision Service` deve publicar intenção/evento para o `Audit & Evidence`,
+que permanece a fonte de verdade para investigação e não deve ser reconstruído
+a partir de logs, métricas, traces ou projeções customer-facing.
 
 ## Dashboards customer-facing curados
 
@@ -218,6 +242,7 @@ Campos permitidos nessa visão:
 
 - tenant de referência seguro, produto, canal e período;
 - funil, decisões e reason codes governados;
+- consultas públicas de decisão agregadas por status seguro;
 - integrações agregadas por classe, callbacks, revisão automatizada e custos em
   unidades inteiras;
 - latência agregada, erros agregados, freshness e saúde operacional curada;

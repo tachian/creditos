@@ -147,6 +147,25 @@ def test_technical_exposure_gate_ignores_memory_addresses_in_metrics_repr() -> N
     validate_observability_exposure_payload(payload, exposure="technical_internal")
 
 
+def test_technical_exposure_gate_detects_phone_near_timestamp() -> None:
+    with pytest.raises(ValueError, match="telefone"):
+        validate_observability_exposure_payload(
+            {
+                "timestamp": "2026-10-09T12:00:00+00:00",
+                "message": "callback failed for 5511999999999",
+            },
+            exposure="technical_internal",
+        )
+
+
+def test_technical_exposure_gate_detects_numeric_hex_like_phone() -> None:
+    with pytest.raises(ValueError, match="telefone"):
+        validate_observability_exposure_payload(
+            {"trace_like": "5511999999999"},
+            exposure="technical_internal",
+        )
+
+
 def test_internal_dashboard_and_alert_artifacts_pass_secure_exposure_gate() -> None:
     payload = {
         "dashboards": [dashboard.to_dict() for dashboard in internal_dashboard_catalog()],

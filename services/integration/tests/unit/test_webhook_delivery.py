@@ -17,6 +17,7 @@ from creditos_integration.adapters.persistence import (
 from creditos_integration.application.ports.audit_event_publisher import InMemoryAuditEventPublisher
 from creditos_integration.application.ports.webhook_delivery import (
     CLOUDEVENT_WEBHOOK_DELIVERY_MAPPING,
+    WEBHOOK_DELIVERY_EVENT_TYPES,
     InMemoryWebhookDeliveryAdapter,
     StaticWebhookSigningKeyResolver,
     WebhookDeliveryAdapterResult,
@@ -33,10 +34,20 @@ from creditos_integration.application.service import (
 from creditos_integration.domain.entities import WebhookDeliveryJob, WebhookNotificationEvent
 from creditos_integration.domain.errors import IntegrationValidationError
 from creditos_observability.context import ObservabilityContext
+from creditos_observability.gates import validate_observability_exposure_payload
 
 _FIXED_TIME = datetime(2026, 10, 7, 12, 0, tzinfo=UTC)
 _EVENT_ID = "evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 _PUBLIC_CALLBACK_IP = "93.184.216.34"
+
+
+class RecordingTelemetry:
+    def __init__(self) -> None:
+        self.operations: list[dict[str, object]] = []
+
+    def record_operation(self, **kwargs: object) -> dict[str, object]:
+        self.operations.append(dict(kwargs))
+        return {"telemetry_recorded": True}
 
 
 def test_dispatch_webhook_notification_creates_signed_minimized_idempotent_job() -> None:
@@ -558,6 +569,7 @@ def test_static_webhook_signing_key_resolver_is_tenant_scoped() -> None:
 
 
 def test_webhook_delivery_cloudevent_mapping_is_explicit() -> None:
+    assert WEBHOOK_DELIVERY_EVENT_TYPES["retry_due"] == "creditos.webhook.delivery.retry_due.v1"
     assert CLOUDEVENT_WEBHOOK_DELIVERY_MAPPING["specversion"] == "1.0"
     assert CLOUDEVENT_WEBHOOK_DELIVERY_MAPPING["source"] == (
         "creditos.integration.webhook-delivery"
@@ -566,6 +578,63 @@ def test_webhook_delivery_cloudevent_mapping_is_explicit() -> None:
     assert "type" in CLOUDEVENT_WEBHOOK_DELIVERY_MAPPING
     assert "subject" in CLOUDEVENT_WEBHOOK_DELIVERY_MAPPING
     assert "data" in CLOUDEVENT_WEBHOOK_DELIVERY_MAPPING
+
+
+def test_webhook_delivery_emits_safe_normalized_observability_and_business_signals() -> None:
+    telemetry = RecordingTelemetry()
+    now = _FIXED_TIME
+    adapter = InMemoryWebhookDeliveryAdapter(
+        [
+            WebhookDeliveryAdapterResult.temporary_failure(
+                status_code=503,
+                failure_code="endpoint_unavailable",
+            ),
+            WebhookDeliveryAdapterResult.final_failure(
+                status_code=400,
+                failure_code="endpoint_rejected",
+            ),
+        ]
+    )
+    service = _service(delivery_adapter=adapter, telemetry=telemetry, clock=lambda: now)
+    service.configure_webhook(_configure_command(), context=_context())
+
+    initial = service.dispatch_webhook_notification(_notification_command(), context=_context())
+    now = datetime(2026, 10, 7, 12, 0, 1, tzinfo=UTC)
+    retry = service.process_due_webhook_retries(
+        ProcessWebhookRetriesCommand(scopes=("webhook_delivery:dispatch",)),
+        context=_context(),
+    )
+
+    operations = [operation["operation"] for operation in telemetry.operations]
+    assert "webhook_delivery.created" in operations
+    assert "webhook_delivery.retry_scheduled" in operations
+    assert "webhook_delivery.failed" in operations
+    assert "webhook_delivery.dlq_recorded" in operations
+    assert {operation["operation_type"] for operation in telemetry.operations} == {"job"}
+    assert "endpoint_unavailable" in str(telemetry.operations)
+    assert "endpoint_rejected" in str(telemetry.operations)
+    assert "proposal-123" not in str(telemetry.operations)
+    assert "callbacks.example.com/creditos/status" not in str(telemetry.operations)
+    assert "signing-secret" not in str(telemetry.operations)
+
+    assert initial.business_events[-1]["callback_status"] == "retrying"
+    assert initial.business_events[-1]["failure_code"] == "endpoint_unavailable"
+    assert all(event["callback_status"] != "skipped" for event in initial.business_events)
+    assert retry.business_events[-1]["callback_status"] == "dlq"
+    assert retry.business_events[-1]["error_count"] == 1
+    assert retry.business_events[-1]["failure_code"] == "endpoint_rejected"
+    assert retry.business_events[-1]["product_type"] == "unknown"
+    assert retry.business_events[-1]["channel"] == "api"
+    assert "proposal_id" not in retry.business_events[-1]
+    assert "endpoint_url" not in retry.business_events[-1]
+    assert "event_ref" not in retry.business_events[-1]
+    validate_observability_exposure_payload(
+        {
+            "logs": service.logged_events,
+            "business_events": (*initial.business_events, *retry.business_events),
+        },
+        exposure="technical_internal",
+    )
 
 
 class _RaisingWebhookDeliveryDispatcher:
@@ -591,6 +660,7 @@ def _service(
     dlq_store: InMemoryWebhookDeliveryDlqStore | None = None,
     delivery_adapter: InMemoryWebhookDeliveryAdapter | None = None,
     delivery_dispatcher: WebhookDeliveryDispatcher | None = None,
+    telemetry: RecordingTelemetry | None = None,
     configuration_id_factory: Callable[[str], str] | None = None,
     job_id_factory: Callable[[str], str] | None = None,
     dlq_id_factory: Callable[[str], str] | None = None,
@@ -621,6 +691,7 @@ def _service(
         ),
         webhook_delivery_job_id_factory=job_id_factory,
         webhook_delivery_dlq_id_factory=dlq_id_factory or (lambda _seed: "wdlq_fixed"),
+        telemetry=telemetry,
     )
 
 

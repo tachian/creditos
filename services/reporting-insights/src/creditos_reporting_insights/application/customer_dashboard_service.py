@@ -84,6 +84,9 @@ class CustomerDashboardService:
                     "decisions": build_section(
                         _count_cards(_sum_counts(snapshots, "decision_counts"))
                     ),
+                    "decision_queries": build_section(
+                        _count_cards(_sum_counts(snapshots, "decision_query_counts"))
+                    ),
                     "errors": build_section(_error_cards(snapshots)),
                     "freshness": build_section(_freshness_cards(snapshots)),
                     "integrations": build_section(_integration_cards(snapshots)),
