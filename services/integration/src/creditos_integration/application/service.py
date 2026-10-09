@@ -1548,6 +1548,7 @@ class IntegrationCatalogApplicationService:
             )
             dispatch_results: list[WebhookDeliveryDispatchResult] = []
             for configuration in configurations:
+                delivery_started_at = perf_counter()
                 business_events: list[dict[str, Any]] = []
                 idempotency_key = _webhook_delivery_effective_idempotency_key(
                     explicit_idempotency_key=command.idempotency_key,
@@ -1574,7 +1575,7 @@ class IntegrationCatalogApplicationService:
                         context=context,
                         operation="webhook_delivery.created",
                         status="accepted",
-                        duration_ms=_duration_ms(started_at),
+                        duration_ms=_duration_ms(delivery_started_at),
                         payload=_webhook_notification_payload(command),
                         extra=existing_job.to_log_safe_dict() | {"idempotency_replay": True},
                     )
@@ -1589,7 +1590,7 @@ class IntegrationCatalogApplicationService:
                     context=context,
                     operation="webhook_delivery.created",
                     status="accepted",
-                    duration_ms=_duration_ms(started_at),
+                    duration_ms=_duration_ms(delivery_started_at),
                     payload=_webhook_notification_payload(command),
                     extra=job.to_log_safe_dict() | _webhook_delivery_endpoint_extra(configuration),
                 )
@@ -1605,15 +1606,18 @@ class IntegrationCatalogApplicationService:
                 except Exception:
                     self._webhook_delivery_store.release(job)
                     raise
+                failure_codes_by_job = _webhook_delivery_failure_codes_by_job(result)
                 for dispatched_job in result.jobs:
+                    failure_code = failure_codes_by_job.get(dispatched_job.job_id)
                     self._webhook_delivery_store.save(dispatched_job)
                     self._log_operation(
                         context=context,
                         operation=_webhook_delivery_operation_for_job(dispatched_job),
                         status="accepted",
-                        duration_ms=_duration_ms(started_at),
+                        duration_ms=_duration_ms(delivery_started_at),
                         payload=_webhook_notification_payload(command),
                         extra=dispatched_job.to_log_safe_dict()
+                        | _webhook_delivery_failure_extra(failure_code)
                         | _webhook_delivery_endpoint_extra(configuration),
                     )
                     business_events.append(
@@ -1622,9 +1626,10 @@ class IntegrationCatalogApplicationService:
                             job=dispatched_job,
                             callback_status=_callback_status_for_webhook_job(dispatched_job),
                             context=context,
-                            duration_ms=_duration_ms(started_at),
+                            duration_ms=_duration_ms(delivery_started_at),
                             occurred_at=self._clock(),
                             error_count=_webhook_job_error_count(dispatched_job),
+                            failure_code=failure_code,
                         )
                     )
                 for retry_schedule in result.retry_schedules:
@@ -1633,7 +1638,7 @@ class IntegrationCatalogApplicationService:
                         context=context,
                         operation="webhook_delivery.retry_scheduled",
                         status="accepted",
-                        duration_ms=_duration_ms(started_at),
+                        duration_ms=_duration_ms(delivery_started_at),
                         payload=_webhook_notification_payload(command),
                         extra=retry_schedule.to_log_safe_dict()
                         | _webhook_delivery_endpoint_extra(configuration),
@@ -1643,7 +1648,7 @@ class IntegrationCatalogApplicationService:
                             operation="webhook_delivery.retry_scheduled",
                             schedule=retry_schedule,
                             context=context,
-                            duration_ms=_duration_ms(started_at),
+                            duration_ms=None,
                             occurred_at=self._clock(),
                         )
                     )
@@ -1653,7 +1658,7 @@ class IntegrationCatalogApplicationService:
                         context=context,
                         operation="webhook_delivery.dlq_recorded",
                         status="accepted",
-                        duration_ms=_duration_ms(started_at),
+                        duration_ms=_duration_ms(delivery_started_at),
                         payload=_webhook_notification_payload(command),
                         extra=saved_record.to_log_safe_dict()
                         | _webhook_delivery_endpoint_extra(configuration),
@@ -1663,7 +1668,8 @@ class IntegrationCatalogApplicationService:
                             operation="webhook_delivery.dlq_recorded",
                             record=saved_record,
                             context=context,
-                            duration_ms=_duration_ms(started_at),
+                            duration_ms=None,
+                            error_count=0,
                             occurred_at=self._clock(),
                         )
                     )
@@ -1782,6 +1788,7 @@ class IntegrationCatalogApplicationService:
                     occurred_at=self._clock(),
                     callback_status="reprocess_requested",
                     error_count=0,
+                    idempotency_seed=command.idempotency_key,
                 )
             ]
             self._log_operation(
@@ -1804,7 +1811,9 @@ class IntegrationCatalogApplicationService:
             except Exception:
                 self._webhook_delivery_store.release(job)
                 raise
+            failure_codes_by_job = _webhook_delivery_failure_codes_by_job(result)
             for dispatched_job in result.jobs:
+                failure_code = failure_codes_by_job.get(dispatched_job.job_id)
                 self._webhook_delivery_store.save(dispatched_job)
                 self._log_operation(
                     context=context,
@@ -1813,6 +1822,7 @@ class IntegrationCatalogApplicationService:
                     duration_ms=_duration_ms(started_at),
                     payload={"dlq_id": command.dlq_id, "idempotency_key_present": True},
                     extra=dispatched_job.to_log_safe_dict()
+                    | _webhook_delivery_failure_extra(failure_code)
                     | _webhook_delivery_endpoint_extra(configuration),
                 )
                 business_events.append(
@@ -1824,6 +1834,7 @@ class IntegrationCatalogApplicationService:
                         duration_ms=_duration_ms(started_at),
                         occurred_at=self._clock(),
                         error_count=_webhook_job_error_count(dispatched_job),
+                        failure_code=failure_code,
                     )
                 )
             for retry_schedule in result.retry_schedules:
@@ -1842,7 +1853,7 @@ class IntegrationCatalogApplicationService:
                         operation="webhook_delivery.retry_scheduled",
                         schedule=retry_schedule,
                         context=context,
-                        duration_ms=_duration_ms(started_at),
+                        duration_ms=None,
                         occurred_at=self._clock(),
                     )
                 )
@@ -1862,8 +1873,9 @@ class IntegrationCatalogApplicationService:
                         operation="webhook_delivery.dlq_recorded",
                         record=dlq_record,
                         context=context,
-                        duration_ms=_duration_ms(started_at),
+                        duration_ms=None,
                         occurred_at=self._clock(),
+                        error_count=0,
                     )
                 )
             sent_jobs = tuple(job for job in result.jobs if job.status == "sent")
@@ -1922,12 +1934,13 @@ class IntegrationCatalogApplicationService:
             )
             dispatch_results: list[WebhookDeliveryDispatchResult] = []
             for schedule in schedules:
+                retry_started_at = perf_counter()
                 business_events: list[dict[str, Any]] = [
                     _webhook_delivery_business_event_for_retry(
                         operation="webhook_delivery.retry_due",
                         schedule=schedule,
                         context=context,
-                        duration_ms=_duration_ms(started_at),
+                        duration_ms=None,
                         occurred_at=self._clock(),
                     )
                 ]
@@ -1935,7 +1948,7 @@ class IntegrationCatalogApplicationService:
                     context=context,
                     operation="webhook_delivery.retry_due",
                     status="accepted",
-                    duration_ms=_duration_ms(started_at),
+                    duration_ms=_duration_ms(retry_started_at),
                     payload=_webhook_retry_payload(schedule),
                     extra=schedule.to_log_safe_dict(),
                 )
@@ -1970,15 +1983,18 @@ class IntegrationCatalogApplicationService:
                     dlq_id_factory=self._webhook_delivery_dlq_id_factory,
                 )
                 self._webhook_delivery_store.consume_retry_schedule(schedule)
+                failure_codes_by_job = _webhook_delivery_failure_codes_by_job(result)
                 for dispatched_job in result.jobs:
+                    failure_code = failure_codes_by_job.get(dispatched_job.job_id)
                     self._webhook_delivery_store.save(dispatched_job)
                     self._log_operation(
                         context=context,
                         operation=_webhook_delivery_operation_for_job(dispatched_job),
                         status="accepted",
-                        duration_ms=_duration_ms(started_at),
+                        duration_ms=_duration_ms(retry_started_at),
                         payload=_webhook_retry_payload(schedule),
                         extra=dispatched_job.to_log_safe_dict()
+                        | _webhook_delivery_failure_extra(failure_code)
                         | _webhook_delivery_endpoint_extra(configuration),
                     )
                     business_events.append(
@@ -1987,9 +2003,10 @@ class IntegrationCatalogApplicationService:
                             job=dispatched_job,
                             callback_status=_callback_status_for_webhook_job(dispatched_job),
                             context=context,
-                            duration_ms=_duration_ms(started_at),
+                            duration_ms=_duration_ms(retry_started_at),
                             occurred_at=self._clock(),
                             error_count=_webhook_job_error_count(dispatched_job),
+                            failure_code=failure_code,
                         )
                     )
                 for retry_schedule in result.retry_schedules:
@@ -1998,7 +2015,7 @@ class IntegrationCatalogApplicationService:
                         context=context,
                         operation="webhook_delivery.retry_scheduled",
                         status="accepted",
-                        duration_ms=_duration_ms(started_at),
+                        duration_ms=_duration_ms(retry_started_at),
                         payload=_webhook_retry_payload(schedule),
                         extra=retry_schedule.to_log_safe_dict()
                         | _webhook_delivery_endpoint_extra(configuration),
@@ -2008,7 +2025,7 @@ class IntegrationCatalogApplicationService:
                             operation="webhook_delivery.retry_scheduled",
                             schedule=retry_schedule,
                             context=context,
-                            duration_ms=_duration_ms(started_at),
+                            duration_ms=None,
                             occurred_at=self._clock(),
                         )
                     )
@@ -2018,7 +2035,7 @@ class IntegrationCatalogApplicationService:
                         context=context,
                         operation="webhook_delivery.dlq_recorded",
                         status="accepted",
-                        duration_ms=_duration_ms(started_at),
+                        duration_ms=_duration_ms(retry_started_at),
                         payload=_webhook_retry_payload(schedule),
                         extra=saved_record.to_log_safe_dict()
                         | _webhook_delivery_endpoint_extra(configuration),
@@ -2028,8 +2045,9 @@ class IntegrationCatalogApplicationService:
                             operation="webhook_delivery.dlq_recorded",
                             record=saved_record,
                             context=context,
-                            duration_ms=_duration_ms(started_at),
+                            duration_ms=None,
                             occurred_at=self._clock(),
+                            error_count=0,
                         )
                     )
                 dispatch_results.append(
@@ -2175,6 +2193,7 @@ class IntegrationCatalogApplicationService:
                 contract="integration-webhook-delivery",
                 contract_version=CONTRACT_VERSION,
                 extra=_webhook_delivery_telemetry_extra(extra),
+                attributes=_webhook_delivery_telemetry_attributes(extra),
             )
 
 
@@ -2430,6 +2449,27 @@ def _webhook_delivery_telemetry_extra(extra: dict[str, Any]) -> dict[str, object
     return safe_extra
 
 
+def _webhook_delivery_telemetry_attributes(extra: dict[str, Any]) -> dict[str, object]:
+    failure_code = extra.get("failure_code")
+    if isinstance(failure_code, str):
+        return {"failure_code": failure_code}
+    return {}
+
+
+def _webhook_delivery_failure_codes_by_job(
+    result: WebhookDeliveryDispatchResult,
+) -> dict[str, str]:
+    failure_codes = {schedule.job_id: schedule.failure_code for schedule in result.retry_schedules}
+    failure_codes.update({record.job_id: record.failure_code for record in result.dlq_records})
+    return failure_codes
+
+
+def _webhook_delivery_failure_extra(failure_code: str | None) -> dict[str, object]:
+    if failure_code is None:
+        return {}
+    return {"failure_code": failure_code}
+
+
 def _webhook_delivery_operation_for_job(job: WebhookDeliveryJob) -> str:
     if job.status == "sent":
         return "webhook_delivery.sent"
@@ -2465,6 +2505,7 @@ def _webhook_delivery_business_event_for_job(
     duration_ms: float,
     occurred_at: datetime,
     error_count: int,
+    failure_code: str | None = None,
 ) -> dict[str, Any]:
     return _webhook_delivery_business_event(
         operation=operation,
@@ -2481,6 +2522,7 @@ def _webhook_delivery_business_event_for_job(
         duration_ms=duration_ms,
         occurred_at=occurred_at,
         error_count=error_count,
+        failure_code=failure_code,
     )
 
 
@@ -2489,7 +2531,7 @@ def _webhook_delivery_business_event_for_retry(
     operation: str,
     schedule: Any,
     context: ObservabilityContext,
-    duration_ms: float,
+    duration_ms: float | None,
     occurred_at: datetime,
 ) -> dict[str, Any]:
     return _webhook_delivery_business_event(
@@ -2506,7 +2548,7 @@ def _webhook_delivery_business_event_for_retry(
         attempt_count=schedule.next_attempt_count,
         duration_ms=duration_ms,
         occurred_at=occurred_at,
-        error_count=1,
+        error_count=0,
         failure_code=schedule.failure_code,
     )
 
@@ -2516,10 +2558,11 @@ def _webhook_delivery_business_event_for_dlq(
     operation: str,
     record: WebhookDeliveryDlqRecord,
     context: ObservabilityContext,
-    duration_ms: float,
+    duration_ms: float | None,
     occurred_at: datetime,
     callback_status: str = "dlq",
-    error_count: int = 1,
+    error_count: int = 0,
+    idempotency_seed: str | None = None,
 ) -> dict[str, Any]:
     return _webhook_delivery_business_event(
         operation=operation,
@@ -2531,7 +2574,7 @@ def _webhook_delivery_business_event_for_dlq(
         callback_status=callback_status,
         status="dlq_recorded",
         event_ref=record.event_id,
-        idempotency_seed=record.idempotency_key,
+        idempotency_seed=idempotency_seed or record.idempotency_key,
         attempt_count=record.attempt_count,
         duration_ms=duration_ms,
         occurred_at=occurred_at,
@@ -2550,7 +2593,7 @@ def _webhook_delivery_business_event(
     event_ref: str,
     idempotency_seed: str,
     attempt_count: int,
-    duration_ms: float,
+    duration_ms: float | None,
     occurred_at: datetime,
     error_count: int,
     failure_code: str | None = None,
@@ -2584,9 +2627,10 @@ def _webhook_delivery_business_event(
         "attempt_count": attempt_count,
         "occurred_at": occurred_at.astimezone(UTC).isoformat(),
         "processed_at": occurred_at.astimezone(UTC).isoformat(),
-        "latency_ms": int(round(duration_ms)),
         "error_count": error_count,
     }
+    if duration_ms is not None:
+        event["latency_ms"] = int(round(duration_ms))
     if failure_code is not None:
         event["failure_code"] = failure_code
     return event

@@ -66,6 +66,10 @@ _SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"(?i)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
     r"password|senha|secret|token)\s*[:=]\s*[^\s,;]}]+"
 )
+_SAFE_TECHNICAL_HASH_VALUE_PATTERN = re.compile(
+    r"^(?:evt_callback|evt_public_query|idem_callback|idem_public_query)_[a-f0-9]{24}$"
+)
+_SAFE_TECHNICAL_TRACE_VALUE_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 
 _TECHNICAL_FORBIDDEN_KEY_TERMS = frozenset(
     {
@@ -447,8 +451,8 @@ def _scan_text(text: str, *, exposure: ExposureKind, path: str) -> Iterable[str]
     for match in _RAW_PHONE_PATTERN.finditer(text):
         if (
             _is_hex_memory_address_match(text, match)
-            or _is_hex_identifier_match(text, match)
             or _is_iso_datetime_match(text, match)
+            or _is_safe_technical_identifier(text, path=path)
         ):
             continue
         yield f"{path}:telefone"
@@ -496,15 +500,6 @@ def _is_hex_memory_address_match(text: str, match: re.Match[str]) -> bool:
     )
 
 
-def _is_hex_identifier_match(text: str, match: re.Match[str]) -> bool:
-    token = _match_token(text, match)
-    return (
-        len(token) >= 16
-        and any(character in "abcdefABCDEF" for character in token)
-        and all(character in "0123456789abcdefABCDEF" for character in token)
-    )
-
-
 def _is_iso_datetime_match(text: str, match: re.Match[str]) -> bool:
     window_start = max(0, match.start() - 32)
     window = text[window_start : min(len(text), match.end() + 32)]
@@ -521,14 +516,12 @@ def _is_iso_datetime_match(text: str, match: re.Match[str]) -> bool:
     return False
 
 
-def _match_token(text: str, match: re.Match[str]) -> str:
-    token_start = match.start()
-    while token_start > 0 and text[token_start - 1].isalnum():
-        token_start -= 1
-    token_end = match.end()
-    while token_end < len(text) and text[token_end].isalnum():
-        token_end += 1
-    return text[token_start:token_end]
+def _is_safe_technical_identifier(text: str, *, path: str) -> bool:
+    if path.endswith((".event_id", ".idempotency_key")):
+        return _SAFE_TECHNICAL_HASH_VALUE_PATTERN.fullmatch(text) is not None
+    if path.endswith(".trace_id"):
+        return _SAFE_TECHNICAL_TRACE_VALUE_PATTERN.fullmatch(text) is not None
+    return False
 
 
 def _scan_numeric_identifier(value: int, *, path: str) -> Iterable[str]:

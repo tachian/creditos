@@ -25,6 +25,7 @@ def test_technical_signal_taxonomy_classifies_allowed_and_deferred_signals() -> 
         "contract",
         "contract_version",
         "destination",
+        "failure_code",
         "operation",
         "operation_type",
         "product_type",
@@ -138,6 +139,39 @@ def test_record_operation_emits_safe_log_metric_and_span_for_all_operation_types
         TRACE_ID,
     ):
         assert high_cardinality_label not in serialized_metrics
+
+
+def test_record_operation_preserves_failure_code_as_safe_low_cardinality_signal() -> None:
+    context = ObservabilityContext.new(
+        correlation_id="corr-op-failure",
+        request_id="req-op-failure",
+        trace_id=TRACE_ID,
+        tenant_id="tenant-alpha",
+        tenant_isolation_tier="bridge",
+    )
+    telemetry = InMemoryTelemetry(service_name="integration-service", service_version="0.1.0")
+
+    event = telemetry.record_operation(
+        context=context,
+        operation_type=TelemetryOperationType.JOB,
+        operation="webhook_delivery.failed",
+        status="accepted",
+        duration_ms=9.5,
+        source="integration-service",
+        destination="webhook-endpoint",
+        contract="integration-webhook-delivery",
+        contract_version="v1",
+        extra={"failure_code": "endpoint_unavailable"},
+        attributes={"failure_code": "endpoint_unavailable"},
+    )
+
+    span_attributes = dict(telemetry.finished_spans()[0].attributes or {})
+    serialized_metrics = str(telemetry.metrics_data())
+
+    assert event["extra"]["failure_code"] == "endpoint_unavailable"
+    assert span_attributes["failure_code"] == "endpoint_unavailable"
+    assert "failure_code" in serialized_metrics
+    assert "endpoint_unavailable" in serialized_metrics
 
 
 def test_record_operation_validates_before_recording_any_metric_or_span() -> None:

@@ -406,6 +406,80 @@ def test_webhook_reprocess_marks_dlq_only_after_successful_delivery() -> None:
     assert updated_record.reprocess_job_ids == ()
 
 
+def test_webhook_reprocess_business_events_are_scoped_by_command_idempotency_key() -> None:
+    failing_adapter = InMemoryWebhookDeliveryAdapter(
+        [
+            WebhookDeliveryAdapterResult.final_failure(
+                status_code=400,
+                failure_code="endpoint_rejected",
+            )
+        ]
+    )
+    dlq_store = InMemoryWebhookDeliveryDlqStore()
+    delivery_store = InMemoryWebhookDeliveryStore()
+    repository = InMemoryWebhookConfigurationRepository()
+    service = _service(
+        repository=repository,
+        delivery_store=delivery_store,
+        dlq_store=dlq_store,
+        delivery_adapter=failing_adapter,
+    )
+    service.configure_webhook(_configure_command(), context=_context())
+    failed = service.dispatch_webhook_notification(_notification_command(), context=_context())
+    dlq_id = failed.dlq_records[0].dlq_id
+    retry_adapter = InMemoryWebhookDeliveryAdapter(
+        [
+            WebhookDeliveryAdapterResult.temporary_failure(
+                status_code=503,
+                failure_code="endpoint_unavailable",
+            ),
+            WebhookDeliveryAdapterResult.temporary_failure(
+                status_code=503,
+                failure_code="endpoint_unavailable",
+            ),
+        ]
+    )
+    service = _service(
+        repository=repository,
+        delivery_store=delivery_store,
+        dlq_store=dlq_store,
+        delivery_adapter=retry_adapter,
+    )
+
+    first_reprocess = service.reprocess_webhook_dlq(
+        ReprocessWebhookDlqCommand(
+            dlq_id=dlq_id,
+            idempotency_key="idem-webhook-reprocess-first",
+            scopes=("webhook_delivery:reprocess",),
+        ),
+        context=_context(),
+    )
+    second_reprocess = service.reprocess_webhook_dlq(
+        ReprocessWebhookDlqCommand(
+            dlq_id=dlq_id,
+            idempotency_key="idem-webhook-reprocess-second",
+            scopes=("webhook_delivery:reprocess",),
+        ),
+        context=_context(),
+    )
+
+    assert first_reprocess.jobs[0].job_id != second_reprocess.jobs[0].job_id
+    assert first_reprocess.business_events[0]["operation"] == (
+        "webhook_delivery.reprocess_requested"
+    )
+    assert second_reprocess.business_events[0]["operation"] == (
+        "webhook_delivery.reprocess_requested"
+    )
+    assert (
+        first_reprocess.business_events[0]["event_id"]
+        != (second_reprocess.business_events[0]["event_id"])
+    )
+    assert (
+        first_reprocess.business_events[0]["idempotency_key"]
+        != (second_reprocess.business_events[0]["idempotency_key"])
+    )
+
+
 def test_webhook_reprocess_idempotency_is_bound_to_each_dlq_record() -> None:
     failing_adapter = InMemoryWebhookDeliveryAdapter(
         [
@@ -616,18 +690,52 @@ def test_webhook_delivery_emits_safe_normalized_observability_and_business_signa
     assert "proposal-123" not in str(telemetry.operations)
     assert "callbacks.example.com/creditos/status" not in str(telemetry.operations)
     assert "signing-secret" not in str(telemetry.operations)
+    failure_operations = [
+        operation
+        for operation in telemetry.operations
+        if operation["operation"] == "webhook_delivery.failed"
+    ]
+    failure_operation_attributes = [operation.get("attributes") for operation in failure_operations]
+    assert {"failure_code": "endpoint_unavailable"} in failure_operation_attributes
+    assert {"failure_code": "endpoint_rejected"} in failure_operation_attributes
 
-    assert initial.business_events[-1]["callback_status"] == "retrying"
-    assert initial.business_events[-1]["failure_code"] == "endpoint_unavailable"
+    initial_failed_event = next(
+        event
+        for event in initial.business_events
+        if event["operation"] == "webhook_delivery.failed"
+    )
+    initial_retry_event = next(
+        event
+        for event in initial.business_events
+        if event["operation"] == "webhook_delivery.retry_scheduled"
+    )
+    retry_failed_event = next(
+        event for event in retry.business_events if event["operation"] == "webhook_delivery.failed"
+    )
+    retry_dlq_event = next(
+        event
+        for event in retry.business_events
+        if event["operation"] == "webhook_delivery.dlq_recorded"
+    )
+
+    assert initial_failed_event["error_count"] == 1
+    assert "latency_ms" in initial_failed_event
+    assert initial_retry_event["callback_status"] == "retrying"
+    assert initial_retry_event["error_count"] == 0
+    assert "latency_ms" not in initial_retry_event
+    assert initial_retry_event["failure_code"] == "endpoint_unavailable"
     assert all(event["callback_status"] != "skipped" for event in initial.business_events)
-    assert retry.business_events[-1]["callback_status"] == "dlq"
-    assert retry.business_events[-1]["error_count"] == 1
-    assert retry.business_events[-1]["failure_code"] == "endpoint_rejected"
-    assert retry.business_events[-1]["product_type"] == "unknown"
-    assert retry.business_events[-1]["channel"] == "api"
-    assert "proposal_id" not in retry.business_events[-1]
-    assert "endpoint_url" not in retry.business_events[-1]
-    assert "event_ref" not in retry.business_events[-1]
+    assert retry_failed_event["error_count"] == 1
+    assert "latency_ms" in retry_failed_event
+    assert retry_dlq_event["callback_status"] == "dlq"
+    assert retry_dlq_event["error_count"] == 0
+    assert "latency_ms" not in retry_dlq_event
+    assert retry_dlq_event["failure_code"] == "endpoint_rejected"
+    assert retry_dlq_event["product_type"] == "unknown"
+    assert retry_dlq_event["channel"] == "api"
+    assert "proposal_id" not in retry_dlq_event
+    assert "endpoint_url" not in retry_dlq_event
+    assert "event_ref" not in retry_dlq_event
     validate_observability_exposure_payload(
         {
             "logs": service.logged_events,
