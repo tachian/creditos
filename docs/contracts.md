@@ -80,6 +80,12 @@ contrato e índice governado futuros. Proposta inexistente, decisão ausente sem
 status governado, cross-tenant e permissão insuficiente usam erro público
 indistinguível para não revelar existência de dados de outro tenant.
 
+Os exemplos oficiais de contrato ficam em `components.examples` do OpenAPI e
+são validados pelo checker e pela suíte de contrato. Eles cobrem status
+pendente, decisão aprovada, decisão recusada, decisão inconclusiva e erro
+público. As expectativas de consumidor para cliente B2B técnico ficam em
+`packages/contracts/consumer-expectations/decision-public/v1/README.md`.
+
 Enquanto não houver cliente externo ativo integrado, o `decision-public-api` v1
 é tratado como experimental em estágio MVP pré-produção: ajustes incompatíveis
 podem ocorrer na própria v1 desde que sejam registrados no catálogo e cobertos
@@ -116,9 +122,9 @@ futuro no Jira.
 
 O contrato `webhook-configuration-public-api` governa a configuração de
 webhooks por tenant em `packages/contracts/openapi/public/webhooks/v1/openapi.json`.
-A v1 cobre somente cadastro, listagem e desativação da configuração; a
-entrega assíncrona, assinatura do payload entregue, retry de entrega e DLQ ficam
-fora deste contrato inicial e pertencem à Story 8.4.
+A v1 cobre cadastro, listagem, desativação da configuração e expectativas
+públicas do callback assinado. A execução assíncrona, broker real, retry
+operacional e DLQ runtime continuam pertencendo às Stories 8.4 e 8.5.
 
 A configuração aceita somente endpoints `https://` validados pelo `Integration
 Service`, eventos versionados (`decision.status_changed` e `decision.completed`),
@@ -126,7 +132,11 @@ status público controlado, referência de chave de assinatura e política de re
 O contrato não expõe `tenant_id` como autoridade, segredo em claro, headers
 privados, payload bruto ou campos livres. A assinatura inicial usa
 `hmac_sha256` com `signing_key_ref`; armazenamento real em KMS/Secret Manager
-fica fora do escopo desta story.
+fica fora do escopo desta story. Os exemplos oficiais cobrem configuração,
+listagem, erro, payload público de callback, headers públicos de assinatura,
+retry `standard_exponential_backoff`, `no_retry` e metadados seguros de DLQ.
+As expectativas de consumidor ficam em
+`packages/contracts/consumer-expectations/webhook-public/v1/README.md`.
 
 Enquanto não houver cliente externo ativo integrado, a v1 permanece
 experimental em estágio MVP pré-produção. A partir do primeiro cliente externo,

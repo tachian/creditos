@@ -54,6 +54,20 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DecisionQueryResponse"
+                },
+                "examples": {
+                  "DecisionSubmittedExample": {
+                    "$ref": "#/components/examples/DecisionSubmittedExample"
+                  },
+                  "DecisionApprovedExample": {
+                    "$ref": "#/components/examples/DecisionApprovedExample"
+                  },
+                  "DecisionRejectedExample": {
+                    "$ref": "#/components/examples/DecisionRejectedExample"
+                  },
+                  "DecisionUnableToDecideExample": {
+                    "$ref": "#/components/examples/DecisionUnableToDecideExample"
+                  }
                 }
               }
             }
@@ -64,6 +78,11 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "DecisionInvalidRequestErrorExample": {
+                    "$ref": "#/components/examples/DecisionInvalidRequestErrorExample"
+                  }
                 }
               }
             }
@@ -74,6 +93,11 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "DecisionInvalidRequestErrorExample": {
+                    "$ref": "#/components/examples/DecisionInvalidRequestErrorExample"
+                  }
                 }
               }
             }
@@ -84,6 +108,11 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "DecisionNotAvailableErrorExample": {
+                    "$ref": "#/components/examples/DecisionNotAvailableErrorExample"
+                  }
                 }
               }
             }
@@ -94,6 +123,11 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "DecisionQueryFailedErrorExample": {
+                    "$ref": "#/components/examples/DecisionQueryFailedErrorExample"
+                  }
                 }
               }
             }
@@ -600,6 +634,165 @@
         },
         "additionalProperties": false,
         "description": "Erro público versionado e seguro para consulta de decisão/status."
+      }
+    },
+    "examples": {
+      "DecisionSubmittedExample": {
+        "summary": "Status público pendente sem decisão final",
+        "value": {
+          "contract_version": "v1",
+          "proposal_id": "proposal_personal_credit_001",
+          "status": "submitted",
+          "product_type": "personal_credit",
+          "channel": "api",
+          "message": "análise recebida",
+          "correlation_id": "corr_contract_decision_001",
+          "reason_codes": [],
+          "factors": []
+        }
+      },
+      "DecisionApprovedExample": {
+        "summary": "Decisão final aprovada com termos aprovados minimizados",
+        "value": {
+          "contract_version": "v1",
+          "proposal_id": "proposal_personal_credit_001",
+          "decision_id": "decision_personal_credit_001",
+          "status": "completed",
+          "outcome": "approve",
+          "decided_at": "2026-10-09T12:00:00+00:00",
+          "product_type": "personal_credit",
+          "channel": "api",
+          "message": "decisão aprovada",
+          "correlation_id": "corr_contract_decision_001",
+          "policy": {
+            "policy_id": "policy_credit_default",
+            "policy_version_id": "policy_credit_default_v1",
+            "policy_revision": 1,
+            "reason_code_catalog_version_id": "reason_catalog_v1"
+          },
+          "reason_codes": [
+            {
+              "code": "rc_positive_capacity",
+              "title": "Capacidade compatível",
+              "description": "Indicadores agregados sustentam a aprovação solicitada.",
+              "severity": "info"
+            }
+          ],
+          "factors": [
+            {
+              "factor_id": "factor_declared_income_band",
+              "field": "declared_income_band",
+              "title": "Faixa de renda declarada",
+              "description": "Faixa agregada utilizada na decisão explicável.",
+              "required": true
+            }
+          ],
+          "approved_terms": {
+            "approved_amount_units": 500000,
+            "approved_installments": 12,
+            "approved_term_days": 365
+          }
+        }
+      },
+      "DecisionRejectedExample": {
+        "summary": "Decisão final recusada sem termos aprovados",
+        "value": {
+          "contract_version": "v1",
+          "proposal_id": "proposal_bnpl_001",
+          "decision_id": "decision_bnpl_001",
+          "status": "completed",
+          "outcome": "reject",
+          "decided_at": "2026-10-09T12:05:00+00:00",
+          "product_type": "bnpl",
+          "channel": "checkout",
+          "message": "decisão recusada",
+          "correlation_id": "corr_contract_decision_002",
+          "policy": {
+            "policy_id": "policy_bnpl_default",
+            "policy_version_id": "policy_bnpl_default_v1",
+            "policy_revision": 1,
+            "reason_code_catalog_version_id": "reason_catalog_v1"
+          },
+          "reason_codes": [
+            {
+              "code": "rc_insufficient_score_band",
+              "title": "Faixa de score insuficiente",
+              "description": "Indicadores agregados ficaram abaixo do mínimo configurado.",
+              "severity": "warning"
+            }
+          ],
+          "factors": [
+            {
+              "factor_id": "factor_score_band",
+              "field": "score_band",
+              "title": "Faixa de score",
+              "description": "Faixa agregada usada para explicar a recusa.",
+              "required": true
+            }
+          ]
+        }
+      },
+      "DecisionUnableToDecideExample": {
+        "summary": "Decisão inconclusiva sem fila manual e sem termos aprovados",
+        "value": {
+          "contract_version": "v1",
+          "proposal_id": "proposal_business_credit_001",
+          "decision_id": "decision_business_credit_001",
+          "status": "unable_to_decide",
+          "outcome": "unable_to_decide",
+          "decided_at": "2026-10-09T12:10:00+00:00",
+          "product_type": "business_credit",
+          "channel": "partner",
+          "message": "decisão inconclusiva",
+          "correlation_id": "corr_contract_decision_003",
+          "policy": {
+            "policy_id": "policy_business_credit_default",
+            "policy_version_id": "policy_business_credit_default_v1",
+            "policy_revision": 1,
+            "reason_code_catalog_version_id": "reason_catalog_v1"
+          },
+          "reason_codes": [
+            {
+              "code": "rc_missing_governed_signal",
+              "title": "Sinal governado indisponível",
+              "description": "Sinais mínimos agregados não ficaram disponíveis para decisão automática.",
+              "severity": "warning"
+            }
+          ],
+          "factors": [
+            {
+              "factor_id": "factor_signal_availability",
+              "field": "signal_availability",
+              "title": "Disponibilidade de sinais",
+              "description": "Disponibilidade agregada insuficiente para decisão determinística.",
+              "required": true
+            }
+          ]
+        }
+      },
+      "DecisionNotAvailableErrorExample": {
+        "summary": "Erro público indistinguível para decisão indisponível",
+        "value": {
+          "error_code": "decision_not_available",
+          "message": "decisão não disponível",
+          "correlation_id": "corr_contract_decision_404"
+        }
+      },
+      "DecisionInvalidRequestErrorExample": {
+        "summary": "Erro público para requisição inválida",
+        "value": {
+          "error_code": "invalid_request",
+          "message": "requisição inválida",
+          "correlation_id": "corr_contract_decision_400"
+        }
+      },
+      "DecisionQueryFailedErrorExample": {
+        "summary": "Erro público para falha controlada na consulta de decisão",
+        "value": {
+          "error_code": "decision_query_failed",
+          "message": "consulta de decisão indisponível",
+          "correlation_id": "corr_contract_decision_500"
+        }
       }
     }
   }

@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import re
 import sys
 import tomllib
 from collections.abc import Iterator
+from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONTRACTS = ROOT / "packages" / "contracts"
@@ -305,6 +309,39 @@ DECISION_PUBLIC_RESPONSE_REQUIRED = {
     "message",
     "correlation_id",
 }
+DECISION_PUBLIC_EXAMPLES = {
+    "DecisionSubmittedExample",
+    "DecisionApprovedExample",
+    "DecisionRejectedExample",
+    "DecisionUnableToDecideExample",
+    "DecisionInvalidRequestErrorExample",
+    "DecisionNotAvailableErrorExample",
+    "DecisionQueryFailedErrorExample",
+}
+DECISION_PUBLIC_EXAMPLE_FORBIDDEN_FIELDS = {
+    "tenant_id",
+    "triggered_rule_ids",
+    "decision_fingerprint",
+    "input_fingerprint",
+    "raw_payload",
+    "payload",
+    "required_data_refs",
+    "validation_issue_codes",
+    "fallback_action",
+    "headers",
+    "token",
+    "authorization",
+    "cpf",
+    "cnpj",
+    "email",
+    "nome",
+    "phone",
+    "telefone",
+    "address",
+    "endereco",
+    "stack_trace",
+    "traceback",
+}
 WEBHOOK_PUBLIC_EVENTS = {"decision.status_changed", "decision.completed"}
 WEBHOOK_PUBLIC_REQUEST_STATUSES = {"active", "disabled", "pending_verification"}
 WEBHOOK_PUBLIC_STATUS_UPDATE_STATUSES = {"disabled"}
@@ -323,6 +360,7 @@ WEBHOOK_PUBLIC_FORBIDDEN_FIELDS = {
     "headers",
     "payload",
     "raw_payload",
+    "private_headers",
     "request_body",
     "response_body",
     "authorization",
@@ -346,6 +384,72 @@ WEBHOOK_PUBLIC_RESPONSE_REQUIRED = {
     "updated_at",
     "correlation_id",
 }
+WEBHOOK_CALLBACK_PAYLOAD_REQUIRED = {
+    "contract_version",
+    "event_id",
+    "event_type",
+    "proposal_id",
+    "decision_status",
+    "occurred_at",
+    "correlation_id",
+    "trace_id",
+    "idempotency_key",
+}
+WEBHOOK_DELIVERY_HEADER_NAMES = {
+    "Content-Type",
+    "X-CreditOS-Correlation-Id",
+    "X-CreditOS-Event-Id",
+    "X-CreditOS-Event-Type",
+    "X-CreditOS-Idempotency-Key",
+    "X-CreditOS-Signature",
+    "X-CreditOS-Signature-Algorithm",
+    "X-CreditOS-Timestamp",
+}
+WEBHOOK_DELIVERY_RETRY_METADATA_REQUIRED = {
+    "strategy",
+    "attempt_count",
+    "max_attempts",
+    "initial_backoff_ms",
+    "max_backoff_ms",
+    "timeout_ms",
+    "delivery_status",
+    "failure_code",
+    "next_attempt_at",
+    "dlq_status",
+}
+WEBHOOK_PUBLIC_EXAMPLES = {
+    "WebhookConfigurationRequestExample",
+    "WebhookConfigurationResponseExample",
+    "WebhookConfigurationListResponseExample",
+    "WebhookInvalidRequestErrorExample",
+    "WebhookConfigurationNotAvailableErrorExample",
+    "WebhookConfigurationFailedErrorExample",
+    "WebhookCallbackPayloadExample",
+    "WebhookDeliveryHeadersExample",
+    "WebhookRetryMetadataExample",
+    "WebhookNoRetryDlqMetadataExample",
+}
+WEBHOOK_EXAMPLE_SIGNING_KEY = b"creditos-contract-test-signing-key"
+PUBLIC_CONTRACT_GUIDANCE = (
+    "Crie nova versão ou atualize política de compatibilidade/migração antes de integrar "
+    "cliente externo."
+)
+WEBHOOK_PUBLIC_EXAMPLE_FORBIDDEN_FIELDS = WEBHOOK_PUBLIC_FORBIDDEN_FIELDS | {
+    "cpf",
+    "cnpj",
+    "email",
+    "nome",
+    "phone",
+    "telefone",
+    "address",
+    "endereco",
+    "document",
+    "documento",
+    "raw_headers",
+    "stack_trace",
+    "traceback",
+    "exception",
+}
 KIND_PATH_RULES = {
     "openapi": (("openapi", "public"), ".json"),
     "protobuf": (("protobuf", "internal"), ".proto"),
@@ -368,6 +472,10 @@ def display_path(path: Path) -> str:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ContractCheckError(message)
+
+
+def public_contract_error(message: str) -> str:
+    return f"{message} {PUBLIC_CONTRACT_GUIDANCE}"
 
 
 def require_dict(value: Any, message: str) -> dict[str, Any]:
@@ -537,11 +645,21 @@ def validate_openapi_contract(path: Path, version: str) -> None:
             f"OpenAPI operação deve declarar respostas padrão {sorted(required_responses)}: {path}",
         )
     validate_proposal_openapi_contract(paths, path)
-    validate_decision_public_openapi_contract(schemas, path)
-    validate_webhook_public_openapi_contract(schemas, paths, path)
+    examples = require_dict(
+        components.get("examples", {}),
+        f"OpenAPI components.examples deve ser objeto quando declarado: {path}",
+    )
+
+    validate_decision_public_openapi_contract(contract, schemas, examples, path)
+    validate_webhook_public_openapi_contract(contract, schemas, paths, examples, path)
 
 
-def validate_decision_public_openapi_contract(schemas: dict[str, Any], path: Path) -> None:
+def validate_decision_public_openapi_contract(
+    contract: dict[str, Any],
+    schemas: dict[str, Any],
+    examples: dict[str, Any],
+    path: Path,
+) -> None:
     if path.parts[-5:] != ("openapi", "public", "decision", "v1", "openapi.json"):
         return
     response_schema = require_dict(
@@ -623,6 +741,13 @@ def validate_decision_public_openapi_contract(schemas: dict[str, Any], path: Pat
         "Decision public response não pode expor campos internos: "
         f"{sorted(forbidden_fields)} em {path}",
     )
+    validate_decision_public_examples(
+        examples=examples,
+        response_schema=response_schema,
+        error_schema=error_schema,
+        root_schema=contract,
+        path=path,
+    )
 
 
 def validate_decision_public_conditional_branches(
@@ -700,9 +825,116 @@ def validate_decision_public_conditional_branches(
             )
 
 
+def validate_decision_public_examples(
+    *,
+    examples: dict[str, Any],
+    response_schema: dict[str, Any],
+    error_schema: dict[str, Any],
+    root_schema: dict[str, Any],
+    path: Path,
+) -> None:
+    missing_examples = DECISION_PUBLIC_EXAMPLES - set(examples)
+    unexpected_examples = set(examples) - DECISION_PUBLIC_EXAMPLES
+    require(
+        not missing_examples,
+        public_contract_error(
+            f"Decision public examples obrigatórios ausentes: {sorted(missing_examples)} em {path}"
+        ),
+    )
+    require(
+        not unexpected_examples,
+        public_contract_error(
+            f"Decision public examples não governados: {sorted(unexpected_examples)} em {path}"
+        ),
+    )
+    error_properties = set(require_dict(error_schema.get("properties"), "").keys())
+    expected_cases = {
+        "DecisionSubmittedExample": ("submitted", None, "análise recebida", False),
+        "DecisionApprovedExample": ("completed", "approve", "decisão aprovada", True),
+        "DecisionRejectedExample": ("completed", "reject", "decisão recusada", False),
+        "DecisionUnableToDecideExample": (
+            "unable_to_decide",
+            "unable_to_decide",
+            "decisão inconclusiva",
+            False,
+        ),
+    }
+
+    for example_name, (status, outcome, message, requires_terms) in expected_cases.items():
+        value = openapi_example_value(examples, example_name, path)
+        require_no_sensitive_example_fields(
+            value,
+            DECISION_PUBLIC_EXAMPLE_FORBIDDEN_FIELDS,
+            f"Decision public example contém campo sensível: {example_name} em {path}",
+        )
+        require_valid_openapi_example(value, response_schema, root_schema, example_name, path)
+        require(
+            value.get("contract_version") == "v1"
+            and value.get("status") == status
+            and value.get("message") == message,
+            f"Decision public example diverge do branch esperado: {example_name} em {path}",
+        )
+        if outcome is None:
+            forbidden_final_fields = {
+                "decision_id",
+                "outcome",
+                "decided_at",
+                "policy",
+                "approved_terms",
+            }
+            require(
+                not (set(value) & forbidden_final_fields),
+                f"Decision public example pré-decisão expõe decisão: {example_name} em {path}",
+            )
+            require(
+                value.get("reason_codes", []) == [] and value.get("factors", []) == [],
+                f"Decision public example pré-decisão deve manter arrays vazios: {example_name}",
+            )
+        else:
+            require(
+                value.get("outcome") == outcome
+                and {"decision_id", "decided_at", "policy", "reason_codes", "factors"}
+                <= set(value),
+                f"Decision public example final incompleto: {example_name} em {path}",
+            )
+            require(
+                bool(value.get("reason_codes")) and bool(value.get("factors")),
+                "Decision public example final deve trazer explicabilidade pública: "
+                f"{example_name}",
+            )
+        require(
+            ("approved_terms" in value) is requires_terms,
+            f"Decision public example approved_terms divergente: {example_name} em {path}",
+        )
+
+    for example_name, expected_error_code in {
+        "DecisionInvalidRequestErrorExample": "invalid_request",
+        "DecisionNotAvailableErrorExample": "decision_not_available",
+        "DecisionQueryFailedErrorExample": "decision_query_failed",
+    }.items():
+        error_value = openapi_example_value(examples, example_name, path)
+        require_no_sensitive_example_fields(
+            error_value,
+            DECISION_PUBLIC_EXAMPLE_FORBIDDEN_FIELDS,
+            f"Decision public error example contém campo sensível em {path}",
+        )
+        require_valid_openapi_example(error_value, error_schema, root_schema, example_name, path)
+        require(
+            set(error_value) == error_properties
+            and error_value.get("error_code") == expected_error_code
+            and isinstance(error_value.get("correlation_id"), str)
+            and bool(error_value.get("correlation_id")),
+            public_contract_error(
+                f"Decision public error example incompatível com ErrorResponse em {path}"
+            ),
+        )
+
+
 def validate_webhook_public_openapi_contract(
+    contract: dict[str, Any],
     schemas: dict[str, Any],
     paths: dict[str, Any],
+    examples: dict[str, Any],
     path: Path,
 ) -> None:
     if path.parts[-5:] != ("openapi", "public", "webhooks", "v1", "openapi.json"):
@@ -727,6 +959,20 @@ def validate_webhook_public_openapi_contract(
     require_dict(
         detail_path.get("patch"),
         f"OpenAPI Webhooks deve declarar PATCH de status: {path}",
+    )
+    webhook_operations = require_dict(
+        contract.get("webhooks"),
+        public_contract_error(
+            f"OpenAPI Webhooks deve declarar operação pública de callback assinado: {path}"
+        ),
+    )
+    decision_notification = require_dict(
+        webhook_operations.get("decisionNotification"),
+        public_contract_error(f"OpenAPI Webhooks deve declarar decisionNotification: {path}"),
+    )
+    callback_operation = require_dict(
+        decision_notification.get("post"),
+        public_contract_error(f"OpenAPI Webhooks deve declarar POST de callback assinado: {path}"),
     )
 
     request_schema = require_dict(
@@ -757,6 +1003,18 @@ def validate_webhook_public_openapi_contract(
         schemas.get("ErrorResponse"),
         f"OpenAPI Webhooks deve definir ErrorResponse: {path}",
     )
+    callback_schema = require_dict(
+        schemas.get("WebhookCallbackPayload"),
+        f"OpenAPI Webhooks deve definir WebhookCallbackPayload: {path}",
+    )
+    delivery_headers_schema = require_dict(
+        schemas.get("WebhookDeliveryHeaders"),
+        f"OpenAPI Webhooks deve definir WebhookDeliveryHeaders: {path}",
+    )
+    retry_metadata_schema = require_dict(
+        schemas.get("WebhookDeliveryRetryMetadata"),
+        f"OpenAPI Webhooks deve definir WebhookDeliveryRetryMetadata: {path}",
+    )
 
     for schema_name, schema in {
         "WebhookConfigurationRequest": request_schema,
@@ -765,6 +1023,9 @@ def validate_webhook_public_openapi_contract(
         "WebhookConfigurationListResponse": list_response_schema,
         "WebhookSigningConfiguration": signing_schema,
         "WebhookRetryPolicy": retry_schema,
+        "WebhookCallbackPayload": callback_schema,
+        "WebhookDeliveryHeaders": delivery_headers_schema,
+        "WebhookDeliveryRetryMetadata": retry_metadata_schema,
         "ErrorResponse": error_schema,
     }.items():
         require(
@@ -796,6 +1057,18 @@ def validate_webhook_public_openapi_contract(
         retry_schema.get("properties"),
         f"WebhookRetryPolicy deve declarar properties: {path}",
     )
+    callback_properties = require_dict(
+        callback_schema.get("properties"),
+        f"WebhookCallbackPayload deve declarar properties: {path}",
+    )
+    delivery_header_properties = require_dict(
+        delivery_headers_schema.get("properties"),
+        f"WebhookDeliveryHeaders deve declarar properties: {path}",
+    )
+    retry_metadata_properties = require_dict(
+        retry_metadata_schema.get("properties"),
+        f"WebhookDeliveryRetryMetadata deve declarar properties: {path}",
+    )
     error_properties = require_dict(
         error_schema.get("properties"),
         f"Webhook ErrorResponse deve declarar properties: {path}",
@@ -814,6 +1087,20 @@ def validate_webhook_public_openapi_contract(
         == {"contract_version", "items", "correlation_id"},
         f"Webhook public list response required divergente: {path}",
     )
+    require(
+        set(callback_schema.get("required", [])) == WEBHOOK_CALLBACK_PAYLOAD_REQUIRED,
+        f"Webhook callback payload required divergente: {path}",
+    )
+    require(
+        set(delivery_headers_schema.get("required", [])) == WEBHOOK_DELIVERY_HEADER_NAMES
+        and set(delivery_header_properties) == WEBHOOK_DELIVERY_HEADER_NAMES,
+        f"Webhook delivery headers públicos divergentes: {path}",
+    )
+    require(
+        set(retry_metadata_schema.get("required", [])) == WEBHOOK_DELIVERY_RETRY_METADATA_REQUIRED,
+        f"Webhook retry metadata required divergente: {path}",
+    )
+    validate_webhook_callback_operation(callback_operation, path)
     require(
         set(
             require_dict(
@@ -904,6 +1191,36 @@ def validate_webhook_public_openapi_contract(
         == WEBHOOK_PUBLIC_ERROR_CODES,
         f"Webhook public error_code enum divergente: {path}",
     )
+    require(
+        set(
+            require_dict(
+                callback_properties.get("event_type"),
+                f"WebhookCallbackPayload.event_type deve ser objeto: {path}",
+            ).get("enum", [])
+        )
+        == WEBHOOK_PUBLIC_EVENTS,
+        f"Webhook callback event_type enum divergente: {path}",
+    )
+    require(
+        require_dict(
+            delivery_header_properties.get("X-CreditOS-Signature"),
+            f"WebhookDeliveryHeaders.X-CreditOS-Signature deve ser objeto: {path}",
+        ).get("pattern")
+        == "^sha256=[a-f0-9]{64}$"
+        and delivery_header_properties.get("X-CreditOS-Signature-Algorithm", {}).get("const")
+        == "hmac_sha256",
+        f"Webhook delivery signature headers divergentes: {path}",
+    )
+    require(
+        set(
+            require_dict(
+                retry_metadata_properties.get("strategy"),
+                f"WebhookDeliveryRetryMetadata.strategy deve ser objeto: {path}",
+            ).get("enum", [])
+        )
+        == WEBHOOK_PUBLIC_RETRY_STRATEGIES,
+        f"Webhook retry metadata strategy enum divergente: {path}",
+    )
     forbidden_fields = (
         set(iter_property_names({"schemas": schemas})) & WEBHOOK_PUBLIC_FORBIDDEN_FIELDS
     )
@@ -912,6 +1229,356 @@ def validate_webhook_public_openapi_contract(
         "Webhook public contract não pode expor campos sensíveis: "
         f"{sorted(forbidden_fields)} em {path}",
     )
+    validate_webhook_public_examples(
+        examples=examples,
+        request_schema=request_schema,
+        response_schema=response_schema,
+        list_response_schema=list_response_schema,
+        error_schema=error_schema,
+        callback_schema=callback_schema,
+        headers_schema=delivery_headers_schema,
+        retry_metadata_schema=retry_metadata_schema,
+        root_schema=contract,
+        path=path,
+    )
+
+
+def validate_webhook_callback_operation(operation: dict[str, Any], path: Path) -> None:
+    parameters = operation.get("parameters", [])
+    require(isinstance(parameters, list), f"Webhook callback parameters deve ser lista: {path}")
+    headers_by_name = {
+        str(parameter.get("name")): parameter
+        for parameter in parameters
+        if isinstance(parameter, dict) and parameter.get("in") == "header"
+    }
+    require(
+        set(headers_by_name) == WEBHOOK_DELIVERY_HEADER_NAMES
+        and all(parameter.get("required") is True for parameter in headers_by_name.values()),
+        public_contract_error(
+            f"Webhook callback deve declarar headers públicos obrigatórios: {path}"
+        ),
+    )
+    request_body = require_dict(
+        operation.get("requestBody"),
+        f"Webhook callback deve declarar requestBody: {path}",
+    )
+    content = require_dict(
+        request_body.get("content"),
+        f"Webhook callback requestBody deve declarar content: {path}",
+    )
+    json_content = require_dict(
+        content.get("application/json"),
+        f"Webhook callback deve aceitar application/json: {path}",
+    )
+    schema = require_dict(
+        json_content.get("schema"),
+        f"Webhook callback deve declarar schema: {path}",
+    )
+    require(
+        request_body.get("required") is True
+        and schema.get("$ref") == "#/components/schemas/WebhookCallbackPayload",
+        public_contract_error(f"Webhook callback deve referenciar WebhookCallbackPayload: {path}"),
+    )
+    responses = require_dict(
+        operation.get("responses"),
+        f"Webhook callback deve declarar responses: {path}",
+    )
+    require(
+        {"202", "400", "500"} <= set(responses),
+        public_contract_error(f"Webhook callback deve declarar respostas 202/400/500: {path}"),
+    )
+
+
+def validate_webhook_public_examples(
+    *,
+    examples: dict[str, Any],
+    request_schema: dict[str, Any],
+    response_schema: dict[str, Any],
+    list_response_schema: dict[str, Any],
+    error_schema: dict[str, Any],
+    callback_schema: dict[str, Any],
+    headers_schema: dict[str, Any],
+    retry_metadata_schema: dict[str, Any],
+    root_schema: dict[str, Any],
+    path: Path,
+) -> None:
+    missing_examples = WEBHOOK_PUBLIC_EXAMPLES - set(examples)
+    unexpected_examples = set(examples) - WEBHOOK_PUBLIC_EXAMPLES
+    require(
+        not missing_examples,
+        public_contract_error(
+            f"Webhook public examples obrigatórios ausentes: {sorted(missing_examples)} em {path}"
+        ),
+    )
+    require(
+        not unexpected_examples,
+        public_contract_error(
+            f"Webhook public examples não governados: {sorted(unexpected_examples)} em {path}"
+        ),
+    )
+    request_value = openapi_example_value(examples, "WebhookConfigurationRequestExample", path)
+    response_value = openapi_example_value(examples, "WebhookConfigurationResponseExample", path)
+    list_value = openapi_example_value(examples, "WebhookConfigurationListResponseExample", path)
+    invalid_request_error = openapi_example_value(
+        examples, "WebhookInvalidRequestErrorExample", path
+    )
+    not_available_error = openapi_example_value(
+        examples, "WebhookConfigurationNotAvailableErrorExample", path
+    )
+    failed_error = openapi_example_value(examples, "WebhookConfigurationFailedErrorExample", path)
+    callback_value = openapi_example_value(examples, "WebhookCallbackPayloadExample", path)
+    headers_value = openapi_example_value(examples, "WebhookDeliveryHeadersExample", path)
+    retry_value = openapi_example_value(examples, "WebhookRetryMetadataExample", path)
+    no_retry_value = openapi_example_value(examples, "WebhookNoRetryDlqMetadataExample", path)
+
+    for example_name, value in {
+        "WebhookConfigurationRequestExample": request_value,
+        "WebhookConfigurationResponseExample": response_value,
+        "WebhookConfigurationListResponseExample": list_value,
+        "WebhookInvalidRequestErrorExample": invalid_request_error,
+        "WebhookConfigurationNotAvailableErrorExample": not_available_error,
+        "WebhookConfigurationFailedErrorExample": failed_error,
+        "WebhookCallbackPayloadExample": callback_value,
+        "WebhookDeliveryHeadersExample": headers_value,
+        "WebhookRetryMetadataExample": retry_value,
+        "WebhookNoRetryDlqMetadataExample": no_retry_value,
+    }.items():
+        require_no_sensitive_example_fields(
+            value,
+            WEBHOOK_PUBLIC_EXAMPLE_FORBIDDEN_FIELDS,
+            f"Webhook public example contém campo sensível: {example_name} em {path}",
+        )
+
+    require_valid_openapi_example(
+        request_value, request_schema, root_schema, "WebhookConfigurationRequestExample", path
+    )
+    require_valid_openapi_example(
+        response_value, response_schema, root_schema, "WebhookConfigurationResponseExample", path
+    )
+    require_valid_openapi_example(
+        list_value,
+        list_response_schema,
+        root_schema,
+        "WebhookConfigurationListResponseExample",
+        path,
+    )
+    for example_name, error_value, expected_code in (
+        ("WebhookInvalidRequestErrorExample", invalid_request_error, "invalid_request"),
+        (
+            "WebhookConfigurationNotAvailableErrorExample",
+            not_available_error,
+            "webhook_configuration_not_available",
+        ),
+        ("WebhookConfigurationFailedErrorExample", failed_error, "webhook_configuration_failed"),
+    ):
+        require_valid_openapi_example(error_value, error_schema, root_schema, example_name, path)
+        require(
+            error_value.get("error_code") == expected_code,
+            public_contract_error(f"Webhook error example usa error_code incompatível: {path}"),
+        )
+    require_valid_openapi_example(
+        callback_value, callback_schema, root_schema, "WebhookCallbackPayloadExample", path
+    )
+    require_valid_openapi_example(
+        headers_value, headers_schema, root_schema, "WebhookDeliveryHeadersExample", path
+    )
+    require_valid_openapi_example(
+        retry_value, retry_metadata_schema, root_schema, "WebhookRetryMetadataExample", path
+    )
+    require_valid_openapi_example(
+        no_retry_value,
+        retry_metadata_schema,
+        root_schema,
+        "WebhookNoRetryDlqMetadataExample",
+        path,
+    )
+    validate_webhook_retry_metadata_invariants(retry_value, "WebhookRetryMetadataExample", path)
+    validate_webhook_retry_metadata_invariants(
+        no_retry_value, "WebhookNoRetryDlqMetadataExample", path
+    )
+    require(
+        set(request_value.get("events", [])) == WEBHOOK_PUBLIC_EVENTS
+        and request_value.get("status") in WEBHOOK_PUBLIC_REQUEST_STATUSES,
+        f"Webhook request example não cobre eventos/status públicos esperados em {path}",
+    )
+    require(
+        set(response_value.get("events", [])) == WEBHOOK_PUBLIC_EVENTS
+        and response_value.get("status") in WEBHOOK_PUBLIC_RESPONSE_STATUSES,
+        f"Webhook response example não cobre eventos/status públicos esperados em {path}",
+    )
+    require(
+        isinstance(list_value.get("items"), list)
+        and list_value["items"]
+        and list_value["items"][0] == response_value,
+        f"Webhook list example deve reutilizar formato público de item em {path}",
+    )
+    require(
+        callback_value.get("event_type") in WEBHOOK_PUBLIC_EVENTS
+        and callback_value.get("decision_status") in DECISION_PUBLIC_STATUS_ENUM
+        and re.fullmatch(
+            r"^evt_[a-f0-9]{32}$",
+            str(callback_value.get("event_id", "")),
+        )
+        is not None
+        and re.fullmatch(r"^[0-9a-f]{32}$", str(callback_value.get("trace_id", ""))) is not None,
+        f"Webhook callback payload example diverge de eventos/ids públicos em {path}",
+    )
+    require(
+        headers_value.get("X-CreditOS-Event-Id") == callback_value.get("event_id")
+        and headers_value.get("X-CreditOS-Event-Type") == callback_value.get("event_type")
+        and headers_value.get("X-CreditOS-Idempotency-Key") == callback_value.get("idempotency_key")
+        and headers_value.get("X-CreditOS-Correlation-Id") == callback_value.get("correlation_id")
+        and re.fullmatch(
+            r"^sha256=[a-f0-9]{64}$",
+            str(headers_value.get("X-CreditOS-Signature", "")),
+        )
+        is not None
+        and headers_value.get("X-CreditOS-Signature-Algorithm") == "hmac_sha256",
+        f"Webhook delivery headers example incompatível com payload público em {path}",
+    )
+    expected_signature = webhook_example_signature(callback_value)
+    require(
+        headers_value.get("X-CreditOS-Signature") == expected_signature,
+        public_contract_error(
+            "Webhook delivery signature example não corresponde ao payload "
+            f"canonicalizado em {path}"
+        ),
+    )
+    require(
+        retry_value.get("strategy") == "standard_exponential_backoff"
+        and retry_value.get("delivery_status") == "retry_scheduled"
+        and retry_value.get("dlq_status") == "not_recorded",
+        f"Webhook retry example deve cobrir retry agendado em {path}",
+    )
+    require(
+        no_retry_value.get("strategy") == "no_retry"
+        and no_retry_value.get("delivery_status") == "dlq_recorded"
+        and no_retry_value.get("dlq_status") == "recorded",
+        f"Webhook no-retry example deve cobrir DLQ segura em {path}",
+    )
+
+
+def require_valid_openapi_example(
+    value: dict[str, Any],
+    schema: dict[str, Any],
+    root_schema: dict[str, Any],
+    example_name: str,
+    path: Path,
+) -> None:
+    errors = validate_schema_value(schema, value, root_schema=root_schema)
+    require(
+        not errors,
+        public_contract_error(
+            f"OpenAPI example incompatível com schema: {example_name} em {path}: {errors}"
+        ),
+    )
+
+
+def validate_webhook_retry_metadata_invariants(
+    value: dict[str, Any],
+    example_name: str,
+    path: Path,
+) -> None:
+    attempt_count = value.get("attempt_count")
+    max_attempts = value.get("max_attempts")
+    require(
+        type(attempt_count) is int and type(max_attempts) is int and attempt_count <= max_attempts,
+        public_contract_error(
+            f"Webhook retry metadata attempt_count inválido: {example_name} em {path}"
+        ),
+    )
+    if value.get("strategy") == "no_retry":
+        require(
+            attempt_count == 1 and max_attempts == 1,
+            public_contract_error(
+                f"Webhook no_retry deve limitar tentativas: {example_name} em {path}"
+            ),
+        )
+    if value.get("delivery_status") == "retry_scheduled":
+        require(
+            value.get("next_attempt_at") is not None and value.get("dlq_status") == "not_recorded",
+            public_contract_error(
+                f"Webhook retry agendado deve ter próxima tentativa: {example_name}"
+            ),
+        )
+    if value.get("delivery_status") == "dlq_recorded":
+        require(
+            value.get("next_attempt_at") is None and value.get("dlq_status") == "recorded",
+            public_contract_error(f"Webhook DLQ não deve ter próxima tentativa: {example_name}"),
+        )
+
+
+def webhook_example_signature(payload: dict[str, Any]) -> str:
+    canonical_payload = json.dumps(dict(payload), sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    signature = hmac.new(WEBHOOK_EXAMPLE_SIGNING_KEY, canonical_payload, sha256).hexdigest()
+    return f"sha256={signature}"
+
+
+def openapi_example_value(
+    examples: dict[str, Any],
+    example_name: str,
+    path: Path,
+) -> dict[str, Any]:
+    example = require_dict(
+        examples.get(example_name),
+        f"OpenAPI example ausente: {example_name} em {path}",
+    )
+    value = require_dict(
+        example.get("value"),
+        f"OpenAPI example deve declarar value objeto: {example_name} em {path}",
+    )
+    return value
+
+
+def require_no_sensitive_example_fields(
+    value: object,
+    forbidden_fields: set[str],
+    message: str,
+) -> None:
+    forbidden_normalized = {normalize_sensitive_key(field) for field in forbidden_fields}
+    observed_fields = {normalize_sensitive_key(field): field for field in iter_payload_keys(value)}
+    forbidden_observed = {
+        original_field
+        for normalized_field, original_field in observed_fields.items()
+        if any(
+            forbidden_field == normalized_field or forbidden_field in normalized_field
+            for forbidden_field in forbidden_normalized
+        )
+    }
+    require(not forbidden_observed, f"{message}: {sorted(forbidden_observed)}")
+    sensitive_values = list(iter_sensitive_example_values(value))
+    require(not sensitive_values, f"{message}: valores sensíveis sintéticos/reais detectados")
+
+
+def normalize_sensitive_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def iter_sensitive_example_values(value: object) -> Iterator[str]:
+    if isinstance(value, dict):
+        for nested_value in value.values():
+            yield from iter_sensitive_example_values(nested_value)
+        return
+    if isinstance(value, list):
+        for nested_value in value:
+            yield from iter_sensitive_example_values(nested_value)
+        return
+    if not isinstance(value, str):
+        return
+    lowered = value.lower()
+    if (
+        re.search(r"\d{11,14}", value)
+        or "@" in value
+        or "bearer " in lowered
+        or "authorization" in lowered
+        or "secret" in lowered
+        or "token" in lowered
+        or "stack trace" in lowered
+        or "traceback" in lowered
+    ):
+        yield value
 
 
 def validate_proposal_openapi_contract(paths: dict[str, Any], path: Path) -> None:
@@ -1568,6 +2235,60 @@ def validate_schema_value(
         )
 
     errors: list[str] = []
+    one_of = schema.get("oneOf")
+    if isinstance(one_of, list):
+        matching_schemas = []
+        branch_errors: list[str] = []
+        for index, branch_schema in enumerate(one_of):
+            if not isinstance(branch_schema, dict):
+                branch_errors.append(f"{path} oneOf[{index}] deve ser objeto")
+                continue
+            current_errors = validate_schema_value(
+                branch_schema,
+                value,
+                root_schema=root_schema,
+                path=path,
+            )
+            if current_errors:
+                branch_errors.append(f"oneOf[{index}]: {current_errors}")
+            else:
+                matching_schemas.append(index)
+        if len(matching_schemas) != 1:
+            errors.append(
+                f"{path} deve corresponder exatamente a um oneOf; matches={matching_schemas}; "
+                f"errors={branch_errors}"
+            )
+
+    any_of = schema.get("anyOf")
+    if isinstance(any_of, list):
+        branch_errors = []
+        for index, branch_schema in enumerate(any_of):
+            if not isinstance(branch_schema, dict):
+                branch_errors.append(f"{path} anyOf[{index}] deve ser objeto")
+                continue
+            current_errors = validate_schema_value(
+                branch_schema,
+                value,
+                root_schema=root_schema,
+                path=path,
+            )
+            if not current_errors:
+                break
+            branch_errors.append(f"anyOf[{index}]: {current_errors}")
+        else:
+            errors.append(f"{path} deve corresponder a ao menos um anyOf; errors={branch_errors}")
+
+    not_schema = schema.get("not")
+    if isinstance(not_schema, dict):
+        not_errors = validate_schema_value(
+            not_schema,
+            value,
+            root_schema=root_schema,
+            path=path,
+        )
+        if not not_errors:
+            errors.append(f"{path} não deve corresponder ao schema proibido")
+
     expected_type = schema.get("type")
     allowed_types = tuple(expected_type) if isinstance(expected_type, list) else (expected_type,)
     if expected_type is not None and not schema_type_matches(allowed_types, value):
@@ -1582,11 +2303,24 @@ def validate_schema_value(
 
     if isinstance(value, str):
         min_length = schema.get("minLength")
+        max_length = schema.get("maxLength")
         if isinstance(min_length, int) and len(value) < min_length:
             errors.append(f"{path} deve ter minLength >= {min_length}")
+        if isinstance(max_length, int) and len(value) > max_length:
+            errors.append(f"{path} deve ter maxLength <= {max_length}")
         pattern = schema.get("pattern")
-        if isinstance(pattern, str) and re.fullmatch(pattern, value) is None:
+        if isinstance(pattern, str) and re.search(pattern, value) is None:
             errors.append(f"{path} não atende pattern {pattern}")
+        string_format = schema.get("format")
+        if string_format == "date-time":
+            try:
+                datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                errors.append(f"{path} deve ser date-time válido")
+        if string_format == "uri":
+            parsed_uri = urlparse(value)
+            if not parsed_uri.scheme or not parsed_uri.netloc:
+                errors.append(f"{path} deve ser uri válido")
 
     if type(value) is int:
         minimum = schema.get("minimum")
@@ -1603,6 +2337,12 @@ def validate_schema_value(
             errors.append(f"{path} deve ter minItems >= {min_items}")
         if isinstance(max_items, int) and len(value) > max_items:
             errors.append(f"{path} deve ter maxItems <= {max_items}")
+        if schema.get("uniqueItems") is True:
+            serialized_items = [
+                json.dumps(item, sort_keys=True, separators=(",", ":")) for item in value
+            ]
+            if len(set(serialized_items)) != len(serialized_items):
+                errors.append(f"{path} deve ter itens únicos")
         items_schema = schema.get("items")
         if isinstance(items_schema, dict):
             for index, item in enumerate(value):

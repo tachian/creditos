@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import hmac
 import shutil
 import subprocess
 import sys
 import tomllib
 from collections.abc import Iterator, Mapping
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
+
+from creditos_integration.application.ports.webhook_delivery import canonical_webhook_payload
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = ROOT / "packages" / "contracts"
@@ -30,6 +34,12 @@ INTEGRATION_RETRY_SCHEMA = (
 )
 INTEGRATION_CONSUMER_EXPECTATIONS = (
     CONTRACTS / "consumer-expectations" / "integration-events" / "v1" / "README.md"
+)
+DECISION_PUBLIC_CONSUMER_EXPECTATIONS = (
+    CONTRACTS / "consumer-expectations" / "decision-public" / "v1" / "README.md"
+)
+WEBHOOK_PUBLIC_CONSUMER_EXPECTATIONS = (
+    CONTRACTS / "consumer-expectations" / "webhook-public" / "v1" / "README.md"
 )
 CORE_PROPOSAL_FIELDS = {
     "schema_version",
@@ -493,6 +503,45 @@ def test_decision_public_openapi_defines_versioned_safe_error_codes() -> None:
     assert "tenant_id" not in set(iter_property_names(error_schema))
 
 
+def test_decision_public_contract_examples_are_governed_and_minimized() -> None:
+    openapi = load_json(DECISION_OPENAPI)
+    examples = {
+        example_name: example["value"]
+        for example_name, example in openapi["components"]["examples"].items()
+    }
+    response_fields = set(openapi["components"]["schemas"]["DecisionQueryResponse"]["properties"])
+    error_fields = set(openapi["components"]["schemas"]["ErrorResponse"]["properties"])
+
+    assert set(examples) == {
+        "DecisionSubmittedExample",
+        "DecisionApprovedExample",
+        "DecisionRejectedExample",
+        "DecisionUnableToDecideExample",
+        "DecisionInvalidRequestErrorExample",
+        "DecisionNotAvailableErrorExample",
+        "DecisionQueryFailedErrorExample",
+    }
+    assert examples["DecisionSubmittedExample"]["status"] == "submitted"
+    assert examples["DecisionSubmittedExample"]["message"] == "análise recebida"
+    assert examples["DecisionApprovedExample"]["outcome"] == "approve"
+    assert "approved_terms" in examples["DecisionApprovedExample"]
+    assert examples["DecisionRejectedExample"]["outcome"] == "reject"
+    assert "approved_terms" not in examples["DecisionRejectedExample"]
+    assert examples["DecisionUnableToDecideExample"]["status"] == "unable_to_decide"
+    assert examples["DecisionUnableToDecideExample"]["outcome"] == "unable_to_decide"
+    assert "approved_terms" not in examples["DecisionUnableToDecideExample"]
+    assert set(examples["DecisionInvalidRequestErrorExample"]) == error_fields
+    assert set(examples["DecisionNotAvailableErrorExample"]) == error_fields
+    assert set(examples["DecisionQueryFailedErrorExample"]) == error_fields
+
+    for example_name, value in examples.items():
+        allowed_fields = error_fields if example_name.endswith("ErrorExample") else response_fields
+        assert set(value) <= allowed_fields
+        assert not _contains_forbidden_public_payload_key(value)
+        assert "tenant_id" not in set(iter_payload_keys(value))
+        assert "triggered_rule_ids" not in set(iter_payload_keys(value))
+
+
 def test_decision_public_api_catalog_marks_v1_as_pre_production_experimental() -> None:
     catalog = tomllib.loads((CONTRACTS / "catalog" / "contracts.toml").read_text(encoding="utf-8"))
     decision_contract = next(
@@ -562,6 +611,38 @@ def test_contract_governance_check_rejects_decision_public_conditional_branch_dr
     assert "Branch Decision public status divergente" in result.stderr
 
 
+def test_contract_governance_check_rejects_missing_decision_public_example(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "decision" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    del openapi["components"]["examples"]["DecisionUnableToDecideExample"]
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Decision public examples obrigatórios ausentes" in result.stderr
+
+
+def test_contract_governance_check_rejects_decision_public_example_extra_field(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "decision" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    openapi["components"]["examples"]["DecisionApprovedExample"]["value"]["triggered_rule_ids"] = [
+        "rule_internal_001"
+    ]
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Decision public example contém campo sensível" in result.stderr
+
+
 def test_contract_governance_check_allows_get_without_idempotency_header() -> None:
     result = run_contract_check(CONTRACTS)
 
@@ -598,6 +679,7 @@ def test_webhook_public_openapi_defines_governed_configuration_contract() -> Non
     patch_operation = openapi["paths"]["/v1/webhooks/configurations/{webhook_configuration_id}"][
         "patch"
     ]
+    callback_operation = openapi["webhooks"]["decisionNotification"]["post"]
     schemas = openapi["components"]["schemas"]
     request_schema = schemas["WebhookConfigurationRequest"]
     response_schema = schemas["WebhookConfigurationResponse"]
@@ -605,6 +687,9 @@ def test_webhook_public_openapi_defines_governed_configuration_contract() -> Non
     list_response_schema = schemas["WebhookConfigurationListResponse"]
     signing_schema = schemas["WebhookSigningConfiguration"]
     retry_schema = schemas["WebhookRetryPolicy"]
+    callback_schema = schemas["WebhookCallbackPayload"]
+    delivery_headers_schema = schemas["WebhookDeliveryHeaders"]
+    retry_metadata_schema = schemas["WebhookDeliveryRetryMetadata"]
 
     assert openapi["openapi"] == "3.1.0"
     assert openapi["info"]["version"] == "v1"
@@ -612,12 +697,29 @@ def test_webhook_public_openapi_defines_governed_configuration_contract() -> Non
     assert post_operation["operationId"] == "configureWebhook"
     assert get_operation["operationId"] == "listWebhooks"
     assert patch_operation["operationId"] == "disableWebhookConfiguration"
+    assert callback_operation["operationId"] == "receiveDecisionWebhook"
     assert _headers(post_operation) == {"X-Correlation-Id", "X-Request-Id", "Idempotency-Key"}
     assert _headers(get_operation) == {"X-Correlation-Id", "X-Request-Id"}
     assert _headers(patch_operation) == {"X-Correlation-Id", "X-Request-Id", "Idempotency-Key"}
+    assert _headers(callback_operation) == {
+        "Content-Type",
+        "X-CreditOS-Correlation-Id",
+        "X-CreditOS-Event-Id",
+        "X-CreditOS-Event-Type",
+        "X-CreditOS-Idempotency-Key",
+        "X-CreditOS-Signature",
+        "X-CreditOS-Signature-Algorithm",
+        "X-CreditOS-Timestamp",
+    }
     assert set(post_operation["responses"]) >= {"202", "400", "401", "409", "500"}
     assert set(get_operation["responses"]) >= {"200", "400", "401", "404", "500"}
     assert set(patch_operation["responses"]) >= {"202", "400", "401", "409", "500"}
+    assert set(callback_operation["responses"]) >= {"202", "400", "500"}
+    assert callback_operation["requestBody"]["required"] is True
+    assert (
+        callback_operation["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/WebhookCallbackPayload"
+    )
     assert request_schema["additionalProperties"] is False
     assert response_schema["additionalProperties"] is False
     assert status_update_schema["additionalProperties"] is False
@@ -665,11 +767,112 @@ def test_webhook_public_openapi_defines_governed_configuration_contract() -> Non
         "standard_exponential_backoff",
         "no_retry",
     }
+    assert set(callback_schema["required"]) == {
+        "contract_version",
+        "event_id",
+        "event_type",
+        "proposal_id",
+        "decision_status",
+        "occurred_at",
+        "correlation_id",
+        "trace_id",
+        "idempotency_key",
+    }
+    assert callback_schema["additionalProperties"] is False
+    assert len(callback_schema["oneOf"]) == 4
+    assert set(delivery_headers_schema["required"]) == {
+        "Content-Type",
+        "X-CreditOS-Correlation-Id",
+        "X-CreditOS-Event-Id",
+        "X-CreditOS-Event-Type",
+        "X-CreditOS-Idempotency-Key",
+        "X-CreditOS-Signature",
+        "X-CreditOS-Signature-Algorithm",
+        "X-CreditOS-Timestamp",
+    }
+    assert delivery_headers_schema["properties"]["X-CreditOS-Signature"]["pattern"] == (
+        "^sha256=[a-f0-9]{64}$"
+    )
+    assert delivery_headers_schema["properties"]["X-CreditOS-Signature-Algorithm"]["const"] == (
+        "hmac_sha256"
+    )
+    assert set(retry_metadata_schema["properties"]["strategy"]["enum"]) == {
+        "standard_exponential_backoff",
+        "no_retry",
+    }
+    assert len(retry_metadata_schema["oneOf"]) == 2
     serialized_contract = dumped(openapi).lower()
     assert "tenant_id" not in serialized_contract
     assert "signing_secret" not in serialized_contract
-    assert "payload" not in serialized_contract
-    assert "headers" not in serialized_contract
+    assert "raw_payload" not in serialized_contract
+    assert "private_headers" not in serialized_contract
+    assert "authorization" not in set(iter_property_names(openapi))
+
+
+def test_webhook_public_contract_examples_cover_callback_signature_retry_and_dlq() -> None:
+    openapi = load_json(WEBHOOK_OPENAPI)
+    examples = {
+        example_name: example["value"]
+        for example_name, example in openapi["components"]["examples"].items()
+    }
+    schemas = openapi["components"]["schemas"]
+    callback_payload = examples["WebhookCallbackPayloadExample"]
+    headers = examples["WebhookDeliveryHeadersExample"]
+    retry_metadata = examples["WebhookRetryMetadataExample"]
+    dlq_metadata = examples["WebhookNoRetryDlqMetadataExample"]
+
+    assert set(examples) == {
+        "WebhookConfigurationRequestExample",
+        "WebhookConfigurationResponseExample",
+        "WebhookConfigurationListResponseExample",
+        "WebhookInvalidRequestErrorExample",
+        "WebhookConfigurationNotAvailableErrorExample",
+        "WebhookConfigurationFailedErrorExample",
+        "WebhookCallbackPayloadExample",
+        "WebhookDeliveryHeadersExample",
+        "WebhookRetryMetadataExample",
+        "WebhookNoRetryDlqMetadataExample",
+    }
+    assert set(callback_payload) <= set(schemas["WebhookCallbackPayload"]["properties"])
+    assert set(callback_payload) >= set(schemas["WebhookCallbackPayload"]["required"])
+    assert callback_payload["event_type"] == "decision.completed"
+    assert callback_payload["decision_status"] == "completed"
+    assert callback_payload["decision_outcome"] == "approve"
+    assert headers["X-CreditOS-Event-Id"] == callback_payload["event_id"]
+    assert headers["X-CreditOS-Event-Type"] == callback_payload["event_type"]
+    assert headers["X-CreditOS-Idempotency-Key"] == callback_payload["idempotency_key"]
+    assert headers["X-CreditOS-Correlation-Id"] == callback_payload["correlation_id"]
+    assert headers["X-CreditOS-Signature"].startswith("sha256=")
+    assert len(headers["X-CreditOS-Signature"]) == len("sha256=") + 64
+    assert headers["X-CreditOS-Signature-Algorithm"] == "hmac_sha256"
+    assert retry_metadata["strategy"] == "standard_exponential_backoff"
+    assert retry_metadata["delivery_status"] == "retry_scheduled"
+    assert retry_metadata["dlq_status"] == "not_recorded"
+    assert dlq_metadata["strategy"] == "no_retry"
+    assert dlq_metadata["delivery_status"] == "dlq_recorded"
+    assert dlq_metadata["dlq_status"] == "recorded"
+
+    for value in examples.values():
+        assert not _contains_forbidden_public_payload_key(value)
+        assert "tenant_id" not in set(iter_payload_keys(value))
+        assert "signing_secret" not in set(iter_payload_keys(value))
+
+
+def test_webhook_contract_signature_example_matches_runtime_canonicalization() -> None:
+    openapi = load_json(WEBHOOK_OPENAPI)
+    payload = openapi["components"]["examples"]["WebhookCallbackPayloadExample"]["value"]
+    signing_key = b"creditos-contract-test-signing-key"
+    signature = hmac.new(signing_key, canonical_webhook_payload(payload), sha256).hexdigest()
+
+    assert (
+        f"sha256={signature}"
+        == openapi["components"]["examples"]["WebhookDeliveryHeadersExample"]["value"][
+            "X-CreditOS-Signature"
+        ]
+    )
+    assert (
+        hmac.new(signing_key, canonical_webhook_payload(payload), sha256).hexdigest() == signature
+    )
 
 
 def test_webhook_public_api_catalog_marks_v1_as_pre_production_experimental() -> None:
@@ -718,6 +921,161 @@ def test_contract_governance_check_rejects_webhook_sensitive_public_fields(
 
     assert result.returncode == 1
     assert "Webhook public contract não pode expor campos sensíveis" in result.stderr
+
+
+def test_contract_governance_check_rejects_webhook_example_sensitive_field(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    openapi["components"]["examples"]["WebhookCallbackPayloadExample"]["value"]["tenant_id"] = (
+        "tenant-alpha"
+    )
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Webhook public example contém campo sensível" in result.stderr
+
+
+def test_contract_governance_check_rejects_webhook_example_sensitive_casing_variant(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    openapi["components"]["examples"]["WebhookCallbackPayloadExample"]["value"]["rawPayload"] = {
+        "opaque": "value"
+    }
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Webhook public example contém campo sensível" in result.stderr
+    assert "rawPayload" in result.stderr
+
+
+def test_contract_governance_check_rejects_unexpected_webhook_public_example(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    openapi["components"]["examples"]["WebhookLeakyDebugExample"] = {
+        "value": {"payload": {"cpf": "12345678909"}}
+    }
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Webhook public examples não governados" in result.stderr
+
+
+def test_contract_governance_check_rejects_webhook_missing_delivery_header(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    header_schema = openapi["components"]["schemas"]["WebhookDeliveryHeaders"]
+    header_schema["required"].remove("X-CreditOS-Signature")
+    header_schema["properties"].pop("X-CreditOS-Signature")
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "Webhook delivery headers públicos divergentes" in result.stderr
+
+
+def test_contract_governance_check_rejects_missing_webhook_callback_operation(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    openapi.pop("webhooks")
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "callback assinado" in result.stderr
+    assert "Crie nova versão" in result.stderr
+
+
+def test_contract_governance_check_rejects_webhook_retry_example_enum_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    openapi["components"]["examples"]["WebhookNoRetryDlqMetadataExample"]["value"]["strategy"] = (
+        "linear_retry"
+    )
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "OpenAPI example incompatível com schema" in result.stderr
+    assert "Crie nova versão" in result.stderr
+
+
+def test_contract_governance_check_rejects_webhook_retry_contradictory_bounds(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    openapi["components"]["examples"]["WebhookRetryMetadataExample"]["value"]["max_attempts"] = 9999
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "OpenAPI example incompatível com schema" in result.stderr
+
+
+def test_contract_governance_check_rejects_webhook_callback_status_outcome_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    callback = openapi["components"]["examples"]["WebhookCallbackPayloadExample"]["value"]
+    callback["event_type"] = "decision.status_changed"
+    callback["decision_status"] = "submitted"
+    callback["decision_outcome"] = "approve"
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "OpenAPI example incompatível com schema" in result.stderr
+    assert "Crie nova versão" in result.stderr
+
+
+def test_decision_and_webhook_consumer_expectations_are_documented() -> None:
+    decision_content = DECISION_PUBLIC_CONSUMER_EXPECTATIONS.read_text(encoding="utf-8")
+    webhook_content = WEBHOOK_PUBLIC_CONSUMER_EXPECTATIONS.read_text(encoding="utf-8")
+
+    assert "status pendente" in decision_content
+    assert "decisão inconclusiva" in decision_content
+    assert "decision_not_available" in decision_content
+    assert "tenant_id" in decision_content
+    assert "primeiro cliente externo" in decision_content
+    assert "callback assinado" in webhook_content
+    assert "X-CreditOS-Signature" in webhook_content
+    assert "standard_exponential_backoff" in webhook_content
+    assert "no_retry" in webhook_content
+    assert "DLQ" in webhook_content
+    assert "cross-tenant" in webhook_content
+    assert "Story 8.7" in webhook_content
 
 
 def test_proposal_schema_examples_cover_mvp_products_pf_pj_and_rejections() -> None:
@@ -1283,6 +1641,26 @@ def iter_payload_keys(value: object) -> Iterator[str]:
     elif isinstance(value, list):
         for nested_value in value:
             yield from iter_payload_keys(nested_value)
+
+
+def _contains_forbidden_public_payload_key(value: object) -> bool:
+    forbidden = {
+        "authorization",
+        "cpf",
+        "cnpj",
+        "email",
+        "nome",
+        "phone",
+        "telefone",
+        "raw_payload",
+        "request_body",
+        "response_body",
+        "secret",
+        "signing_secret",
+        "stack_trace",
+        "token",
+    }
+    return bool({key.lower() for key in iter_payload_keys(value)} & forbidden)
 
 
 def iter_object_schemas(value: object, path: str = "$") -> Iterator[tuple[str, Mapping[str, Any]]]:

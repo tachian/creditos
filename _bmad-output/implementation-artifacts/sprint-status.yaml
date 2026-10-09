@@ -120,7 +120,7 @@ development_status:
   8-3-configuracao-de-webhooks-por-tenant: done
   8-4-entrega-assincrona-de-webhooks-com-retry-e-dlq: done
   8-5-observabilidade-e-auditoria-de-consulta-callback: done
-  8-6-testes-de-contrato-para-consulta-e-webhooks: backlog
+  8-6-testes-de-contrato-para-consulta-e-webhooks: done
   8-7-fluxo-e2e-de-analise-com-integracoes-mockadas: backlog
   epic-8-retrospective: optional
 
