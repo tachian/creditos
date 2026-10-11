@@ -16,6 +16,12 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONTRACTS = ROOT / "packages" / "contracts"
+RFC3339_DATE_TIME_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+FORMATTED_CPF_PATTERN = re.compile(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b")
+FORMATTED_CNPJ_PATTERN = re.compile(r"\b\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\b")
+FORMATTED_BR_PHONE_PATTERN = re.compile(r"(?:\+?55\s*)?\(?\d{2}\)?[\s-]*9?\d{4}[-\s]?\d{4}\b")
 
 REQUIRED_METADATA = {
     "id",
@@ -1100,7 +1106,7 @@ def validate_webhook_public_openapi_contract(
         set(retry_metadata_schema.get("required", [])) == WEBHOOK_DELIVERY_RETRY_METADATA_REQUIRED,
         f"Webhook retry metadata required divergente: {path}",
     )
-    validate_webhook_callback_operation(callback_operation, path)
+    validate_webhook_callback_operation(callback_operation, delivery_header_properties, path)
     require(
         set(
             require_dict(
@@ -1243,7 +1249,11 @@ def validate_webhook_public_openapi_contract(
     )
 
 
-def validate_webhook_callback_operation(operation: dict[str, Any], path: Path) -> None:
+def validate_webhook_callback_operation(
+    operation: dict[str, Any],
+    delivery_header_properties: dict[str, Any],
+    path: Path,
+) -> None:
     parameters = operation.get("parameters", [])
     require(isinstance(parameters, list), f"Webhook callback parameters deve ser lista: {path}")
     headers_by_name = {
@@ -1258,6 +1268,21 @@ def validate_webhook_callback_operation(operation: dict[str, Any], path: Path) -
             f"Webhook callback deve declarar headers públicos obrigatórios: {path}"
         ),
     )
+    for header_name in WEBHOOK_DELIVERY_HEADER_NAMES:
+        parameter_schema = require_dict(
+            headers_by_name[header_name].get("schema"),
+            f"Webhook callback header {header_name} deve declarar schema: {path}",
+        )
+        governed_schema = require_dict(
+            delivery_header_properties.get(header_name),
+            f"WebhookDeliveryHeaders.{header_name} deve declarar schema: {path}",
+        )
+        require(
+            parameter_schema == governed_schema,
+            public_contract_error(
+                f"Webhook callback header {header_name} diverge do componente governado: {path}"
+            ),
+        )
     request_body = require_dict(
         operation.get("requestBody"),
         f"Webhook callback deve declarar requestBody: {path}",
@@ -1570,6 +1595,9 @@ def iter_sensitive_example_values(value: object) -> Iterator[str]:
     lowered = value.lower()
     if (
         re.search(r"\d{11,14}", value)
+        or FORMATTED_CPF_PATTERN.search(value) is not None
+        or FORMATTED_CNPJ_PATTERN.search(value) is not None
+        or FORMATTED_BR_PHONE_PATTERN.search(value) is not None
         or "@" in value
         or "bearer " in lowered
         or "authorization" in lowered
@@ -2314,9 +2342,15 @@ def validate_schema_value(
         string_format = schema.get("format")
         if string_format == "date-time":
             try:
-                datetime.fromisoformat(value.replace("Z", "+00:00"))
+                parsed_datetime = datetime.fromisoformat(value.replace("Z", "+00:00"))
             except ValueError:
                 errors.append(f"{path} deve ser date-time válido")
+            else:
+                if (
+                    RFC3339_DATE_TIME_PATTERN.fullmatch(value) is None
+                    or parsed_datetime.tzinfo is None
+                ):
+                    errors.append(f"{path} deve ser date-time RFC 3339 com timezone")
         if string_format == "uri":
             parsed_uri = urlparse(value)
             if not parsed_uri.scheme or not parsed_uri.netloc:

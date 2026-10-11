@@ -936,6 +936,15 @@
           {
             "title": "DLQ registrada",
             "properties": {
+              "strategy": {
+                "const": "no_retry"
+              },
+              "attempt_count": {
+                "const": 1
+              },
+              "max_attempts": {
+                "const": 1
+              },
               "delivery_status": {
                 "const": "dlq_recorded"
               },

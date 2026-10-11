@@ -217,6 +217,7 @@ para que clientes B2B tenham integração previsível, versionada e segura.
 - Pós-review: `scripts/check_contracts.py --contracts-root packages/contracts` passou.
 - Pós-review: `pytest tests/test_contracts_structure.py` passou com 72 testes.
 - Pós-review: `ruff format --check .`, `ruff check .`, `pyright` e `pytest` completo passaram; a suíte completa precisou rodar fora do sandbox local por uso de sockets no harness e concluiu com 853 testes.
+- Pós-review GitHub PR #75: `scripts/check_contracts.py --contracts-root packages/contracts`, `pytest tests/test_contracts_structure.py services/integration/tests/unit/test_webhook_delivery.py`, `ruff format --check .`, `ruff check .`, `pyright` e `pytest` completo passaram; a suíte completa precisou rodar fora do sandbox local por uso de sockets no harness e concluiu com 859 testes.
 
 ### Completion Notes
 
@@ -226,6 +227,7 @@ para que clientes B2B tenham integração previsível, versionada e segura.
 - Consumer expectations versionadas documentam cenários mínimos, campos permitidos/proibidos, versionamento e relação com a Story 8.7.
 - Pós-review, a operação OpenAPI de callback assinado foi explicitada, exemplos passaram a ser validados contra schema completo e a assinatura oficial passou a bater com a canonicalização de runtime.
 - Pós-review, o contrato bloqueia combinações inválidas de status/outcome, estados contraditórios de retry/DLQ, exemplos extras não governados e variantes de campos sensíveis.
+- Pós-review GitHub PR #75, o runtime de webhook normaliza aliases legados (`approved`/`rejected`) para outcomes públicos canônicos, a operação de callback valida schemas de headers contra o componente governado e o checker exige RFC 3339 completo e detecta CPF/CNPJ/telefone formatados.
 
 ### File List
 
@@ -238,6 +240,8 @@ para que clientes B2B tenham integração previsível, versionada e segura.
 - `packages/contracts/openapi/public/decision/v1/openapi.json`
 - `packages/contracts/openapi/public/webhooks/v1/openapi.json`
 - `scripts/check_contracts.py`
+- `services/integration/src/creditos_integration/domain/entities/webhook_delivery.py`
+- `services/integration/tests/unit/test_webhook_delivery.py`
 - `tests/test_contracts_structure.py`
 
 ### Change Log
@@ -245,3 +249,4 @@ para que clientes B2B tenham integração previsível, versionada e segura.
 - 2026-10-09: Story criada por `bmad-create-story` com contexto de contratos públicos de decisão e webhooks.
 - 2026-10-09: Implementados exemplos oficiais, validações de contrato, testes positivos/negativos e consumer expectations da Story 8.6.
 - 2026-10-09: Aplicados patches do `bmad-code-review` para assinatura real, operação de callback, validação completa de exemplos, mensagens de drift e semântica cross-tenant.
+- 2026-10-11: Corrigidos apontamentos do Code Review no PR #75 para outcome runtime/contrato, schemas de headers do callback, dados sensíveis formatados, RFC 3339 completo e invariantes `no_retry`.

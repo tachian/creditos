@@ -801,6 +801,12 @@ def test_webhook_public_openapi_defines_governed_configuration_contract() -> Non
         "no_retry",
     }
     assert len(retry_metadata_schema["oneOf"]) == 2
+    no_retry_branch = next(
+        branch for branch in retry_metadata_schema["oneOf"] if branch["title"] == "DLQ registrada"
+    )
+    assert no_retry_branch["properties"]["strategy"]["const"] == "no_retry"
+    assert no_retry_branch["properties"]["attempt_count"]["const"] == 1
+    assert no_retry_branch["properties"]["max_attempts"]["const"] == 1
     serialized_contract = dumped(openapi).lower()
     assert "tenant_id" not in serialized_contract
     assert "signing_secret" not in serialized_contract
@@ -992,6 +998,27 @@ def test_contract_governance_check_rejects_webhook_missing_delivery_header(
     assert "Webhook delivery headers públicos divergentes" in result.stderr
 
 
+def test_contract_governance_check_rejects_webhook_callback_header_schema_drift(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    callback_parameters = openapi["webhooks"]["decisionNotification"]["post"]["parameters"]
+    signature_parameter = next(
+        parameter
+        for parameter in callback_parameters
+        if parameter["name"] == "X-CreditOS-Signature"
+    )
+    signature_parameter["schema"].pop("pattern")
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "diverge do componente governado" in result.stderr
+
+
 def test_contract_governance_check_rejects_missing_webhook_callback_operation(
     tmp_path: Path,
 ) -> None:
@@ -1041,6 +1068,23 @@ def test_contract_governance_check_rejects_webhook_retry_contradictory_bounds(
     assert "OpenAPI example incompatível com schema" in result.stderr
 
 
+def test_contract_governance_check_rejects_webhook_no_retry_multiple_attempts(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    no_retry = openapi["components"]["examples"]["WebhookNoRetryDlqMetadataExample"]["value"]
+    no_retry["attempt_count"] = 10
+    no_retry["max_attempts"] = 10
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "OpenAPI example incompatível com schema" in result.stderr
+
+
 def test_contract_governance_check_rejects_webhook_callback_status_outcome_drift(
     tmp_path: Path,
 ) -> None:
@@ -1058,6 +1102,40 @@ def test_contract_governance_check_rejects_webhook_callback_status_outcome_drift
     assert result.returncode == 1
     assert "OpenAPI example incompatível com schema" in result.stderr
     assert "Crie nova versão" in result.stderr
+
+
+def test_contract_governance_check_rejects_formatted_sensitive_values_in_examples(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    openapi["components"]["examples"]["WebhookInvalidRequestErrorExample"]["value"]["message"] = (
+        "Telefone +55 (11) 91234-5678 não deve aparecer"
+    )
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "valores sensíveis sintéticos/reais detectados" in result.stderr
+
+
+def test_contract_governance_check_rejects_non_rfc3339_datetime_examples(
+    tmp_path: Path,
+) -> None:
+    contracts_root = copy_contracts_fixture(tmp_path)
+    openapi_path = contracts_root / "openapi" / "public" / "webhooks" / "v1" / "openapi.json"
+    openapi = load_json(openapi_path)
+    openapi["components"]["examples"]["WebhookCallbackPayloadExample"]["value"]["occurred_at"] = (
+        "2026-10-09T12:15:00"
+    )
+    openapi_path.write_text(dumped(openapi), encoding="utf-8")
+
+    result = run_contract_check(contracts_root)
+
+    assert result.returncode == 1
+    assert "date-time RFC 3339 com timezone" in result.stderr
 
 
 def test_decision_and_webhook_consumer_expectations_are_documented() -> None:
