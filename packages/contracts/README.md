@@ -66,6 +66,12 @@ pertencem ao contrato público. `required_data_refs`, `validation_issue_codes` e
 próprio. Referências alternativas a proposta ficam fora da v1 até serem
 governadas por contrato próprio.
 
+Os exemplos oficiais ficam em `components.examples` do OpenAPI e são validados
+por `scripts/check_contracts.py` e por testes de contrato. Eles cobrem status
+pendente, decisão aprovada, decisão recusada, decisão inconclusiva e erro
+público. As expectativas de consumidor ficam em
+`consumer-expectations/decision-public/v1/README.md`.
+
 Erros públicos usam `ErrorResponse` fechado com `error_code` versionado:
 `invalid_request`, `decision_not_available` ou `decision_query_failed`. O código
 `decision_not_available` continua indistinguível para proposta inexistente,
@@ -100,9 +106,9 @@ As expectativas de consumidores ficam em
 
 O contrato `webhook-configuration-public-api` governa a configuração de
 webhooks por tenant em `packages/contracts/openapi/public/webhooks/v1/openapi.json`.
-A v1 cobre somente cadastro, listagem e desativação da configuração; a
-entrega assíncrona, assinatura do payload entregue, retry de entrega e DLQ ficam
-fora deste contrato inicial e pertencem à Story 8.4.
+A v1 cobre cadastro, listagem, desativação da configuração e expectativas
+públicas do callback assinado. A execução assíncrona, broker real, retry
+operacional e DLQ runtime continuam pertencendo às Stories 8.4 e 8.5.
 
 A configuração aceita somente endpoints `https://` validados pelo `Integration
 Service`, eventos versionados (`decision.status_changed` e `decision.completed`),
@@ -110,7 +116,11 @@ status público controlado, referência de chave de assinatura e política de re
 O contrato não expõe `tenant_id` como autoridade, segredo em claro, headers
 privados, payload bruto ou campos livres. A assinatura inicial usa
 `hmac_sha256` com `signing_key_ref`; armazenamento real em KMS/Secret Manager
-fica fora do escopo desta story.
+fica fora do escopo desta story. Os exemplos oficiais cobrem configuração,
+listagem, erro, payload público de callback, headers públicos de assinatura,
+retry `standard_exponential_backoff`, `no_retry` e metadados seguros de DLQ.
+As expectativas de consumidor ficam em
+`consumer-expectations/webhook-public/v1/README.md`.
 
 Enquanto não houver cliente externo ativo integrado, a v1 permanece
 experimental em estágio MVP pré-produção. A partir do primeiro cliente externo,

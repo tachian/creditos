@@ -54,6 +54,19 @@ _SENSITIVE_PAYLOAD_KEYS = frozenset(
         "token",
     }
 )
+_PUBLIC_DECISION_OUTCOMES = frozenset(
+    {
+        "approve",
+        "reject",
+        "approve_with_changes",
+        "request_more_data",
+        "unable_to_decide",
+    }
+)
+_DECISION_OUTCOME_ALIASES = {
+    "approved": "approve",
+    "rejected": "reject",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +105,7 @@ class WebhookNotificationEvent:
                 decision_status,
                 field_path="decision_status",
             ),
-            decision_outcome=_validate_optional_public_identifier(
+            decision_outcome=_normalize_decision_outcome(
                 decision_outcome,
                 field_path="decision_outcome",
             ),
@@ -465,6 +478,20 @@ def _validate_optional_public_identifier(value: str | None, *, field_path: str) 
     if value is None:
         return None
     return _validate_public_identifier(value, field_path=field_path)
+
+
+def _normalize_decision_outcome(value: str | None, *, field_path: str) -> str | None:
+    validated = _validate_optional_public_identifier(value, field_path=field_path)
+    if validated is None:
+        return None
+    normalized = _DECISION_OUTCOME_ALIASES.get(validated, validated)
+    if normalized not in _PUBLIC_DECISION_OUTCOMES:
+        raise IntegrationValidationError(
+            "outcome público de webhook inválido",
+            code="invalid_webhook_decision_outcome",
+            field_path=field_path,
+        )
+    return normalized
 
 
 def _validate_trace_id(value: str) -> str:

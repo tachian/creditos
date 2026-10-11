@@ -81,7 +81,7 @@ def test_dispatch_webhook_notification_creates_signed_minimized_idempotent_job()
     assert request.payload == {
         "contract_version": "v1",
         "correlation_id": "corr-webhook-001",
-        "decision_outcome": "approved",
+        "decision_outcome": "approve",
         "decision_status": "completed",
         "event_id": _EVENT_ID,
         "event_type": "decision.completed",
@@ -345,6 +345,30 @@ def test_webhook_public_payload_rejects_sensitive_identifier_values() -> None:
         )
 
     assert error.value.code == "sensitive_webhook_delivery_payload"
+
+
+def test_webhook_public_payload_normalizes_legacy_decision_outcome_alias() -> None:
+    event = _notification_event()
+
+    payload = event.public_payload(idempotency_key="webhook:normalized-outcome")
+
+    assert payload["decision_outcome"] == "approve"
+
+
+def test_webhook_public_payload_rejects_unknown_decision_outcome() -> None:
+    with pytest.raises(IntegrationValidationError) as error:
+        WebhookNotificationEvent.create(
+            event_id=_EVENT_ID,
+            event_type="decision.completed",
+            proposal_id="proposal-123",
+            decision_status="completed",
+            decision_outcome="manual_review",
+            occurred_at=_FIXED_TIME,
+            correlation_id="corr-webhook-001",
+            trace_id="33333333333333333333333333333333",
+        )
+
+    assert error.value.code == "invalid_webhook_decision_outcome"
 
 
 def test_accepted_adapter_result_requires_2xx_http_status() -> None:
