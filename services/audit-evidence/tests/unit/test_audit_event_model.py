@@ -48,6 +48,17 @@ def test_audit_event_accepts_not_found_result() -> None:
     assert event.result == "not_found"
 
 
+def test_audit_event_accepts_opaque_alphanumeric_id_with_embedded_numeric_sequence() -> None:
+    event = AuditEvent.create(
+        **{
+            **_valid_event_values(),
+            "event_id": "audit_evt_worm_export_a52998224725b",
+        }
+    )
+
+    assert event.event_id == "audit_evt_worm_export_a52998224725b"
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

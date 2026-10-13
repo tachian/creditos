@@ -316,8 +316,12 @@ def _contains_brazilian_document(value: str) -> bool:
     if _BRAZILIAN_DOCUMENT_PATTERN.fullmatch(value) is not None:
         return True
     if (
-        re.search(r"(?<!\d)\d{3}\.\d{3}\.\d{3}-\d{2}(?!\d)", value) is not None
-        or re.search(r"(?<!\d)\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}(?!\d)", value) is not None
+        re.search(r"(?<![A-Za-z0-9])\d{3}\.\d{3}\.\d{3}-\d{2}(?![A-Za-z0-9])", value) is not None
+        or re.search(
+            r"(?<![A-Za-z0-9])\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}(?![A-Za-z0-9])",
+            value,
+        )
+        is not None
     ):
         return True
     digits = re.sub(r"\D", "", value)
@@ -325,8 +329,12 @@ def _contains_brazilian_document(value: str) -> bool:
     if not non_document_chars and len(digits) in (11, 14):
         return True
     return any(
-        _is_valid_cpf(sequence) for sequence in re.findall(r"(?<!\d)\d{11}(?!\d)", value)
-    ) or any(_is_valid_cnpj(sequence) for sequence in re.findall(r"(?<!\d)\d{14}(?!\d)", value))
+        _is_valid_cpf(sequence)
+        for sequence in re.findall(r"(?<![A-Za-z0-9])\d{11}(?![A-Za-z0-9])", value)
+    ) or any(
+        _is_valid_cnpj(sequence)
+        for sequence in re.findall(r"(?<![A-Za-z0-9])\d{14}(?![A-Za-z0-9])", value)
+    )
 
 
 def _is_valid_cpf(value: str) -> bool:
