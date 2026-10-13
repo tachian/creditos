@@ -43,6 +43,12 @@ def test_mocked_analysis_flow_submits_enriches_decides_audits_and_notifies() -> 
     assert result.integration_execution_status == "completed"
     assert result.integration_cost_units == 48
 
+    assert result.decision_input_fields == {
+        "monthly_income_units": 800_000,
+        "requested_amount_units": 500_000,
+        "requested_installments": 6,
+        "requested_term_days": 34,
+    }
     assert result.decision.status == "completed"
     assert result.decision.outcome == "approve"
     assert result.decision.policy_version_id == "polver_personal_credit_default_v1"
@@ -133,3 +139,7 @@ def test_mocked_analysis_flow_negative_gates_fail_for_security_and_contract_drif
     drifted_webhook_payload = dict(result.webhook_request.payload) | {"tenant_id": "tenant_alpha"}
     with pytest.raises(AssertionError):
         assert_webhook_contract_payload(drifted_webhook_payload)
+
+    malformed_webhook_payload = dict(result.webhook_request.payload) | {"event_id": "evt_bad"}
+    with pytest.raises(AssertionError):
+        assert_webhook_contract_payload(malformed_webhook_payload)

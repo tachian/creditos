@@ -228,6 +228,14 @@ para validar a jornada completa sem fornecedores reais.
 - `.venv/bin/python -m pyright` passou após correções de review.
 - `.venv/bin/python -m pytest` falhou no sandbox em `tests/test_local_harness.py` por `Operation not permitted` ao abrir socket local.
 - `.venv/bin/python -m pytest` reexecutado fora do sandbox e passou com 862 testes.
+- `GH_CONFIG_DIR=/tmp/creditos-gh gh api graphql ...` coletou 4 comentários abertos no PR #76.
+- `.venv/bin/pytest tests/test_epic8_e2e_mocked_analysis_flow.py -q` passou com 3 testes após correções dos comentários do GitHub Code Review.
+- `.venv/bin/ruff format tests/epic8_mocked_analysis_flow_support.py tests/test_epic8_e2e_mocked_analysis_flow.py` formatou 1 arquivo.
+- `.venv/bin/ruff check tests/epic8_mocked_analysis_flow_support.py tests/test_epic8_e2e_mocked_analysis_flow.py` passou.
+- `.venv/bin/pyright tests/epic8_mocked_analysis_flow_support.py tests/test_epic8_e2e_mocked_analysis_flow.py` passou.
+- `.venv/bin/python scripts/check_contracts.py --contracts-root packages/contracts && .venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/pyright` passou.
+- `.venv/bin/pytest -q` falhou no sandbox em `tests/test_local_harness.py` por `Operation not permitted` ao abrir socket local.
+- `.venv/bin/pytest -q` reexecutado fora do sandbox e passou com 862 testes.
 
 ### Completion Notes List
 
@@ -238,6 +246,7 @@ para validar a jornada completa sem fornecedores reais.
 - Validada submissão idempotente, execução mockada de integrações, decisão explicável, consulta pública, callback assinado, auditoria oficial, projeções de negócio, correlação ponta a ponta e bloqueio cross-tenant indistinguível.
 - Criado payload de observabilidade curado para provar ausência de dados sensíveis brutos sem expor `proposal_id`, `decision_id`, headers, payload bruto ou valores pessoais.
 - Findings do code review resolvidos: callback vinculado à proposta submetida, idempotência de callback, assinatura HMAC canonicalizada, contrato público, gates negativos, rastreabilidade correlacionada, execução mock direta e evidência crítica ponta a ponta.
+- Comentários do GitHub Code Review resolvidos: decisão agora consome campos derivados da proposta normalizada e dos resultados enriquecidos; payloads públicos são validados integralmente contra OpenAPI; evidências críticas são registradas no Audit & Evidence oficial em vez de logs comuns; eventos oficiais de auditoria entram no gate de correlação ponta a ponta.
 
 ### File List
 
@@ -251,3 +260,4 @@ para validar a jornada completa sem fornecedores reais.
 - 2026-10-12: Story criada por `bmad-create-story` com status `ready-for-dev`.
 - 2026-10-12: Implementado fluxo E2E in-memory com integrações mockadas, consulta pública, callback assinado, auditoria, projeções e gates negativos; status atualizado para `review`.
 - 2026-10-12: Corrigidos 8 findings do `bmad-code-review`; status atualizado para `done`.
+- 2026-10-13: Corrigidos 4 comentários do GitHub Code Review no PR #76 sem alterar contratos públicos.

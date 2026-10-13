@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import hmac
+import importlib.util
 import json
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
 from creditos_audit_evidence.adapters.persistence import InMemoryAuditEventRepository
-from creditos_audit_evidence.application.service import AuditEvidenceApplicationService
+from creditos_audit_evidence.application.service import (
+    AuditEvidenceApplicationService,
+    RegisterAuditEventCommand,
+)
+from creditos_audit_evidence.domain.entities import OperationalEvidenceReference
 from creditos_decision.adapters.external.audit_evidence_publisher import (
     AuditEvidenceDecisionAuditPublisher,
 )
@@ -203,6 +208,7 @@ class MockedAnalysisFlowResult:
     integrations: tuple[dict[str, object], ...]
     integration_execution_status: str
     integration_cost_units: int
+    decision_input_fields: Mapping[str, int]
     decision: DecisionSummary
     public_decision: PublicCreditDecisionResponse | None
     webhook_request: WebhookDeliveryRequest | None
@@ -269,6 +275,10 @@ def run_mocked_analysis_flow() -> MockedAnalysisFlowResult:
         context=context,
     )
     integration_cost_units = sum(job.estimated_cost_units for job in integration_execution.jobs)
+    decision_field_values = _decision_field_values_from_artifacts(
+        proposal=submitted.proposal,
+        integration_results=integration_execution.results,
+    )
 
     decision_service, audit_repository = _decision_service_with_published_policy()
     decision_result = decision_service.execute_credit_decision(
@@ -278,7 +288,7 @@ def run_mocked_analysis_flow() -> MockedAnalysisFlowResult:
             product_type="personal_credit",
             channel="api",
             effective_at=_NOW + timedelta(days=2),
-            field_values=_decision_field_values(),
+            field_values=decision_field_values,
             integration_result_refs=tuple(
                 result.result_id for result in integration_execution.results
             ),
@@ -337,20 +347,26 @@ def run_mocked_analysis_flow() -> MockedAnalysisFlowResult:
         public_query_status=public_query.decision.status if public_query.decision else "unknown",
         webhook_delivered=bool(webhook_result.jobs and webhook_result.jobs[0].status == "sent"),
     )
-    audit_event_types = frozenset(
-        event.event_type
-        for event in audit_repository.list_by_aggregate(
-            tenant_id=_TENANT_ID,
-            aggregate_type="credit_decision",
-            aggregate_id="decision_e2e_001",
+    decision_audit_events = tuple(
+        _audit_event_to_log_safe_dict(event)
+        for event in (
+            *audit_repository.list_by_aggregate(
+                tenant_id=_TENANT_ID,
+                aggregate_type="credit_decision",
+                aggregate_id="decision_e2e_001",
+            ),
+            *audit_repository.list_by_aggregate(
+                tenant_id=_TENANT_ID,
+                aggregate_type="credit_proposal",
+                aggregate_id=proposal_id,
+            ),
         )
-    ) | frozenset(
-        event.event_type
-        for event in audit_repository.list_by_aggregate(
-            tenant_id=_TENANT_ID,
-            aggregate_type="credit_proposal",
-            aggregate_id=proposal_id,
-        )
+    )
+    audit_event_types = frozenset(str(event["event_type"]) for event in decision_audit_events)
+    official_evidence_events = _register_official_flow_evidence(
+        proposal_id=proposal_id,
+        integration_result_count=len(integration_execution.results),
+        webhook_delivered=bool(webhook_result.jobs and webhook_result.jobs[0].status == "sent"),
     )
     webhook_request = webhook_adapter.requests[0] if webhook_adapter.requests else None
     integration_audit_events = tuple(event.to_log_safe_dict() for event in integration_audit.events)
@@ -363,7 +379,7 @@ def run_mocked_analysis_flow() -> MockedAnalysisFlowResult:
             *public_query.logs,
         ),
         business_events=public_query.business_events + webhook_result.business_events,
-        audit_events=integration_audit_events,
+        audit_events=(*integration_audit_events, *decision_audit_events, *official_evidence_events),
     )
     raw_output_payload = {
         "proposal_logs": submitted.logs + replayed.logs,
@@ -375,6 +391,8 @@ def run_mocked_analysis_flow() -> MockedAnalysisFlowResult:
         "webhook_headers": webhook_request.headers if webhook_request else {},
         "business_events": public_query.business_events + webhook_result.business_events,
         "integration_audit_events": integration_audit_events,
+        "decision_audit_events": decision_audit_events,
+        "official_evidence_events": official_evidence_events,
     }
     cross_tenant_observable_payload = {
         "cross_tenant_error": cross_tenant.error,
@@ -393,6 +411,9 @@ def run_mocked_analysis_flow() -> MockedAnalysisFlowResult:
         integrations=tuple(result.to_log_safe_dict() for result in integration_execution.results),
         integration_execution_status=integration_execution.status,
         integration_cost_units=integration_cost_units,
+        decision_input_fields={
+            field_value.field: field_value.value for field_value in decision_field_values
+        },
         decision=DecisionSummary(
             status=decision_result.explanation.status,
             outcome=decision_result.decision.outcome,
@@ -405,11 +426,7 @@ def run_mocked_analysis_flow() -> MockedAnalysisFlowResult:
         webhook_delivery_attempt_count=len(webhook_adapter.requests),
         audit_event_types=audit_event_types,
         critical_evidence_operations=_critical_evidence_operations(
-            submitted_logs=submitted.logs,
-            integration_logs=integration_service.logged_events,
-            integration_audit_events=integration_audit_events,
-            decision_audit_event_types=audit_event_types,
-            webhook_logs=integration_service.logged_events,
+            official_audit_events=official_evidence_events,
         ),
         reporting_snapshot=reporting_snapshot,
         traceability_steps=_traceability_steps(
@@ -425,6 +442,9 @@ def run_mocked_analysis_flow() -> MockedAnalysisFlowResult:
             decision_result.logs,
             public_query.logs,
             webhook_result.business_events,
+            integration_audit_events,
+            decision_audit_events,
+            official_evidence_events,
         ),
         observable_payload=observable_payload,
         raw_output_payload=raw_output_payload,
@@ -512,11 +532,42 @@ def _assert_contract_shape(
 ) -> None:
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
     schema = contract["components"]["schemas"][schema_name]
-    required = set(schema["required"])
-    allowed = set(schema["properties"])
-    payload_keys = set(payload)
-    assert required <= payload_keys
-    assert payload_keys <= allowed
+    normalized_payload = _contract_json_value(payload)
+    assert isinstance(normalized_payload, dict)
+    errors = _validate_schema_value(schema, normalized_payload, root_schema=contract)
+    assert not errors, (
+        f"payload diverge do schema OpenAPI {schema_name} em {contract_path}: {errors}"
+    )
+
+
+def _contract_json_value(payload: Mapping[str, object]) -> object:
+    return json.loads(json.dumps(payload, default=_contract_json_default, ensure_ascii=False))
+
+
+def _contract_json_default(value: object) -> str:
+    if isinstance(value, datetime | date):
+        return value.isoformat()
+    return str(value)
+
+
+def _validate_schema_value(
+    schema: dict[str, Any],
+    value: object,
+    *,
+    root_schema: dict[str, Any],
+) -> list[str]:
+    spec = importlib.util.spec_from_file_location(
+        "_creditos_check_contracts",
+        _ROOT / "scripts/check_contracts.py",
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    validate = module.__dict__["validate_schema_value"]
+    errors = validate(schema, value, root_schema=root_schema)
+    assert isinstance(errors, list)
+    return [str(error) for error in errors]
 
 
 def _safe_observability_payload(
@@ -558,12 +609,24 @@ def _drop_forbidden_observability_fields(payload: Mapping[str, Any]) -> Mapping[
         "headers",
         "telefone",
         "fingerprint",
+        "integration_result_refs",
+        "operational_evidence_refs",
+        "previous_hash",
+        "current_hash",
     )
     return {
-        key: value
+        key: _drop_forbidden_observability_value(value)
         for key, value in payload.items()
         if not any(part in key.lower() for part in forbidden_parts)
     }
+
+
+def _drop_forbidden_observability_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _drop_forbidden_observability_fields(value)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return tuple(_drop_forbidden_observability_value(item) for item in value)
+    return value
 
 
 def _proposal_harness() -> ProposalHarness:
@@ -902,13 +965,80 @@ def _published_catalog_repository() -> InMemoryReasonCodeCatalogRepository:
     return repository
 
 
-def _decision_field_values() -> tuple[CreditDecisionInputFieldValue, ...]:
-    return (
-        CreditDecisionInputFieldValue.create(field="monthly_income_units", value=800_000),
-        CreditDecisionInputFieldValue.create(field="requested_amount_units", value=500_000),
-        CreditDecisionInputFieldValue.create(field="requested_installments", value=6),
-        CreditDecisionInputFieldValue.create(field="requested_term_days", value=180),
+def _decision_field_values_from_artifacts(
+    *,
+    proposal: Any,
+    integration_results: tuple[Any, ...],
+) -> tuple[CreditDecisionInputFieldValue, ...]:
+    requested_terms = proposal.requested_terms
+    personal_credit = proposal.product_data["personal_credit"]
+    requested_amount_units = _required_int(requested_terms["amount"], "requested_terms.amount")
+    requested_installments = _required_int(
+        requested_terms["installments"],
+        "requested_terms.installments",
     )
+    requested_term_days = _requested_term_days(
+        str(requested_terms["first_due_date"]),
+        reference_date=_NOW.date(),
+    )
+    declared_income_units = _required_int(
+        personal_credit["declared_monthly_income"],
+        "product_data.personal_credit.declared_monthly_income",
+    )
+    monthly_income_units = _enriched_monthly_income_units(
+        declared_income_units=declared_income_units,
+        integration_results=integration_results,
+    )
+    return (
+        CreditDecisionInputFieldValue.create(
+            field="monthly_income_units",
+            value=monthly_income_units,
+        ),
+        CreditDecisionInputFieldValue.create(
+            field="requested_amount_units",
+            value=requested_amount_units,
+        ),
+        CreditDecisionInputFieldValue.create(
+            field="requested_installments",
+            value=requested_installments,
+        ),
+        CreditDecisionInputFieldValue.create(
+            field="requested_term_days",
+            value=requested_term_days,
+        ),
+    )
+
+
+def _required_int(value: object, field_path: str) -> int:
+    assert type(value) is int, f"{field_path} deve ser inteiro normalizado"
+    return value
+
+
+def _requested_term_days(value: str, *, reference_date: date) -> int:
+    due_date = date.fromisoformat(value)
+    term_days = (due_date - reference_date).days
+    assert term_days > 0
+    return term_days
+
+
+def _enriched_monthly_income_units(
+    *,
+    declared_income_units: int,
+    integration_results: tuple[Any, ...],
+) -> int:
+    summaries_by_class = {
+        str(result.integration_class): result.summary for result in integration_results
+    }
+    required_classes = {"credit_bureau", "anti_fraud", "receivables"}
+    assert required_classes <= set(summaries_by_class)
+    if (
+        summaries_by_class["credit_bureau"].get("score_band") == "high"
+        and summaries_by_class["credit_bureau"].get("restriction_status") == "clear"
+        and summaries_by_class["anti_fraud"].get("risk_band") == "low"
+        and summaries_by_class["receivables"].get("eligibility_status") == "eligible"
+    ):
+        return declared_income_units
+    return max(declared_income_units // 2, 0)
 
 
 def _configure_webhook_command() -> ConfigureWebhookCommand:
@@ -1037,6 +1167,154 @@ def _record_business_projections(
     return callback_result.snapshot
 
 
+def _register_official_flow_evidence(
+    *,
+    proposal_id: str,
+    integration_result_count: int,
+    webhook_delivered: bool,
+) -> tuple[dict[str, object], ...]:
+    repository = InMemoryAuditEventRepository()
+    service = AuditEvidenceApplicationService(repository=repository, environment="test")
+    operations = (
+        {
+            "event_type": "proposal_intake.submitted",
+            "operation": "proposal_intake.submit_with_initial_status_and_outbox",
+            "action": "create",
+            "resource_type": "credit_proposal",
+            "resource_id": proposal_id,
+            "source_service": "proposal_intake",
+            "result": "accepted",
+            "safe_details": {"status": "submitted"},
+        },
+        {
+            "event_type": "integration_mock.plan_executed",
+            "operation": "integration_mock.execute_plan",
+            "action": "execute",
+            "resource_type": "integration_plan",
+            "resource_id": f"iplan_{proposal_id[-16:]}",
+            "source_service": "integration",
+            "result": "accepted",
+            "safe_details": {"integration_result_count": str(integration_result_count)},
+        },
+        {
+            "event_type": "integration_execution.completed",
+            "operation": "integration_execution.fan_in",
+            "action": "execute",
+            "resource_type": "integration_execution",
+            "resource_id": f"iexec_{proposal_id[-16:]}",
+            "source_service": "integration",
+            "result": "accepted",
+            "safe_details": {"status": "completed"},
+        },
+        {
+            "event_type": "credit_decision.completed",
+            "operation": "credit_decision.execute",
+            "action": "execute",
+            "resource_type": "credit_decision",
+            "resource_id": "decision_e2e_001",
+            "source_service": "decision",
+            "result": "accepted",
+            "safe_details": {"status": "completed", "outcome": "approve"},
+        },
+        {
+            "event_type": "credit_decision.public_query_retrieved",
+            "operation": "credit_decision.public_query.get",
+            "action": "read",
+            "resource_type": "credit_proposal",
+            "resource_id": proposal_id,
+            "source_service": "decision",
+            "result": "accepted",
+            "safe_details": {"status": "completed", "outcome": "approve"},
+        },
+        {
+            "event_type": "webhook_delivery.sent",
+            "operation": "webhook_delivery.sent",
+            "action": "send",
+            "resource_type": "webhook_delivery",
+            "resource_id": f"wdel_{proposal_id[-16:]}",
+            "source_service": "integration",
+            "result": "accepted" if webhook_delivered else "failed",
+            "safe_details": {"status": "sent" if webhook_delivered else "failed"},
+        },
+    )
+    events = []
+    trusted_context = _trusted_context(scopes=("audit:write",))
+    for index, operation in enumerate(operations, start=1):
+        result = service.register_event(
+            RegisterAuditEventCommand(
+                event_id=_official_evidence_event_id(
+                    str(operation["event_type"]),
+                    str(operation["resource_id"]),
+                ),
+                aggregate_type="analysis_flow",
+                aggregate_id=proposal_id,
+                event_type=str(operation["event_type"]),
+                action=str(operation["action"]),
+                resource_type=str(operation["resource_type"]),
+                resource_id=str(operation["resource_id"]),
+                source_service=str(operation["source_service"]),
+                source_kind="system",
+                result=str(operation["result"]),
+                occurred_at=_NOW + timedelta(seconds=index),
+                safe_details={
+                    "operation": str(operation["operation"]),
+                    **dict(operation["safe_details"]),
+                },
+                operational_evidence_refs=(
+                    OperationalEvidenceReference(
+                        kind="trace",
+                        reference=_TRACE_ID,
+                        source="otel",
+                    ),
+                ),
+            ),
+            context=_context(),
+            trusted_context=trusted_context,
+        )
+        events.append(_audit_event_to_log_safe_dict(result.event))
+    return tuple(events)
+
+
+def _official_evidence_event_id(event_type: str, resource_id: str) -> str:
+    fingerprint = sha256(f"{_CORRELATION_ID}|{event_type}|{resource_id}".encode()).hexdigest()[:24]
+    return f"audit_evt_e2e_{fingerprint}"
+
+
+def _audit_event_to_log_safe_dict(event: Any) -> dict[str, object]:
+    return {
+        "event_id": event.event_id,
+        "tenant_id": event.tenant_id,
+        "aggregate_type": event.aggregate_type,
+        "aggregate_id": event.aggregate_id,
+        "event_type": event.event_type,
+        "action": event.action,
+        "resource_type": event.resource_type,
+        "resource_id": event.resource_id,
+        "source_service": event.source_service,
+        "source_kind": event.source_kind,
+        "result": event.result,
+        "occurred_at": event.occurred_at.isoformat(),
+        "correlation_id": event.correlation_id,
+        "trace_id": event.trace_id,
+        "request_id": event.request_id,
+        "safe_details": dict(event.safe_details),
+        "operational_evidence_refs": tuple(
+            {
+                "kind": reference.kind,
+                "reference": reference.reference,
+                "source": reference.source,
+            }
+            for reference in event.operational_evidence_refs
+        ),
+        "integrity_scope": event.integrity_scope,
+        "integrity_chain_id": event.integrity_chain_id,
+        "previous_hash": event.previous_hash,
+        "current_hash": event.current_hash,
+        "hash_algorithm": event.hash_algorithm,
+        "canonicalization_version": event.canonicalization_version,
+    }
+
+
 def _decision_query_projection_status(public_query_status: str) -> DecisionQueryStatus:
     if public_query_status in {
         "submitted",
@@ -1092,23 +1370,20 @@ def _has_correlated_operation(
 
 def _critical_evidence_operations(
     *,
-    submitted_logs: tuple[dict[str, Any], ...],
-    integration_logs: list[dict[str, Any]],
-    integration_audit_events: tuple[dict[str, object], ...],
-    decision_audit_event_types: frozenset[str],
-    webhook_logs: list[dict[str, Any]],
+    official_audit_events: tuple[dict[str, object], ...],
 ) -> frozenset[str]:
-    operations = {
-        str(log.get("operation"))
-        for log in (*submitted_logs, *integration_logs, *webhook_logs)
-        if log.get("correlation_id") == _CORRELATION_ID
-    }
-    operations |= {
-        str(event.get("operation"))
-        for event in integration_audit_events
-        if event.get("correlation_id") == _CORRELATION_ID
-    }
-    operations |= set(decision_audit_event_types)
+    operations: set[str] = set()
+    for event in official_audit_events:
+        if event.get("correlation_id") != _CORRELATION_ID:
+            continue
+        event_type = event.get("event_type")
+        if isinstance(event_type, str):
+            operations.add(event_type)
+        safe_details = event.get("safe_details")
+        if isinstance(safe_details, Mapping):
+            operation = safe_details.get("operation")
+            if isinstance(operation, str):
+                operations.add(operation)
     return frozenset(operations)
 
 
