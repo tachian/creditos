@@ -1,5 +1,5 @@
 # generated: 2026-07-30
-# last_updated: 2026-10-12
+# last_updated: 2026-10-13
 # project: CreditOS
 # project_key: CTOS
 # tracking_system: file-system
@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-30
-last_updated: 2026-10-12
+last_updated: 2026-10-13
 project: CreditOS
 project_key: CTOS
 tracking_system: file-system
@@ -114,7 +114,7 @@ development_status:
   7-5-dashboards-customer-facing-curados-por-tenant: done
   7-6-gates-de-observabilidade-e-exposicao-segura: done
   epic-7-retrospective: done
-  epic-8: in-progress
+  epic-8: done
   8-1-consulta-de-decisao-por-proposta: done
   8-2-contrato-publico-de-status-e-decisao: done
   8-3-configuracao-de-webhooks-por-tenant: done
@@ -122,7 +122,7 @@ development_status:
   8-5-observabilidade-e-auditoria-de-consulta-callback: done
   8-6-testes-de-contrato-para-consulta-e-webhooks: done
   8-7-fluxo-e2e-de-analise-com-integracoes-mockadas: done
-  epic-8-retrospective: optional
+  epic-8-retrospective: done
 
 action_items:
   - epic: 5
@@ -160,7 +160,7 @@ action_items:
   - epic: 7
     action: "Definir contrato público mínimo de consulta/status/decisão antes das Stories 8.1 e 8.2."
     owner: "Alice (Product Owner) + Amelia (Developer)"
-    status: open
+    status: done
   - epic: 7
     action: "Criar checklist de segurança para webhooks antes das Stories 8.3 e 8.4."
     owner: "Winston (Architect) + Dana (QA Engineer)"
@@ -168,4 +168,24 @@ action_items:
   - epic: 7
     action: "Estabilizar ou documentar o caminho operacional único de validação local completa antes da Story 8.7."
     owner: "Amelia (Developer) + Paige (Technical Writer)"
+    status: in-progress
+  - epic: 8
+    action: "Consolidar um readiness sweep pós-MVP cruzando PRD, Architecture, SPEC, contratos, stories e código implementado."
+    owner: "Alice (Product Owner) + Amelia (Developer)"
+    status: open
+  - epic: 8
+    action: "Definir próximo ciclo pós-MVP para runtime/API real, gRPC entre serviços, mensageria, persistência e deploy."
+    owner: "Winston (Architect) + Amelia (Developer)"
+    status: open
+  - epic: 8
+    action: "Estabilizar caminho operacional único de validação local com uv/.venv, harness local e exceção de sandbox documentada."
+    owner: "Amelia (Developer) + Paige (Technical Writer)"
+    status: open
+  - epic: 8
+    action: "Executar validação jurídica/contratual final sobre contratos públicos, webhooks, auditoria, retenção e privacidade antes de piloto."
+    owner: "Tachian (Project Lead) + Alice (Product Owner)"
+    status: open
+  - epic: 8
+    action: "Planejar UX formal com bmad-ux para experiência de cliente técnico, documentação de integração e dashboards customer-facing."
+    owner: "Sally (UX Designer) + Paige (Technical Writer)"
     status: open
