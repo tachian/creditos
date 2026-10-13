@@ -236,6 +236,10 @@ para validar a jornada completa sem fornecedores reais.
 - `.venv/bin/python scripts/check_contracts.py --contracts-root packages/contracts && .venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/pyright` passou.
 - `.venv/bin/pytest -q` falhou no sandbox em `tests/test_local_harness.py` por `Operation not permitted` ao abrir socket local.
 - `.venv/bin/pytest -q` reexecutado fora do sandbox e passou com 862 testes.
+- `.venv/bin/pytest services/audit-evidence/tests/unit/test_audit_event_model.py services/audit-evidence/tests/unit/test_audit_worm_export.py -q` passou com 39 testes após correção do erro de CI em WORM reconciliation.
+- `.venv/bin/python scripts/check_contracts.py --contracts-root packages/contracts && .venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/pyright` passou após correção do erro de CI.
+- `.venv/bin/pytest -q` falhou no sandbox em `tests/test_local_harness.py` por `Operation not permitted` ao abrir socket local.
+- `.venv/bin/pytest -q` reexecutado fora do sandbox e passou com 863 testes.
 
 ### Completion Notes List
 
@@ -247,6 +251,7 @@ para validar a jornada completa sem fornecedores reais.
 - Criado payload de observabilidade curado para provar ausência de dados sensíveis brutos sem expor `proposal_id`, `decision_id`, headers, payload bruto ou valores pessoais.
 - Findings do code review resolvidos: callback vinculado à proposta submetida, idempotência de callback, assinatura HMAC canonicalizada, contrato público, gates negativos, rastreabilidade correlacionada, execução mock direta e evidência crítica ponta a ponta.
 - Comentários do GitHub Code Review resolvidos: decisão agora consome campos derivados da proposta normalizada e dos resultados enriquecidos; payloads públicos são validados integralmente contra OpenAPI; evidências críticas são registradas no Audit & Evidence oficial em vez de logs comuns; eventos oficiais de auditoria entram no gate de correlação ponta a ponta.
+- Erro de CI em `test_reconciliation_requires_worm_scope_and_audits_denial` corrigido na validação de identificadores: sequências numéricas dentro de tokens técnicos alfanuméricos opacos não são mais classificadas como CPF/CNPJ.
 
 ### File List
 
@@ -261,3 +266,4 @@ para validar a jornada completa sem fornecedores reais.
 - 2026-10-12: Implementado fluxo E2E in-memory com integrações mockadas, consulta pública, callback assinado, auditoria, projeções e gates negativos; status atualizado para `review`.
 - 2026-10-12: Corrigidos 8 findings do `bmad-code-review`; status atualizado para `done`.
 - 2026-10-13: Corrigidos 4 comentários do GitHub Code Review no PR #76 sem alterar contratos públicos.
+- 2026-10-13: Corrigido falso positivo intermitente de dado sensível em `event_id` técnico durante auditoria WORM.
