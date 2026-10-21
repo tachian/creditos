@@ -7,7 +7,7 @@ paradigm: 'DDD + Hexagonal Architecture + Event-Driven Microservices'
 scope: 'Arquitetura técnica consolidada da plataforma SaaS CreditOS'
 status: final
 created: '2026-07-27'
-updated: '2026-07-28'
+updated: '2026-10-21'
 binds:
   - 'PRD CreditOS'
 sources:
@@ -938,6 +938,24 @@ flowchart TB
   Remediation --> Package
 ```
 
+### AD-25 — Demonstração local, piloto AWS e gates de produção [ADOPTED]
+
+- **Binds:** conclusão funcional, UX, testes locais, IaC, ambiente de demonstração, dados de teste, integrações, provisionamento AWS e promoção para produção.
+- **Prevents:** gastos cloud antes da conclusão local, uso acidental de dados reais no piloto, criação antecipada de múltiplas contas, infraestrutura manual e promoção de mocks para produção sem validação.
+- **Rule:** a entrega avança por conclusão local, piloto técnico AWS e produção. Antes do primeiro provisionamento AWS, todas as funcionalidades e telas previstas para a demonstração devem estar implementadas, integradas e validadas localmente, incluindo estados de erro, autorização e isolamento por tenant. O fluxo E2E deve cobrir submissão, enriquecimento mockado, decisão explicável, auditoria oficial, projeções, consulta e webhook. O piloto usa exclusivamente dados sintéticos e adapters mock/sandbox internos; dados reais mascarados não satisfazem esse requisito. Usa-se a conta AWS existente para um único ambiente não produtivo de demonstração, com recursos e permissões segregados dos demais projetos; AWS Organizations e contas adicionais não são pré-requisitos. OpenTofu é a ferramenta de IaC desde o piloto. A região é selecionada antes do provisionamento pelo menor custo total estimado da configuração aprovada, com preços oficiais vigentes e serviços compatíveis; não existe região pré-aprovada. Provisionamento depende da conclusão local, do IaC validado e de aprovação explícita do orçamento/plano. Produção exige os controles das AD-12 a AD-24 e reavaliação da separação de contas antes do onboarding real.
+
+| Gate | Evidência necessária |
+| --- | --- |
+| Conclusão local | Escopo da demonstração rastreado para funcionalidades, UX implementada, jornadas integradas e E2E verde com dados sintéticos e mocks |
+| IaC antes da cloud | Módulos OpenTofu revisados e validados estaticamente, versões/providers fixados, bootstrap e backend documentados; nenhum apply ou recurso AWS criado antecipadamente |
+| Primeiro provisionamento | Região comparada por custo total, orçamento e plano aprovados; recursos existentes fora do escopo de alteração |
+| Piloto AWS | Runtime real dos sete serviços, HTTP público autenticado, gRPC interno, NATS e PostgreSQL reais, observabilidade, auditoria e webhook operacionais; testes cloud, recuperação e runbooks mínimos executados após provisionamento |
+| Produção | Persistência e isolamento validados, IaC/GitOps e supply chain, backup/restore e DR testados, SLOs medidos, WORM e retenção operacionais, suporte definido e aprovação jurídica conforme AD-24 |
+
+O piloto pode ter capacidade reduzida aprovada para custo, mas não constitui prova de HA/SLO produtivo. Qualquer redução de topologia em relação às ADs produtivas exige registro explícito; não é autorizada implicitamente por este AD. Fornecedores reais e dados pessoais reais dependem de homologação e gates específicos antes do uso. Critérios da interface aplicam-se às jornadas humanas incluídas no escopo, sem exigir portal completo fora do MVP.
+
+O estado OpenTofu deve ser remoto, protegido, versionado, com locking e separado por ambiente/componente. O bootstrap do backend deve ser reproduzível e documentar a migração de eventual estado local temporário, sem versionar estado ou planos sensíveis. OpenTofu provisiona infraestrutura; Argo CD mantém workloads conforme AD-23. Credenciais de apply usam identidade federada, menor privilégio e escopo CreditOS. A aprovação desta arquitetura não autoriza criar recursos cloud.
+
 ## Structural Seed
 
 ```text
@@ -977,6 +995,9 @@ creditos/
 
 ## Project-End Required Tasks
 
+- Concluir UX e implementação integrada de todas as jornadas da demonstração, com validação local antes de provisionar AWS conforme AD-25.
+- Implementar e validar IaC OpenTofu, preparar orçamento e comparar regiões antes do primeiro apply.
+- Validar o piloto AWS com runtime, persistência, gRPC, mensageria, observabilidade, auditoria, webhooks e runbooks reais após conclusão local.
 - Executar a validação jurídica/contratual final antes de produção com cliente real, usando `handoffs/legal-contractual-validation-final-task.md` como checklist obrigatório.
 
 ## Deferred
@@ -1014,7 +1035,7 @@ creditos/
 - Contrato final de evidência consultiva, métricas de qualidade, avaliação de viés, drift e divergência com decisão final.
 - Política de retenção de prompts, respostas, embeddings se existirem, datasets de avaliação e dados usados em inferência.
 - Arquitetura futura de `Data & Model Governance` para treinamento/avaliação de modelos próprios.
-- Ferramenta principal de IaC, backend de estado e estrutura final de módulos.
+- Backend concreto de estado OpenTofu, bootstrap, estrutura final de módulos e versões fixadas na implementação, antes do primeiro provisionamento.
 - Modelo final de contas AWS, VPCs, subnets, endpoints privados, NAT, egress, DNS, certificados e fronteiras por ambiente/tenant.
 - Topologia operacional final de RDS/Aurora, observabilidade, backups, restore, DR e runbooks.
 - Lista completa de ADRs e ordem de execução.
