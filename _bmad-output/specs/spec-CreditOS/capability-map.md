@@ -13,7 +13,7 @@ Este companion preserva o vínculo entre capacidades do SPEC, funcionalidades do
 | CAP-7 | Audit & Evidence | FR-19, FR-20; NFR-25 a NFR-27 | `Audit & Evidence` | Auditoria oficial é append-only, verificável, segregada de logs e bloqueia decisão final quando evidência crítica falha. |
 | CAP-8 | Observability & Reporting | FR-21, FR-22, FR-23, FR-24; NFR-28 a NFR-31 | `Reporting & Insights` + todos os serviços produtores | Logs, métricas, traces, dashboards internos e dashboards customer-facing respeitam mascaramento, cardinalidade e isolamento por tenant. |
 | CAP-9 | Decision Access & Callbacks | FR-25, FR-26 | `Proposal Intake`, `Decision`, `Integration` | Consultas e webhooks expõem decisão/status por contrato versionado, com assinatura, retry, idempotência e correlação. |
-| CAP-10 | Platform Readiness | NFR-35 a NFR-42 + AD-12, AD-13, AD-16 a AD-24 | Todos | Backend, infraestrutura, CI/CD, SLO/DR, compliance e gate jurídico estão prontos para decomposição em epics/stories. |
+| CAP-10 | Platform Readiness | NFR-35 a NFR-42 + AD-12, AD-13, AD-16 a AD-25 | Todos | Demonstração funcional e UX validadas localmente antes da AWS; piloto sintético com mocks, IaC OpenTofu e custo aprovado; produção atende aos gates técnicos e jurídicos. |
 
 ## Produtos MVP
 

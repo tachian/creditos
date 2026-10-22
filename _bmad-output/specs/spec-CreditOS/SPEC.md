@@ -3,6 +3,7 @@ id: SPEC-CreditOS
 companions:
   - capability-map.md
   - quality-constraints.md
+  - demonstration-readiness.md
   - ../../planning-artifacts/prds/prd-CreditOS-2026-07-22/prd.md
   - ../../planning-artifacts/prds/prd-CreditOS-2026-07-22/addendum.md
   - ../../planning-artifacts/architecture/architecture-CreditOS-2026-07-27/ARCHITECTURE-SPINE.md
@@ -49,8 +50,8 @@ CreditOS existe para realizar a visão de uma plataforma SaaS B2B governável, a
   - **intent:** Clientes podem consultar decisões por proposta e receber callbacks/webhooks assinados, idempotentes e resilientes.
   - **success:** Consultas e callbacks respeitam contrato versionado, tenant, permissões, retry, DLQ e correlação ponta a ponta.
 - **CAP-10 — Platform Readiness**
-  - **intent:** A plataforma opera com arquitetura DDD/microsserviços, segurança, privacidade, tenancy, CI/CD, SLO/DR e compliance pré-produção.
-  - **success:** Gates técnicos passam, `Architecture Spine` permanece vinculante e produção com cliente real fica bloqueada até validação jurídica/contratual formal.
+  - **intent:** A plataforma pode ser demonstrada localmente e promovida a piloto e produção com critérios verificáveis de prontidão.
+  - **success:** Funcionalidades e UX da demonstração estão implementadas, integradas e validadas localmente antes de provisionar AWS; piloto e produção atendem aos gates do AD-25 e produção com cliente real exige validação jurídica/contratual formal.
 
 ## Constraints
 
@@ -62,6 +63,7 @@ CreditOS existe para realizar a visão de uma plataforma SaaS B2B governável, a
 - Auditoria oficial não é substituída por logs, traces, métricas ou eventos de mensageria.
 - Dados pessoais e sensíveis seguem minimização, mascaramento, classificação, retenção, descarte e LGPD operacional.
 - Produção real com cliente fica bloqueada até a validação jurídica/contratual final descrita no companion obrigatório.
+- O primeiro deploy AWS depende da conclusão local da demonstração com toda a UX prevista; o piloto usa exclusivamente dados sintéticos e mocks internos, conforme `demonstration-readiness.md` e AD-25.
 
 ## Non-goals
 
@@ -80,3 +82,4 @@ Uma instituição B2B consegue integrar por API, submeter uma proposta CPF ou CN
 ## Open Questions
 
 - Nenhuma questão de produto/arquitetura bloqueante conhecida para epics/stories; a validação jurídica/contratual é gate externo pré-produção, não bloqueio de decomposição.
+- O escopo de telas/jornadas deve ser refinado por UX; região, custo, backend de estado e parâmetros de infraestrutura serão definidos antes do provisionamento conforme AD-25.
