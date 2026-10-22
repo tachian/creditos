@@ -51,3 +51,5 @@ Este companion consolida constraints verificáveis que downstream deve preservar
 - Cada microsserviço possui ownership lógico exclusivo dos seus dados.
 - Joins, queries e transações diretas cross-service são proibidos.
 - CI/CD e GitOps seguem AD-23: GitHub Actions, Argo CD, Amazon ECR, Sigstore/Cosign, GitHub Artifact Attestations, Kyverno e SLSA Build L2 inicial.
+- Prontidão segue AD-25 e `demonstration-readiness.md`: conclusão local incluindo UX antes de provisionamento AWS, piloto exclusivamente sintético com mocks e gates produtivos preservados.
+- OpenTofu provisiona infraestrutura; Argo CD mantém workloads. Estado e planos exigem proteção, locking, segregação por ambiente/componente e bootstrap reproduzível.
